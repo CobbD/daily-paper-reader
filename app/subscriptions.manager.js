@@ -94,9 +94,22 @@ window.SubscriptionsManager = (function () {
   ].join('\n');
 
   const QUICK_RUN_CONFERENCES = [
-    'NeurIPS',
+    'ICLR',
     'ICML',
+    'NeurIPS',
+    'AAAI',
+    'CVPR',
+    'ECCV',
+    'IJCAI',
+    'ACL',
+    'EMNLP',
   ];
+  // 2026 年会议数据可用性（截至 2026-06）：
+  // 有数据: ICLR 2026, AAAI 2026
+  // 无数据: CVPR 2026（刚结束未上传）, 其余未举办
+  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'AAAI']);
+  // ECCV 是双年会议（偶数年）
+  const BIENNIAL_EVEN_CONFERENCES = new Set(['ECCV']);
   const CONFERENCES_WITH_PENDING_CURRENT_YEAR = new Set([
     'NIPS',
     'NEURIPS',
@@ -473,10 +486,19 @@ window.SubscriptionsManager = (function () {
 
   const isConferenceYearSelectable = (conference, year) => {
     const conf = normalizeText(conference).toUpperCase();
-    const yearText = normalizeText(year);
+    const yearNum = parseInt(normalizeText(year), 10);
+    if (!Number.isFinite(yearNum)) return false;
+    // ECCV 双年（偶数年才有）
+    if (BIENNIAL_EVEN_CONFERENCES.has(conf) && yearNum % 2 !== 0) return false;
+    // 2026 年：只有已确认有数据的会议可选
+    const currentYear = new Date().getFullYear();
+    if (yearNum >= currentYear) {
+      if (!CONFERENCE_2026_AVAILABLE.has(conf)) return false;
+    }
+    // 原有的"当年待定"逻辑
     if (
       CONFERENCES_WITH_PENDING_CURRENT_YEAR.has(conf)
-      && yearText === String(new Date().getFullYear())
+      && yearNum === currentYear
     ) {
       return false;
     }
