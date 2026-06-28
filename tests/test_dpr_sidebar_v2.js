@@ -352,6 +352,7 @@ function testEvidenceCssIsPersistent() {
 function testSidebarPaperVisualStateCssContract() {
   const css = fs.readFileSync('app/app.css', 'utf8');
   assert.ok(/\.dpr-sidebar-paper\s*{[^}]*background:\s*#ffffff/i.test(css));
+  assert.ok(/\.dpr-sidebar-paper\s*{[^}]*min-height:\s*68px/i.test(css));
   assert.ok(/\.dpr-sidebar-paper\.is-active\s*{[^}]*background:\s*#e5e7eb/i.test(css));
   assert.ok(/body\.dpr-dark \.dpr-sidebar-paper\.is-active\s*{[^}]*background:\s*#334155/i.test(css));
   assert.ok(!css.includes('dpr-sidebar-unread-dot'));
@@ -389,8 +390,8 @@ function testSidebarPaperVisualStateCssContract() {
   const actionsRule = cssRule(css, '.dpr-sidebar-paper-actions');
   assert.ok(/position:\s*absolute/i.test(actionsRule));
   assert.ok(/right:\s*6px/i.test(actionsRule));
-  assert.ok(/top:\s*50%/i.test(actionsRule));
-  assert.ok(/transform:\s*translateY\(-50%\)/i.test(actionsRule));
+  assert.ok(/top:\s*28px/i.test(actionsRule));
+  assert.ok(/transform:\s*none/i.test(actionsRule));
   assert.ok(/width:\s*39px/i.test(actionsRule));
 
   assert.ok(/\.dpr-sidebar-paper:hover \.dpr-sidebar-paper-evidence,\s*\.dpr-sidebar-paper:focus-within \.dpr-sidebar-paper-evidence,\s*\.dpr-sidebar-paper:hover \.dpr-sidebar-paper-meta,\s*\.dpr-sidebar-paper:focus-within \.dpr-sidebar-paper-meta\s*{[^}]*padding-right:\s*52px/i.test(css));
