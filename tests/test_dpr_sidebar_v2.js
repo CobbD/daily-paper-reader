@@ -796,7 +796,10 @@ function testEvidenceCssIsPersistent() {
 
 function testSidebarPaperVisualStateCssContract() {
   const css = fs.readFileSync('app/app.css', 'utf8');
+  const paperRule = cssRule(css, '.dpr-sidebar-paper');
+  const scopedPaperRule = cssRule(css, '#dpr-sidebar-v2 .dpr-sidebar-paper');
   assert.ok(/\.dpr-sidebar-paper\s*{[^}]*background:\s*#ffffff/i.test(css));
+  assert.ok(/margin:\s*6px 8px/i.test(paperRule));
   assert.ok(/\.dpr-sidebar-paper\s*{[^}]*min-height:\s*68px/i.test(css));
   assert.ok(/\.dpr-sidebar-paper\.is-active\s*{[^}]*background:\s*#e5e7eb/i.test(css));
   assert.ok(/body\.dpr-dark \.dpr-sidebar-paper\.is-active\s*{[^}]*background:\s*#334155/i.test(css));
@@ -804,6 +807,7 @@ function testSidebarPaperVisualStateCssContract() {
   assert.ok(!css.includes('dpr-sidebar-axis-tab-dot'));
   assert.ok(!css.includes('dpr-sidebar-axis-section-dot'));
   assert.ok(/#dpr-sidebar-v2\s+\.dpr-sidebar-paper\s*{[^}]*position:\s*relative\s*!important/i.test(css));
+  assert.ok(/margin:\s*6px 8px/i.test(scopedPaperRule));
   assert.ok(!/#dpr-sidebar-v2\s+\.dpr-sidebar-paper\s*{[^}]*margin:\s*2px 8px\s*!important/i.test(css));
   assert.ok(/\.dpr-sidebar-paper\[data-read="0"\]::after\s*{[^}]*content:\s*""/i.test(css));
   assert.ok(/\.dpr-sidebar-paper\[data-read="0"\]::after\s*{[^}]*background:\s*#ef4444/i.test(css));
