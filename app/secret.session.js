@@ -301,7 +301,7 @@
   };
   const getDefaultDeepSeekBaseUrl = () => {
     const utils = getLLMUtils();
-    return normalizeBaseUrlForStorage(utils.DEFAULT_DEEPSEEK_BASE_URL || 'https://api.deepseek.com');
+    return normalizeBaseUrlForStorage(utils.DEFAULT_DEEPSEEK_BASE_URL || 'https://opencode.ai/zen/go/v1');
   };
   const getDefaultDeepSeekChatModels = () => {
     const utils = getLLMUtils();

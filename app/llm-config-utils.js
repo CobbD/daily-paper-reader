@@ -7,7 +7,7 @@
     root.DPRLLMConfigUtils = api;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+  const DEFAULT_DEEPSEEK_BASE_URL = 'https://opencode.ai/zen/go/v1';
   const DEFAULT_DEEPSEEK_CHAT_MODELS = [
     'deepseek-v4-flash',
     'deepseek-v4-pro',
@@ -16,8 +16,8 @@
   const DEEPSEEK_PRESETS = Object.freeze({
     deepseek: Object.freeze({
       key: 'deepseek',
-      label: 'DeepSeek 官方',
-      baseUrl: 'https://api.deepseek.com',
+      label: 'OpenCode',
+      baseUrl: 'https://opencode.ai/zen/go/v1',
       models: Object.freeze(['deepseek-v4-flash', 'deepseek-v4-pro']),
     }),
   });
