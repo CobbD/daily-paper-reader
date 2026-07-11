@@ -1731,8 +1731,8 @@
       genBtn.addEventListener('click', async () => {
         const githubToken = normalizeText(githubInput.value);
         const localOnly = isLocalDebugHost();
-        if (!localOnly && (!githubToken || !githubOk)) {
-          setErrorText('请先填写并通过验证 GitHub Token。', '#c00');
+        if (!localOnly && !githubToken) {
+          setErrorText('请先填写 GitHub Token。', '#c00');
           return;
         }
 
@@ -1744,8 +1744,8 @@
           return;
         }
 
-        if (providerDraft.providerType === 'deepseek' && !deepseekOk) {
-          setErrorText('请先点击“测试当前配置”，确认 DeepSeek 配置可用。', '#c00');
+        if (!deepseekInput.value.trim()) {
+          setErrorText('请先填写 DeepSeek API Key。', '#c00');
           return;
         }
 
