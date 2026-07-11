@@ -1,0 +1,526 @@
+Title: BiSCo-LLM: Lookup-Free Binary Spherical Coding for Extreme Low-Bit Large Language Model Compression
+
+URL Source: https://arxiv.org/pdf/2607.08643v1
+
+Published Time: Fri, 10 Jul 2026 01:07:44 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+> 1
+
+# BiSCo-LLM: Lookup-Free Binary Spherical Coding for Extreme Low-Bit Large Language Model Compression 
+
+Yuantian Shao 1,2,† , Peisong Wang 2,†,* , Zhilei Liu 2, Chuangyi Li 2, Yuanteng Chen 2, Pengcheng Xie 3, Yiwu Yao 3,Zhihui Wei 1,* , and Jian Cheng 2,* 
+
+Abstract —Large language models (LLMs) are increasingly constrained by memory capacity, weight bandwidth, and check-point storage during deployment. Existing low-bit compression methods mainly follow two directions. Scalar or group-wise quantization is simple and compatible with efficient low-precision kernels, but its representation capacity becomes limited when the target budget approaches 2 bits per weight. Vector-quantized weight compression provides a richer block-level representation, but usually introduces explicit codebooks, index lookup, and additional storage accounting. This paper presents B ISC O-LLM, a codebook-free binary spherical coding framework for extreme low-bit LLM weight compression. The proposed pipeline is built on three components. First, local weight chunks are mapped onto a unit hypersphere and binarized into compact spherical codes, so that the main payload is a bit-packed sign stream rather than explicit VQ centroids. Second, a residual BSQ stage encodes the reconstruction error left by the base spherical codec, providing an explicit rate–distortion path without stored code-books. Third, category-wise recovery distillation is performed after replacing each Transformer module category, reducing the mismatch between local weight reconstruction and assembled model behavior. A small 8-bit protected-channel path is used as an auxiliary stabilization mechanism for sensitive channels and is counted separately from the BSQ payload. The reported storage budget includes binary codes, neural decoders, protected-channel payloads, LoRA adapters, and metadata. On Qwen3-8B, BISC O-LLM obtains a WikiText-2 perplexity of 10.18 compared with 9.73 for the FP16/BF16 model, and an average downstream accuracy of 68.05 compared with 69.92 over the reported seven-task evaluation set. These results indicate that codebook-free spherical coding can preserve model behavior under an extreme low-bit storage budget when residual coding, sensitivity-aware protection, and recovery distillation are jointly considered. 
+
+Index Terms —Large language model compression, low-bit quantization, binary spherical coding, codebook-free compres-sion, vector quantization, residual coding, LoRA compensation. 
+
+I. I NTRODUCTION 
+
+Large language models (LLMs) have become foundation components for language understanding, reasoning, genera-tion, and general-purpose AI services [1]–[3]. Despite their 
+
+> †
+
+Yuantian Shao and Peisong Wang contributed equally to this work. 
+
+> *
+
+Peisong Wang, Zhihui Wei, and Jian Cheng are corresponding authors. 
+
+> 1
+
+Yuantian Shao and Zhihui Wei are with Nanjing University of Science and Technology, Nanjing, China. 
+
+> 2
+
+Yuantian Shao, Peisong Wang, Zhilei Liu, Chuangyi Li, Yuanteng Chen, and Jian Cheng are with the Institute of Automation, Chinese Academy of Sciences, Beijing, China. 
+
+> 3
+
+Pengcheng Xie and Yiwu Yao are with Huawei, China. 
+
+effectiveness, the continuous growth of model scale has in-troduced substantial deployment challenges. Recent technical reports show that LLM deployment targets have moved from several-billion-parameter models to hundreds-of-billions and trillion-scale architectures. DeepSeek-V3 and DeepSeek-R1, for example, adopt a 671B-parameter MoE architecture with 37B activated parameters per token; Kimi K2 scales this regime to a 1T-parameter MoE model with 32B activated parameters; and GLM-4.5 reports 355B total parameters with 32B activated parameters [4]–[7]. These models correspond to terabyte-scale BF16/FP16 checkpoint storage before KV caches, runtime buffers, and serving-system overhead are considered. As a result, efficient inference is constrained not only by peak arithmetic throughput, but also by the amount of model data that must be fetched from memory and moved through the memory hierarchy [8], [9]. This con-straint becomes particularly pronounced during autoregressive decoding with limited batch sizes, where each generated token requires repeatedly applying large linear transformations and the available computation may be insufficient to amortize weight-loading cost. In this regime, weight movement from high-bandwidth memory can dominate latency and throughput [10], [11]. Reducing the stored precision of model weights to 4 bits, 3 bits, 2 bits, or below is therefore a direct and system-relevant approach to decreasing memory footprint and relieving bandwidth pressure. The demand for compression is further reinforced by recent changes in LLM deployment scenarios. On-device and hybrid personal assistants require low-latency inference under strict memory, energy, and privacy constraints, as exemplified by Apple Intelligence, which combines an on-device foundation model with a larger server-side model for more complex requests [12]. In parallel, agentic and coding-oriented systems convert a user request into a multi-step inference process involving planning, tool invocation, code execution, verifi-cation, and iterative refinement [13], [14]. Such workflows can substantially increase the number of model invocations required to complete a single task. In enterprise, private-cloud, and edge deployments, model replicas may also be distributed across multiple tenants, accelerators, and locations, making storage footprint, memory bandwidth, and serving density system-level constraints. These trends require compression methods that reduce deployable model size while preserving task-level behavior. Post-training quantization (PTQ) has become a central ap-arXiv:2607.08643v1 [cs.LG] 9 Jul 2026 2
+
+proach for addressing these deployment constraints, since it reduces the numerical precision of pretrained models without requiring full retraining. Existing PTQ methods have improved LLM compression from several complementary perspectives. Early systems such as ZeroQuant combine layer-wise distilla-tion with system-aware kernels, demonstrating the feasibility of quantizing large Transformer models after pretraining [15]. GPTQ reduces weight reconstruction error through a layer-wise second-order formulation that uses calibration activations to approximate the local Hessian of the reconstruction ob-jective [8]. OmniQuant follows a different calibration-based optimization route by learning clipping thresholds, quantiza-tion scales, and equivalent transformations from calibration data [16]. Another line of work addresses the pronounced outlier and sensitivity imbalance in LLMs: LLM.int8() sep-arates emergent outlier features through mixed-precision de-composition; RPTQ reorders channels to reduce activation range imbalance; SmoothQuant transfers activation difficulty to weights via equivalent scaling; AWQ protects activation-salient channels; and SpQR and SqueezeLLM use sparse outlier storage or dense-and-sparse decompositions for near-lossless low-bit compression [11], [17]–[21]. More system-oriented studies, such as Atom, QuaRot, and SpinQuant, further consider serving-friendly mixed precision and rotation-based outlier suppression [22]–[24]. Despite these advances, extending LLM quantization to 2 bits or lower remains substantially more challenging than con-ventional 4-bit or 3-bit settings [25], [26]. Most PTQ methods still represent weights using scalar or group-wise quantized values. As the bit budget decreases, these representations provide only a small number of reconstruction levels within each group, making it difficult to preserve both the dominant structure of local weight vectors and the directions that are important for maintaining layer outputs. Recent sub-2-bit and 2–3-bit studies support this view: Squeeze10-LLM relies on staged mixed precision and activation-level supervision rather than uniform scalar reconstruction, while ICQuant explicitly models outlier statistics to reduce range expansion and bit overhead in extreme compression regimes [25], [26]. These results seem to suggest that the problem of extremely low bit compression is difficult to fully solve in scalar quantization. Consequently, recent studies have increasingly explored vector quantization or structured discrete representations [27], [28]. Vector quantization (VQ) and structured discrete represen-tations provide a stronger representation. Instead of rounding each weight independently, these methods encode a group of weights as a structured discrete object. In recent LLM compression, this direction has evolved from explicit multi-codebook representations to more optimization- and structure-aware formulations. AQLM adapts additive quantization to LLM weights by representing a weight vector as the sum of multiple learned codewords [29]. VPTQ further formulates vector PTQ with second-order information and introduces residual and outlier quantization to improve extreme low-bit approximation [30]. PocketLLM moves toward learned latent-space weight compression, where pretrained weights are encoded into discrete latent vectors and reconstructed by a lightweight meta-network decoder [31]. More recent methods reduce the rigidity or overhead of explicit VQ in different ways: LiftQuant obtains quasi-continuous bit-width control through dimensional lifting and projection from a high-dimensional 1-bit lattice, UniSVQ parameterizes codewords as affine transforms of integer lattices to bridge scalar and vector quantization, and LC-QAT uses linear-constrained VQ to make 2-bit vector quantization compatible with data-efficient QAT [32]–[34]. Overall, these methods indicate that the main diffi-culty of extreme compression is not only the number of scalar levels, but also how local weight vectors are parameterized, optimized, and reconstructed under a strict storage budget. The above progression suggests that vector-level coding is promising, but it also leaves open how a binary latent codec should be optimized for pretrained LLM weights. Lookup-free binary quantization removes the explicit codebook from storage, but unconstrained binary latents may still entangle code direction and latent magnitude during training. BSQ addresses this issue in visual tokenization by normalizing latent vectors onto a hypersphere before binarization, so that the discrete code mainly represents direction while the decoder receives a scale-controlled binary input [35], [36]. This property is particularly relevant to weight compression: instead of mapping each weight chunk to a fixed lattice point or an explicit centroid, a spherical binary code can provide a compact codebook-free payload, while a shared decoder learns the reconstruction rule for a family of weight chunks. However, simply increasing the length of a one-stage spher-ical binary code is not necessarily an efficient way to use the available bit budget. For a linear weight matrix W ∈ Rdout ×din 
+
+partitioned into d-dimensional chunks, the number of training vectors for the codec is only dout din /d , whereas the implicit binary code space contains 2b possible sign patterns for a 
+
+b-bit code. In typical Transformer projections, this gap can be large when b is 32 or 64; many code patterns are not exercised by the fixed set of weight chunks. Therefore, a larger implicit code space does not by itself guarantee better effective reconstruction. To make the additional code capacity more effectively used, we design a second-stage residual BSQ codec that assigns extra bits to the residual structure not captured by the base codec, rather than simply enlarging a single-stage code. Beyond the codec itself, extreme compression also requires a recovery objective that is aligned with the final model behavior. Layer-wise distillation is memory-efficient, but a local reconstruction or hidden-state loss for one layer is not necessarily aligned with perplexity or downstream accuracy after all compressed layers are assembled. The mismatch can be amplified when many independently optimized layers are composed. We therefore organize recovery at the Transformer-module-category level: after replacing one category of linear modules, the model is distilled with the compressed category active, so that the recovery loss reflects the interaction between that category and the remaining full model. This design keeps the memory cost lower than full end-to-end retraining while avoiding a purely layer-local recovery objective. Together, these components form a 2-bit-oriented LLM compression pipeline rather than a codec-only construction. On Qwen3-8B, the final compressed model achieves an av-3
+
+erage downstream accuracy within 2 percentage points of the FP16/BF16 model under the reported real storage budget. The main contributions of this paper are summarized as follows:  
+
+> •
+
+We present B ISC O-LLM, a storage-aware 2-bit-oriented compression pipeline for LLM weights. The pipeline integrates codebook-free binary spherical coding, residual code allocation, category-wise replacement, and recovery distillation, so that the compressed model can be opti-mized and evaluated under an explicit real-size budget.  
+
+> •
+
+We introduce a second-stage residual BSQ codec to improve the use of additional code capacity. Rather than simply enlarging a one-stage binary code, B ISC O-LLM assigns extra bits to the residual structure not captured by the base spherical codec, yielding a practical rate– distortion path under explicit storage accounting.  
+
+> •
+
+We design category-wise codec optimization and recov-ery distillation for Transformer linear modules. The codec is trained and applied by module category, and recovery is performed after each category replacement, so that the distillation objective better reflects the interaction between the compressed category and the remaining model than purely layer-wise recovery.  
+
+> •
+
+We evaluate the proposed pipeline under real storage budgets, explicitly accounting for BSQ code streams, decoder parameters, metadata, optional protected-channel payloads, LoRA adapters, and decoding cost. On Qwen3-8B, the final compressed model is reported to retain average downstream accuracy within 2 percentage points of the FP16/BF16 model. The rest of the paper is organized as follows. Section II reviews LLM quantization, VQ-based LLM compression, codebook-free discrete representations, and sensitivity-aware compression. Section III presents the proposed framework. Section IV describes the experimental protocol, baseline de-sign, and ablation plan. Section V discusses limitations and implementation choices. Section VI concludes the paper. II. R ELATED WORK 
+
+A. Low-Bit Quantization of Large Language Models 
+
+LLM quantization reduces storage, memory bandwidth, and serving cost by replacing high-precision weights, activations, or cached states with low-precision representations. Early LLM-specific studies mainly focused on post-training quan-tization (PTQ), which avoids full retraining and is therefore attractive for compressing large pretrained models. ZeroQuant combines fine-grained quantization, layer-wise distillation, and optimized inference kernels for large Transformers [15]. LLM.int8() identifies emergent outlier features as a major obstacle for scaling 8-bit matrix multiplication to large Trans-former models [17]. GPTQ introduces an approximate second-order, layer-wise weight-only PTQ procedure and has become a standard baseline for low-bit LLM compression [8]. RPTQ further reorders channels to reduce activation range imbal-ance [18]. SmoothQuant migrates activation difficulty into weights through equivalent scaling, enabling accurate weight– activation quantization [19]. AWQ protects activation-salient weights through activation-aware scaling, while OmniQuant learns quantization-friendly equivalent transformations under calibration data [11], [16]. More recent work shows that low-bit LLM quantization is not a single design choice, but a combination of opti-mization objective, outlier handling, transformation design, and training budget. OWQ stores a small subset of sensitive weak columns in high precision and quantizes the remaining dense weights, showing the benefit of structured outlier-aware mixed precision [37]. SpQR similarly combines a sparse high-precision component with a quantized dense compo-nent for near-lossless weight compression [20]. SqueezeLLM uses sensitivity-based non-uniform quantization together with dense-and-sparse decomposition [21]. Atom studies low-bit serving with mixed precision and fine-grained quantization for efficient deployment [22]. Recent transformation-based methods further reduce outlier difficulty before quantization: QuaRot and SpinQuant use equivalent rotations to make weights and activations easier to quantize, while AffineQuant extends the transformation space from scaling or rotation to learnable affine transformations [23], [24], [38]. Another line of work uses quantization-aware training(QAT) or distillation to recover accuracy at more aggressive bit widths. LLM-QAT investigates data-free quantization-aware training for LLMs and also quantizes the KV cache, showing that training-based recovery becomes important when PTQ breaks down at lower precision [39]. BitDistiller combines quantization-aware training with self-distillation to improve sub-4-bit LLMs [40]. OneBit pushes weight compression toward approximately 1-bit representation by introducing a sign-value-independent decomposition and quantization-aware knowledge distillation [41]. These methods are closely related to the extreme-compression regime targeted by B ISC O-LLM, but they rely on scalar or specially structured parameter rep-resentations. In contrast, B ISC O-LLM uses binary spherical codes with neural residual decoders. It is therefore closer to learned discrete compression than to conventional scalar quan-tization, while still inheriting the central lessons from LLM quantization: outliers must be treated carefully, calibration statistics are useful, and the storage overhead of any auxiliary component must be counted explicitly. 
+
+B. Vector-Quantized and Structured-Code Weight Compres-sion 
+
+Vector quantization (VQ) is a classical compression paradigm in which a vector is represented by the index of a codeword rather than by independently quantized scalar entries. It has also become a standard building block of neural discrete representation learning, as exemplified by VQ-VAE [42]. For LLM weight compression, VQ is attractive because a local weight block can be encoded as one or several discrete symbols, thereby increasing the effective representa-tional dimension under a fixed bit budget. This property is especially important below 3 bits per weight, where scalar quantizers have only a few reconstruction levels and can no longer flexibly match the anisotropic distribution of pretrained Transformer weights. 4
+
+Recent LLM compression methods have explored several forms of vector or structured-code quantization. AQLM revis-its extreme LLM compression from the perspective of multi-codebook quantization and represents weights through learned additive codebooks, with joint optimization across Trans-former blocks [29]. GPTVQ further studies post-training VQ at higher vector dimensions and interleaves vector quantization with Hessian-informed updates to the remaining unquantized weights [43]. These methods show that increasing the quanti-zation dimension can substantially improve the size–accuracy trade-off compared with purely scalar rounding, but their compressed representation still depends on explicit codebooks and index lookup. Another important direction is to design structured code-books or coding rules with better theoretical or hardware properties. QuIP introduces incoherence processing so that weight and Hessian directions become less aligned with co-ordinate axes before quantization, enabling viable 2-bit LLM quantization with theoretical guarantees [44]. QuIP# improves this line by using randomized Hadamard transforms and lattice codebooks, especially the highly symmetric E8 lattice, for more effective vector quantization in extreme compression regimes [45]. QTIP replaces explicit low-dimensional VQ lookup with trellis-coded quantization, using a stateful decoder to decouple the effective quantization dimension from the explicit codebook size [46]. These works indicate that the coding structure, not only the nominal bit-width, is critical for low-bit LLM quality. More recent work also incorporates second-order objec-tives, residual quantization, and outlier handling into vector PTQ. VPTQ formulates LLM vector quantization with second-order optimization, refines weights with channel-independent second-order updates, and extends the framework to residual and outlier quantization [30]. This is closely related to our use of multi-stage residual coding and important-channel protec-tion. However, VPTQ still follows the conventional VQ view in which vectors are compressed into indices associated with lookup tables. In contrast, B ISC O-LLM stores bit-packed bi-nary spherical codes and reconstructs weights through compact neural decoders, so the main reconstruction capacity is carried by shared decoder parameters rather than by explicit vector codebooks. LiftQuant is another close concurrent work. It uses dimen-sional lifting and projection, where a low-dimensional weight vector is approximated by projecting a simple 1-bit lattice from a higher-dimensional lifted space [32]. Since the effective bit-width is controlled by the ratio between the lifted and original dimensions, LiftQuant provides quasi-continuous bit-width control and can better fit specific memory budgets. Compared with LiftQuant, B ISC O-LLM does not rely on a fixed linear lift-and-project reconstruction path. Instead, it learns nonlinear BSQ decoders for Transformer module categories, adds residual stages to improve the rate–distortion curve, and assigns additional compressed residual capacity to important channels. Therefore, our method can be viewed as a storage-aware neural coding approach rather than a fixed structured-code projection method. UniSVQ and LC-QAT are also closely related because they reformulate low-bit LLM compression through structured vector quantization. UniSVQ parameterizes vector codewords as affine transformations of integer-lattice points, thereby providing a unified view of scalar and vector quantization [33]. LC-QAT studies data-efficient 2-bit quantization-aware training with linear-constrained vector quantization, using a constrained code structure and training data to recover accu-racy [34]. In contrast, B ISC O-LLM does not store or optimize an explicit lattice codebook as the primary representation. It stores bit-packed binary spherical codes and uses com-pact category-wise neural decoders to reconstruct weights. Moreover, the second-stage residual BSQ codec and category-wise recovery distillation separate representation capacity from model-behavior recovery, which differs from methods that mainly rely on a single structured vector quantizer or QAT objective. Overall, vector-quantized and structured-code compression methods demonstrate that extreme low-bit LLM compression requires more expressive local representations than scalar quantization. Nevertheless, explicit codebooks, lattice lookup rules, trellis decoders, or fixed projection matrices introduce their own storage, implementation, or adaptation constraints. BISC O-LLM follows the same high-dimensional coding mo-tivation, but removes explicit codebooks and uses amortized neural decoders shared across module categories. This design is intended to preserve the representational advantage of vector coding while making the storage accounting of binary codes, residual stages, decoders, and compensation modules explicit. 
+
+C. Codebook-Free Discrete Representation Learning 
+
+Classical neural discrete representation learning usually relies on an explicit codebook. VQ-VAE maps each encoder output to the nearest learned embedding vector and trains the encoder–decoder system with straight-through gradient esti-mation and auxiliary commitment losses [42]. This design has been highly influential in image, audio, and video tokeniza-tion, but it also introduces well-known practical issues: the codebook may be under-utilized, some entries may collapse or rarely be selected, nearest-neighbor lookup becomes expensive when the vocabulary is large, and the codebook itself becomes an additional storage component. These issues are acceptable in many data tokenization settings, but they become more restrictive when discrete representation learning is used as a compression mechanism for pretrained model weights, where every auxiliary parameter must be included in the final model size. A recent response to these limitations is to replace learned vector codebooks with simpler implicit or non-parametric discrete spaces. FSQ replaces vector quantization by finite scalar levels: the latent is projected to a low-dimensional vector, and each dimension is quantized to a small fixed set of values, yielding an implicit Cartesian-product codebook without learned entries [47]. MAGVIT-v2 introduces lookup-free quantization (LFQ), where visual tokens are represented by binary latent codes rather than by nearest-neighbor lookup in a learned embedding table [35]. This makes it possi-ble to use very large effective vocabularies while avoid-ing explicit vector-codebook search. Open-MAGVIT2 further 5
+
+demonstrates the practical value of this direction by providing an open-source replication and scaling study of MAGVIT-v2-style tokenizers [48]. Binary tokenizers push this idea further by treating the bit representation itself as the discrete latent object. BSQ projects the latent feature to a hypersphere and then applies binary quantization, producing compact binary spherical codes without an explicit codebook [36]. MaskBit shows that bit tokens can also be used directly by the generative model, removing the need for an additional token embedding table in the second-stage generator [49]. These works are especially relevant to B ISC O-LLM because they suggest that binary codes are not merely implementation-level bit strings, but can serve as semantically meaningful and scalable discrete representations. There are also complementary attempts to stabilize or restructure VQ training rather than remove the codebook completely. SimVQ reparameterizes code vectors through a learnable linear transformation to alleviate representation collapse [50]. The rotation trick modifies the gradient path through VQ by encoding the relative angle and magnitude between encoder outputs and selected code vectors into the backward signal [51]. Grouped Spherical Quantization (GSQ) studies spherical codebook initialization and grouped latent scaling for image tokenizers [52]. These methods indicate that the geometry of the discrete latent space, the gradient estimator, and the utilization pattern of codes are all important for high-quality discrete representation learning. Despite these connections, applying codebook-free discrete representation learning to LLM weight compression is funda-mentally different from image or video tokenization. Visual tokenizers learn an encoder and a decoder for a distribution of input samples, and the learned tokens are consumed by a downstream generative model. In contrast, LLM weight compression encodes a fixed set of pretrained tensors, and the decoder is part of the deployed compressed model. Therefore, decoder parameters, residual stages, per-category sharing, and any compensation modules must be counted in the storage budget. Moreover, the reconstruction target is not perceptual fidelity but preservation of the pretrained model function, so small weight-space errors can cause large downstream accuracy degradation. BISC O-LLM adapts the codebook-free idea to this weight-compression setting. Instead of storing learned codewords or performing nearest-neighbor lookup, it stores bit-packed binary spherical codes and reconstructs weight blocks through compact neural decoders. To make this feasible for LLMs, BISC O-LLM further introduces multi-stage residual coding, module-category-level codec organization, an auxiliary 8-bit path for sensitive channels, and optional LoRA compensation. In this sense, our method inherits the parameter-efficient and scalable spirit of FSQ, LFQ, and BSQ, but shifts the application target from data tokenization to storage-aware compression of pretrained LLM weights. 
+
+D. Outliers, Saliency, and Low-Rank Compensation 
+
+Outliers and saliency imbalance are central obstacles in LLM compression. LLM.int8() observes that large Trans-former models exhibit emergent outlier features, and handles these dimensions separately to enable stable 8-bit matrix multiplication [17]. SmoothQuant further shows that activation outliers can be partially migrated into weights by equiva-lent scaling transformations, thereby making weight–activation quantization more tractable [19]. AWQ identifies activation-salient weights and protects them through activation-aware scaling, while OWQ keeps a small number of weak columns in higher precision to reduce the damage caused by outlier-associated sensitive channels [11], [37]. These studies indicate that the main difficulty in low-bit LLM compression is not merely the average quantization error, but the highly non-uniform distribution of error sensitivity across channels, layers, and module types. A closely related line of work studies saliency for pruning and mixed compression. SparseGPT formulates one-shot LLM pruning as a layer-wise reconstruction problem with approx-imate second-order updates, and also shows that sparsity can be combined with weight quantization [53]. Wanda proposes a simpler saliency metric based on the product of weight mag-nitude and input activation norm, requiring neither retraining nor explicit weight update [54]. LLM-Pruner performs struc-tural pruning by identifying non-critical coupled structures using gradient information and then recovers performance with lightweight tuning [55]. Although these methods target pruning rather than dense low-bit coding, they provide an im-portant lesson for extreme compression: channels or structures should not be treated uniformly, and calibration activations or gradients can provide useful proxies for preserving model function. Second-order and activation-aware criteria have also been widely adopted in quantization. GPTQ uses an approximate Hessian-based layer-wise objective to reduce the loss in-crease induced by weight quantization [8]. OmniQuant learns equivalent transformations under calibration data to make both weights and activations more quantization-friendly [16]. VPTQ extends vector post-training quantization with second-order optimization, residual quantization, and outlier handling [30]. In BISC O-LLM, these observations are used more conservatively: the BSQ codec itself is trained with MSE reconstruction, while calibration statistics are used only to select a small optional 8-bit protected set. Low-rank adaptation provides another way to compen-sate for compression error. LoRA inserts trainable low-rank adapters into pretrained models and has become a stan-dard parameter-efficient fine-tuning technique [56]. QLoRA shows that low-rank tuning can be combined with a quan-tized base model by using 4-bit quantization and memory-efficient optimization [57]. More recent methods more ex-plicitly couple low-rank adaptation with quantization. QA-LoRA performs quantization-aware low-rank adaptation by balancing the degrees of freedom between quantization and adaptation through group-wise operators [58]. LoftQ jointly quantizes the pretrained model and initializes LoRA adapters to reduce the discrepancy between quantized and full-precision models [59]. LQ-LoRA decomposes each weight matrix into a fixed quantized component and a trainable high-precision low-rank component under memory constraints [60]. L4Q further 6
+
+integrates quantization-aware training with LoRA and reduces QAT memory overhead to a level comparable to LoRA fine-tuning [61]. There is also growing interest in using low-rank modules specifically as quantization-error compensators rather than as ordinary task adapters. RILQ studies LoRA-based quantization error compensation in the 2-bit regime and points out that conventional low-rank compensation can become ineffective when the quantization error is too aggressive [62]. SERQ further explores saliency-aware low-rank error reconstruction for low-bit LLM inference [63]. These works are particularly relevant to B ISC O-LLM because our LoRA modules are not intended to define the primary compressed representation. Instead, the main representation is the BSQ code and neural decoder, while LoRA is used as an optional compensation path after codebook-free reconstruction. In summary, existing work suggests three design principles that are directly reflected in B ISC O-LLM: salient channels may need stronger protection, calibration statistics can help identify these channels, and low-rank modules should be reported separately from the base compressed representation. Accordingly, B ISC O-LLM uses MSE-based BSQ codec train-ing, an auxiliary 8-bit path for a small set of sensitive channels, and separate reporting of codec-only, category-level LoRA, and end-to-end LoRA results. This separation is important for fair evaluation, since otherwise the effect of the proposed binary spherical codec would be conflated with the effect of auxiliary high-precision storage or trainable compensation parameters. III. M ETHOD 
+
+A. Problem Formulation and Bit Accounting 
+
+Let Wcℓ ∈ Rmcℓ ×ncℓ denote the weight matrix of layer ℓ
+
+and module category c. We partition this matrix into chunks 
+
+xcℓ,i ∈ Rd, where d is the chunk dimension. The goal is to store each chunk with a binary code bcℓ,i ∈ {− 1, +1 }b and reconstruct it with a decoder: 
+
+bxcℓ,i = Dθc (bcℓ,i ). (1) Ignoring decoder and metadata overhead, one BSQ stage has a nominal bit rate 
+
+bpw stage = bd . (2) Here b corresponds to codebook_bits and d corresponds to codebook_dim . For example, b = 32 and d = 32 gives one nominal bit per weight for one stage. With S residual stages, the code-only rate is approximately Sb/d before adding decoder parameters, optional 8-bit protected channels, LoRA adapters, and metadata. The real compressed size is reported by a compact additive form: 
+
+Stot = Scode + Sdec + S8bit + SLoRA + Smeta . (3) Here Scode denotes all bit-packed BSQ code streams, includ-ing the base stage and the second residual stage. Sdec denotes all neural decoder parameters, S8bit denotes the optional 8-bit protected-channel payload, SLoRA denotes optional LoRA adapters, and Smeta denotes indices, scales, and other meta-data. This accounting is necessary because a method can have the same nominal bit rate but very different real model sizes. It is also the fair way to compare B ISC O-LLM with explicit VQ methods and LiftQuant-style projection methods, where codebooks, projection parameters, scales, and metadata must be counted. 
+
+B. Pipeline Overview 
+
+Under this formulation, B ISC O-LLM constructs a com-pressed model through a storage-aware category-wise pipeline. For each target module category, the corresponding weight chunks are first encoded by a base BSQ codec, which maps them to bit-packed unit-sphere sign codes and reconstructs them with a compact neural decoder. A second BSQ codec is then trained on the residual left by the base reconstruction, assigning additional code capacity to the weight structure that is not captured in the first stage. After a category has been replaced by its compressed modules, category-wise recovery distillation is performed with the compressed category active in the model, before the pipeline proceeds to the next category. Once all target categories have been compressed and locally recovered, a final end-to-end recovery distillation stage can be applied to the fully compressed model to further reduce accumulated cross-category mismatch. A lightweight 8-bit protected path can be optionally enabled for a very small set of sensitive channels, and its storage is counted separately from the main BSQ payload. 
+
+C. Unit-Sphere Binary Weight Mapping 
+
+The first design choice of B ISC O-LLM is to represent a local weight chunk by its direction on a unit hypersphere rather than by an explicit centroid index. For each chunk x ∈ Rd, the encoder produces a latent vector z = Eϕ(x) ∈ Rb. Following BSQ [36], the latent vector is normalized and binarized as 
+
+u = z
+
+∥z∥2
+
+, q = sign( u)
+
+√b , q ∈
+
+
+
+− 1
+
+√b , + 1
+
+√b
+
+b
+
+. (4) This mapping imposes two constraints that are relevant to storage-aware LLM weight compression. First, all binary codes have the same ℓ2 norm and therefore provide the decoder with a magnitude-normalized discrete input. This reduces the dependence of the decoder on unconstrained latent amplitudes, but does not by itself guarantee lower reconstruction error. Second, the stored code for each chunk is the sign pattern of q rather than an index into an explicit vector dictionary. Thus, unlike conventional vector quantization with a codebook of K centroids in Rd, the main discrete payload does not require storing Kd floating-point codebook entries. Related codebook-free discrete representation methods, including LFQ and BSQ, have shown that binary latent codes can be trained without an explicit lookup table [35], [36]. During training, the non-differentiable sign operation is optimized with a straight-through estimator: 
+
+qste = u + ( q − u)detach , bx = Dθ (qste ). (5) 7
+
+The codec is trained by combining chunk reconstruction, latent commitment, and entropy regularization: 
+
+Lcodec = Lrec + λcLcom + λeLent . (6) For a mini-batch of N weight chunks, the three terms are defined as 
+
+Lrec = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+∥bxi − xi∥22,
+
+Lcom = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+∥ui − sg( qi)∥22,
+
+Lent = 1
+
+N
+
+> N
+
+X
+
+> i=1
+> b
+
+X
+
+> j=1
+
+H(pij ) − γ
+
+> b
+
+X
+
+> j=1
+
+H(¯ pj ).
+
+(7) Here sg( ·) denotes stop-gradient. Following the factorized soft BSQ distribution [36], the soft probability of the j-th bit is defined over the two spherical code values as 
+
+pij =
+
+
+
+σ
+
+
+
+− 2τ u ij 
+
+√b
+
+
+
+, σ 
+
+ 2τ u ij 
+
+√b
+
+ 
+
+, ¯pj = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+pij .
+
+(8) Thus, Lent sharpens each soft binary assignment while encour-aging batch-level bit diversity. This term is important because an implicit binary code space can be very large, and extreme compression should spend bits on codes that are actually used by LLM weight chunks. 
+
+D. Second-Stage Residual BSQ Compression 
+
+The second design choice is to allocate additional bits to the error left by the base spherical codec, rather than to simply enlarge a single binary code. The general idea of additive or residual vector coding is already supported by learned LLM compression methods such as AQLM and VPTQ, where multiple code components or residual quantization improve low-bit approximation [29], [30]. In explicit VQ, increasing the vector dimension or the number of codewords may introduce additional centroid storage and lookup cost. In BSQ, the codebook is implicit, so stored centroids are avoided; nevertheless, a larger implicit binary space is not necessarily an effective use of the available payload when the codec is trained on a finite set of pretrained weight chunks. To examine this issue, we first measure how much of a large implicit BSQ code space is actually occupied by a fixed pretrained model. We train a one-stage 2-bit BSQ codec for the 
+
+qproj matrices of Qwen3-8B and count the number of distinct binary code patterns to which at least one weight chunk is assigned in each layer. In this setting, the binary length is b =64 , so the theoretical sign-pattern space contains 264 possible codes. However, each layer provides only 219 weight chunks, which upper-bounds the number of code patterns that can be occupied, observed, and optimized for that layer. As shown in Fig. 1, the median number of occupied code patterns per layer is 524 ,286 , corresponding to a used fraction of approximately 
+
+2.84 × 10 −14 of the theoretical space. This diagnostic does not imply that BSQ codes are ineffective; instead, it indicates that most sign patterns introduced by a very large one-stage     
+
+> Fig. 1. Empirical utilization of the implicit BSQ code space on Qwen3-8B
+> qproj with a one-stage 2-bit setting. The upper panel compares the theoretical binary space 264 with the number of occupied code patterns in each layer on a logarithmic scale, where an occupied pattern means that at least one weight chunk is mapped to it. The lower panel zooms into the per-layer occupied-code counts; darker bars indicate layers with more repeated assignments, and the dashed line marks the number of weight chunks per layer. Although most chunks are assigned to distinct code patterns within each layer, the observed occupied-code count remains bounded by the finite number of chunks and covers only a tiny fraction of the theoretical sign-pattern space. This supports the view that simply enlarging a one-stage implicit binary space does not guarantee effective use of the additional representational capacity.
+
+binary space are not occupied by the finite set of pretrained weight chunks. We complement this utilization diagnostic with a nominal-rate-matched granularity sweep on LLaMA-2-7B by replacing an increasing prefix of module categories. The tested settings keep the code-only rate fixed at b/d = 2 , while increasing the chunk dimension d, binary length b, and decoder width. Thus, this experiment should be interpreted as a practical BSQ granularity diagnostic rather than as an isolated comparison of code-space cardinality. As shown in Fig. 2, small and medium granularities remain stable in the category-prefix replacement test, whereas the largest setting becomes unstable after multiple categories are compressed. The result suggests that, under the current training recipe, naively enlarging a one-stage BSQ code does not provide monotonic gains. Taken together, the two diagnostics provide complementary evidence for the residual design. The Qwen3-8B code-space analysis shows that a large implicit binary space can be far larger than the set of code patterns occupied by a fixed group of pretrained weights. The LLaMA-2-7B category-prefix sweep shows that increasing the one-stage granularity under the same nominal code rate does not reliably improve model-level behavior. These observations motivate the base– residual decomposition used by B ISC O-LLM: the base codec first reconstructs the dominant component, and the residual codec then spends the additional payload on the reconstruction error left by the base stage. This decomposition changes the learning target of the extra bits from the original heterogeneous weight distribution to a lower-energy residual distribution, while keeping each codec stage at a moderate granularity. Let r(0) = x. The base codec reconstructs br(1) from the original chunk, and the second-stage codec reconstructs the 810 3           
+
+> 10 4
+> 10 5
+> d/b
+> 8/16
+> 16/32
+> 32/64
+> 64/128
+> qq,k q,k,v q,k,v,o +gate +up all
+> Compressed module-category prefix
+> 6
+> 8
+> 10
+> 12
+> WikiText-2 perplexity
+> Fig. 2. Nominal-rate-matched BSQ granularity sweep under category-prefix replacement on LLaMA-2-7B. All settings use the same code-only rate b/d =2, while the chunk dimension, binary length, and decoder width increase from
+> 8/16 to 64 /128 . The vertical axis is broken to preserve the trend among stable settings while still showing the instability of the largest granularity. Together with Fig. 1, this result motivates assigning extra capacity to a residual BSQ stage rather than only enlarging a single-stage code.
+
+residual left by the base stage: 
+
+q(1) = Q
+
+
+
+Eϕ1 (r(0) )
+
+
+
+, br(1) = Dθ1 (q(1) ), (9) 
+
+r(1) = x − br(1) , q(2) = Q
+
+
+
+Eϕ2 (r(1) )
+
+
+
+, (10) 
+
+br(2) = Dθ2 (q(2) ), bx = br(1) + br(2) . (11) We call this design second-stage residual compression because the main additional capacity is assigned to the first-order reconstruction residual. The formulation can be extended to more stages, but the paper should present the two-stage form as the default setting unless later experiments show that a third stage gives a clearly better real-bpw trade-off. Table I provides evidence that adding a residual BSQ stage improves category-wise replacement perplexity in most tested settings. At 32D, the second stage improves all seven cate-gories. The gains are especially visible for MLP projections, where up proj improves from 6.23 to 5.95 and down proj 
+
+improves from 6.79 to 6.58. The table also contains a budget-comparable reading: comparing one-stage 32D BSQ with two-stage 16D ×2 BSQ gives the same total binary code length, and the two-stage form improves six out of seven categories. These results support the claim that the residual left by the base codec still contains recoverable information useful for model behavior. 
+
+E. Auxiliary 8-Bit Sensitive-Channel Path 
+
+The base and residual BSQ codecs define the primary compressed representation of B ISC O-LLM. However, at an extreme 2-bit budget, applying the same BSQ representation to all channels is unnecessarily risky. Prior studies on LLM quantization have shown that a small number of activation-salient or outlier-associated channels can dominate low-bit degradation [11], [17], [20], [21]. We therefore first identify                                                      
+
+> TABLE I PERPLEXITY OF LL AMA-2-7B WHEN COMPRESSING ONE LINEAR CATEGORY AT A TIME WITH ONE -STAGE AND TWO -STAGE BSQ. L OWER IS BETTER .∆IS TWO -STAGE PPL MINUS ONE -STAGE PPL. Category 16D 16D ×2∆16 32D 32D ×2∆32
+> q proj 5.72 5.65 -0.07 5.74 5.67 -0.07
+> k proj 5.69 5.66 -0.03 5.86 5.69 -0.17
+> v proj 6.12 6.18 +0.06 6.11 6.05 -0.06
+> o proj 5.88 5.84 -0.04 5.92 5.78 -0.14
+> gate proj 6.09 6.00 -0.09 6.15 5.95 -0.20
+> up proj 6.24 6.03 -0.21 6.23 5.95 -0.28
+> down proj 6.65 6.51 -0.14 6.79 6.58 -0.21
+
+a small set of high-impact channels before BSQ compression, store the corresponding original slices with an 8-bit quantizer, and apply the two-stage BSQ codecs only to the remaining unprotected slices. This auxiliary path is not intended to replace the BSQ representation, and its storage is counted separately in S8bit .The protected set is selected from the original weight and calibration statistics rather than from a BSQ reconstruction residual. For attention projections, we protect input channels. With Wcℓ ∈ Rdout ×din , an input channel corresponds to a column slice. We score column j by combining an activation-dependent statistic gcℓ,j , such as mean absolute activation, with the magnitude of the corresponding original weight slice: 
+
+Scℓ,j = gcℓ,j Wcℓ, :,j 2 , Pcℓ = TopK j
+
+ Scℓ,j , ⌈ρd in ⌉ ,
+
+(12) where c ∈ {q proj, k proj, v proj, o proj } and ρ is the protected-channel ratio. For gated MLP blocks, the intermediate channel is shared by gate proj , up proj , and down proj . Protecting these matrices independently can break this structural coupling. We therefore use coupled intermediate-channel protection before BSQ compression: the same intermediate index is selected for the output rows of gate proj and up proj and the corresponding input column of down proj . Following this coupled-channel view, the MLP score is aggregated as 
+
+Smlp  
+
+> ℓ,j
+
+= ggate ℓ,j Wgate ℓ,j, : 2
+
++ gup ℓ,j Wup ℓ,j, : 2
+
++ gdown ℓ,j Wdown ℓ, :,j 2 ,
+
+Pmlp  
+
+> ℓ
+
+= TopK j
+
+
+
+Smlp  
+
+> ℓ,j
+
+, ⌈ρd ffn ⌉
+
+
+
+.
+
+(13) This coupled selection follows the same rationale as SpenseGPT-style aligned MLP-channel selection, where 
+
+gate proj , up proj , and down proj are treated as a coupled structure rather than as independent matrices [64]. After the protected set is fixed, the selected slices are stored with an 8-bit quantizer. The BSQ codec is trained and applied on the complement, and the final reconstructed matrix is assembled as 
+
+cWcℓ [Scℓ ] = Q8 (Wcℓ [Scℓ ]) , cWcℓ [Scℓ ] = cWcℓ, BSQ [Scℓ ],
+
+(14) where Scℓ denotes the selected column, row, or coupled MLP slices induced by Pcℓ , and Q8(·) is a standard per-channel or per-group 8-bit quantizer. 9                                  
+
+> TABLE II EFFECTIVENESS OF 1% PROTECTED CHANNELS UNDER 2-BIT BSQ
+> CATEGORY REPLACEMENT ON LL AMA-2-7B. W IKI TEXT -2 PERPLEXITY IS REPORTED ,AND LOWER IS BETTER .Category No Prot. Prot. 1% ∆
+> qproj 5.67 5.59 -0.08
+> kproj 5.69 5.58 -0.11
+> vproj 6.05 5.86 -0.19
+> oproj 5.78 5.76 -0.02
+> gate proj 5.95 5.94 -0.01
+> up proj 5.95 5.92 -0.03
+> down proj 6.58 6.10 -0.48 Avg. 5.95 5.82 -0.13
+
+The usefulness of this auxiliary path is supported by the category-replacement diagnostic in Table II. Each experiment replaces one module category and evaluates the full model after replacement. In the protected variant, we first select and store 1% protected slices in 8-bit, then train and apply the same two-stage 2-bit BSQ setting on the remaining slices. Attention projections use input-channel protection, and MLP projections use coupled intermediate-channel protection. With this small protected set, the average WikiText-2 perplexity decreases from 5.95 to 5.82, and all seven categories improve over the unprotected baseline. The largest gain appears on 
+
+down proj , where the perplexity decreases from 6.58 to 6.10. These results motivate the use of protected channels as a lightweight safety mechanism in the extreme low-bit setting. The protection axis and protection ratio are further analyzed in the ablation section. 
+
+F. Category-Wise Recovery Distillation 
+
+Although the BSQ codecs are trained to minimize weight reconstruction error, reconstruction alone is not sufficient for preserving the final model behavior under extreme low-bit compression. Even small weight perturbations can be ampli-fied through activations, residual connections, normalization layers, and subsequent Transformer blocks, and the errors introduced by different compressed categories can accumu-late into an unacceptable task-level degradation. Layer-wise or local distillation has already been used in LLM quan-tization systems such as ZeroQuant, and low-rank adapters are a standard parameter-efficient recovery mechanism after quantization [15], [56], [57]. However, a layer-wise recovery objective remains local: it can reduce the loss measured at the current block while still failing to recover the behavior of the assembled compressed model. Therefore, after compressing and replacing one module category, B ISC O-LLM performs category-wise recovery distillation before moving to the next category. The teacher is the original model or the current reference model before this category replacement, and the student is the partially compressed model after replacement. Fig. 3 provides a diagnostic example on Qwen3-8B. In this experiment, each Transformer block is recovered with a layer-wise LoRA objective for 5k steps, using the setting 
+
+α = 0.25 , β = 0.1, and learning rate 10 −4. The local objective is not under-optimized in this run: all 36 block-level curves finish below their initial values, and the mean first-to-last loss reduction is 27.26%. Nevertheless, the matched prefix evaluation does not show reliable full-model recovery. The average downstream accuracy is 70.34% before activating recovered layers, reaches 70.71% at the best early prefix point, and decreases to 53.36% at the last evaluated prefix point. This observation does not prove that all layer-wise recovery strategies must fail, but it indicates that local convergence alone is not sufficient evidence of global recovery. It motivates the category-wise schedule used in B ISC O-LLM, where re-covery is performed after a coherent module category has been replaced and evaluated in the context of the remaining model. The recovery objective can combine output distribution distillation and hidden-state alignment: 
+
+Lrecover = λkd LKD + λhid Lhidden + λaux Laux . (15) In the default setting, only low-rank adapters are trained during recovery, while the BSQ codes are fixed. This makes the re-covery payload explicit and prevents the distillation stage from hiding compression cost inside full-precision weight updates. The implementation supports several recovery placements: LoRA on the compressed category, LoRA on the remaining uncompressed categories, decoder tuning, and decoder-plus-LoRA tuning. After all target categories are compressed, an optional end-to-end LoRA fine-tuning stage can be applied. This final stage addresses accumulated cross-category mismatch, while category-wise recovery addresses the local mismatch immedi-ately after each replacement. 
+
+G. Engineering Optimizations 
+
+To improve the usability and practical value of the pro-posed compression framework, we further incorporate a set of engineering optimizations around training scalability and de-ployment efficiency. Specifically, category-batched codec op-timization jointly processes the same module category across layers as parallel training instances, while batched parallel residual decoding avoids a sequential loading bottleneck for multi-stage reconstruction. These optimizations are important for applying B ISC O-LLM to LLM-scale models, although they do not change the mathematical form of the compressed representation or the storage accounting. 
+
+a) Category-batched codec optimization.: Optimizing one BSQ codec for each individual linear layer would be unnecessarily expensive. In Transformer LLMs, linears from the same module category, such as all down proj layers, usually have identical tensor shapes across layers. We ex-ploit this structure by collecting the weight chunks of all layers in the same category and treating them as parallel training instances of a shared codec optimization. Concretely, the prepared per-layer tensors are stacked along a model dimension and reshaped into batches of weight chunks, so a single optimization loop can update the category codec while processing multiple layers in parallel. This training-time batching improves codec optimization efficiency without introducing an additional stored representation; the resulting model still explicitly stores the BSQ code streams, decoders, optional 8-bit payloads, and metadata. 10 0.0 0.2 0.4 0.6 0.8 1.0        
+
+> Normalized training progress
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Normalized local loss
+> All-layer local loss trends: Qwen_Qwen3-8B_20260613_142019
+> Mean trend 0510 15 20 25 30 35
+> Number of prefix layers replaced
+> 50
+> 55
+> 60
+> 65
+> 70
+> Average downstream accuracy (%)
+> Prefix evaluation after sequentially activating recovered layers
+> 260612_080538 | lora, L=all, 5k, a=0.5, b=0.2, lr=1e-04
+> 260612_081206 | lora, L=all, 10k, a=0.5, b=0.2, lr=1e-04
+> 260613_142019 | lora, L=all, 5k, a=0.25, b=0.1, lr=1e-04
+> 260614_044726 | lora, L=all, 5k, a=0.2, b=0.05, lr=1e-04
+
+Fig. 3. Diagnostic comparison between layer-wise local convergence and prefix-level model behavior on Qwen3-8B. Left: all-layer normalized local losses for the layer-wise recovery setting α = 0 .25 , β = 0 .1, 5k steps, and learning rate 10 −4. Thin curves denote individual blocks and the thick curve denotes the mean trend. Right: prefix evaluation when recovered layers are progressively activated; the corresponding curve is included among the evaluated hyper-parameter settings. The matched setting reduces local losses for all parsed blocks, but the downstream accuracy still degrades at later prefix points. This result is used as a diagnostic motivation for category-wise recovery rather than as an exhaustive negative result for all possible layer-wise recovery configurations. 
+
+b) Batched parallel residual decoding.: The residual dependency between BSQ stages is used to define the training target of the second stage, but it does not require sequential decoding after training. Once the binary code tensors and de-coders are fixed, deployment can decode the base and residual stages independently and sum the reconstructed tensors: 
+
+cW = Assemble 
+
+
+
+Dθ1 (B(1) )
+
+
+
++ Assemble 
+
+
+
+Dθ2 (B(2) )
+
+
+
+.
+
+(16) When the stage decoders share the same architecture, we merge the stage index into the batch or group dimension and perform a packed decoding pass. The decoded tensors are then reshaped to recover the stage dimension and reduced by summation. This implements multi-stage residual decoding as batched parallel decoding and makes the decoding overhead measurable separately from accuracy. IV. E XPERIMENTS 
+
+A. Experimental Setup 
+
+Models. We plan to evaluate B ISC O-LLM on represen-tative open LLM families, including LLaMA-3 8B, Qwen3 8B. For each model, we will report the original FP16/BF16 performance and several compressed variants under different real bit budgets. 
+
+Target modules. Unless otherwise specified, the tar-get linear categories are q proj , k proj , v proj , o proj ,
+
+gate proj , up proj , and down proj . We will also evalu-ate partial compression settings, such as compressing only 
+
+down proj or only attention projections, to analyze category sensitivity. 
+
+Calibration and distillation data. The codec is optimized mainly on weight chunks, whereas calibration samples are used to estimate activation-dependent statistics for activation-aware reconstruction objectives and sensitivity-based channel selection. For recovery training, we follow the quantization-aware distillation setting of EdgeRazor [65] and construct a mixed distillation corpus from instruction-following, reason-ing, educational, reading-comprehension, science-question an-swering, and long-context data sources. The mixture includes Alpaca [66], OpenOrca [67], FineWeb-Edu [68], RACE [69], SciQ [70], LongAlpaca [71], and LongAlign [72]. Alpaca and OpenOrca provide general instruction-following and teacher-generated reasoning examples, FineWeb-Edu provides high-quality educational text, RACE and SciQ introduce reading-comprehension and science-question answering samples, and LongAlpaca and LongAlign improve the coverage of long-context instruction-following cases. Unless otherwise speci-fied, the same data mixture is used for category-wise recovery distillation and the final end-to-end distillation stage. For re-producibility, we report the number of sampled examples from each source, the sampling ratio, the total number of tokens, the maximum sequence length, the tokenizer, the random seed, and all preprocessing rules. We also keep the calibration and distillation data disjoint from evaluation benchmarks whenever the original dataset splits make such separation possible. 
+
+Evaluation tasks. We report perplexity on WikiText-2 [73] and C4 [74], and zero-shot or few-shot accuracy on common language-understanding benchmarks, including BoolQ [75], RTE from GLUE [76], WinoGrande [77], ARC-Easy and ARC-Challenge [78], OpenBookQA [79], PIQA [80], and MMLU [81]. 
+
+B. Comparison Baselines 
+
+The comparison baselines are selected according to the methods reported in Table III and are organized by quantiza-tion granularity. The scalar or group-wise PTQ group includes GPTQ [8], SpinQuant [24], OSTQuant [82], QuIP [44], and AWQ [11] when low-bit compatible results are available. These methods represent strong scalar-rounding or group-wise quantization pipelines with Hessian reconstruction, activation-aware calibration, incoherence processing, or equivalent rota-tion/scaling transformations. The vector or structured-code group includes AQLM [29], VPTQ [30], QuIP# [45], LiftQuant [32], and UniSVQ [33]. These baselines are the most directly related to BISC O-LLM, because they reduce low-bit quantization error using trellis codes, additive or vector quantization, lattice codebooks, dimensional lifting and projection, or unified scalar-vector 11 
+
+coding. For a fair storage comparison, we count all auxiliary components required by each method, including codebooks, projection matrices, scaling factors, residual payloads, and metadata, when computing the effective bit-width. 
+
+C. Main Comparison Results 
+
+Table III reports the main comparison in the 2-bit regime. On Qwen3-8B, B ISC O-LLM obtains a WikiText-2 perplexity of 10.18, which is close to the full-precision baseline of 9.73. This result is lower than the perplexity of the scalar baselines and also lower than the vector or structured-code baselines reported in the table, including AQLM, QuIP#, and UniSVQ. This suggests that the proposed binary spherical coding can preserve the language-modeling behavior of the original model under an extreme low-bit storage budget. For downstream tasks on Qwen3-8B, BISC O-LLM achieves an average score of 68.05 over the available seven-task set, compared with 69.92 for the full-precision model. The gap to the full-precision baseline is therefore 1.87 points. Compared with the vector baselines, B ISC O-LLM improves the average score over AQLM by 3.11 points, over QuIP# by 0.50 points, and over UniSVQ by 0.11 points. The gains are most visible on ARC-Challenge and ARC-Easy, where BISC O-LLM reaches 51.88 and 78.87, respectively. These results indicate that the codec does not only reduce recon-struction error in weight space, but can also retain task-level accuracy after category-wise recovery. The current comparison should still be interpreted with two qualifications. First, HellaSwag results are not yet available for BISC O-LLM on Qwen3-8B, so the average score is computed on the available evaluation subset rather than on exactly the same columns as all baselines. Second, the B ISC O-LLM results on LLaMA3-8B remain to be filled in. Therefore, the present table provides initial evidence for the effectiveness of BISC O-LLM on Qwen3-8B, while the final claim should be made after completing the missing evaluations. 
+
+D. Ablation Studies 
+
+Budget-matched residual stage. Additive and residual coding are supported by AQLM and VPTQ [29], [30]. Fig. 1, Fig. 2, and Table I motivate the BSQ-specific residual design in the method section. The first figure shows that the finite weight chunks of Qwen3-8B qproj occupy only a tiny fraction of a large one-stage implicit code space; the second figure shows that one-stage granularity enlargement is not reliably monotonic under matched nominal code rate; and the table shows that explicitly coding the base residual improves most category-wise replacements. In the ablation suite, we will further compare a single larger BSQ code with multiple smaller residual BSQ stages under the same real bpw, and report residual energy decay after each stage. 
+
+1) BSQ Codec Components: We further ablate the imple-mentation components of the BSQ codec on Qwen3-8B. This experiment does not revisit the necessity of protected channels, which has already been discussed in the method section. Instead, it asks two practical questions: whether the protected-channel payload must be stored in BF16, and whether the decoder architecture is important once the binary spherical codes and the residual stage are fixed. For each setting, we replace one module category in the full model at a time and report the average downstream accuracy over the completed categories. The attention average is computed over qproj , kproj ,
+
+vproj , and oproj , while the MLP average is computed over 
+
+gate proj , up proj , and down proj .Table IV shows that the auxiliary protected-channel path does not have to be stored in BF16. FP8-E4M3, FP8-E5M2, and INT8 all keep the overall average within a narrow range of 63.10–63.30, compared with 62.82 for the BF16-protected baseline. The small differences among the low-precision formats should not be over-interpreted as consistent improvements over BF16; rather, the result indicates that low-precision protected channels preserve the BF16-protected performance with negligible degradation and lower storage overhead. The decoder ablation further shows that decoder expressive-ness is more important than simply adding residual stages. Removing the residual block from the symmetric decoder slightly improves the overall average from 62.82 to 63.69 in this setting. In contrast, replacing the symmetric decoder with a linear decoder reduces the MLP average from 58.34 to 50.67, and increasing the number of linear residual stages from two to three does not recover the loss. We therefore use a compact symmetric decoder as the default codec decoder. 
+
+2) Protection Axis: The method section verifies that a small protected set is useful. We further ablate the protection axis in the single-matrix setting to compare input-channel and output-channel selection. Table V compares the two choices under the same 1% protection ratio. Input-channel protection gives a lower average perplexity, reducing the average from 5.89 to 5.82 compared with output-channel protection. It is also more effective on the more fragile categories in this diagnostic setting, especially vproj and down proj . Output-channel pro-tection is not ineffective; it slightly improves oproj , gate proj ,and up proj . Therefore, we use input-channel protection as the default single-matrix choice for attention projections, while the MLP projections follow the coupled intermediate-channel selection described in the method section. The protection axis is thus treated as a module-dependent implementation choice rather than a universal rule. 
+
+3) Protection Ratio: We next study whether the protection ratio needs to be increased beyond 1%. Since the 3% runs are currently available only for the more sensitive vproj and 
+
+down proj categories, we present this ablation as a ratio sweep on sensitive categories rather than a global conclusion for all modules. As shown in Table VI, increasing the ratio from 0% to 1% already captures 81.7% of the gain obtained by 3% protection on average over the two evaluated categories. Increasing the ratio from 1% to 3% still improves perplexity, but the additional average gain is 0.07. This diminishing-return behavior suggests that a 1% protected set removes most of the harmful sensitive-channel effect in the evaluated categories, while larger ratios mainly trade additional storage for incre-mental recovery. Unless otherwise specified, we therefore use 
+
+ρ = 1% for the auxiliary protected path, with input-channel protection for attention projections and coupled intermediate-12 
+
+TABLE III MAIN COMPARISON OF 2-BIT QUANTIZATION METHODS ON QWEN 3-8B AND LL AMA3-8B. C4 PERPLEXITY , RTE, O PEN BOOK QA, MMLU, AND BIT -WIDTH COLUMNS ARE OMITTED FOR COMPACTNESS . A VG . FOLLOWS THE AVAILABLE EVALUATION SET REPORTED BY EACH METHOD ; FOR 
+
+BISC O-LLM ON QWEN 3-8B, IT IS COMPUTED OVER BOOL Q, RTE, W INO GRANDE , ARC-E ASY , ARC-C HALLENGE , O PEN BOOK QA, AND PIQA, 
+
+WHILE THE LL AMA3-8B FULL -PRECISION AVG . FOLLOWS THE REPORTED SET OF WINO GRANDE , PIQA, O PEN BOOK QA, ARC-E ASY , AND 
+
+ARC-C HALLENGE .
+
+Model Type Method Wiki ↓ AC ↑ AE ↑ BQ ↑ HS ↑ PQ ↑ WG ↑ Avg. ↑
+
+Qwen3-8B FP16/BF16 Full precision 9.73 56.40 80.89 86.64 – 77.48 68.43 69.92 Scalar GPTQ 4.68 ×10 4 26.79 25.67 42.87 25.84 52.50 50.04 37.29 SpinQuant 17.82 30.46 48.40 67.06 47.94 63.17 58.64 52.61 OSTQuant 26.08 34.64 60.02 73.21 50.29 68.50 58.17 57.47 QuIP 27.61 24.91 31.69 54.89 41.41 59.90 50.12 43.82 Vector AQLM 18.26 45.22 72.31 73.73 60.99 73.07 64.33 64.94 QuIP# 12.37 46.50 68.43 83.12 66.62 74.32 66.30 67.55 UniSVQ 14.82 45.82 72.35 85.07 63.18 74.16 67.09 67.94 Ours BISC O-LLM 10.18 51.88 78.87 82.20 – 76.17 67.64 68.05 LLaMA3-8B FP16/BF16 Full precision 6.14 53.15 77.56 – – 80.57 73.16 65.85 Scalar GPTQ 2.55 ×10 6 25.93 25.08 46.20 26.27 51.63 49.88 37.50 SpinQuant 27.60 21.41 33.45 60.73 39.93 56.20 55.16 44.48 OSTQuant 37.35 25.26 39.90 61.99 38.59 61.21 53.28 46.71 QuIP 79.63 23.54 28.66 44.55 34.71 51.57 49.17 38.70 AWQ (LC) 1.10 ×10 6 27.10 26.00 58.30 26.10 51.40 49.80 39.78 Vector AQLM 27.60 32.76 53.41 78.38 63.60 67.41 63.46 59.84 VPTQ – 36.91 71.03 – 52.12 75.12 65.92 –QuIP# 9.42 47.44 73.27 80.21 70.70 78.13 69.53 69.88 LiftQuant 7.65 40.87 74.33 – 53.87 76.55 68.03 –UniSVQ 10.70 44.79 69.52 81.77 67.20 76.27 66.14 67.61 Ours BISC O-LLM – – – – – – – –
+
+TABLE IV ABLATION ON BSQ CODEC COMPONENTS ON QWEN 3-8B. T HE TABLE COMPARES THE STORAGE FORMAT OF PROTECTED CHANNELS AND THE DECODER ARCHITECTURE UNDER CATEGORY -WISE REPLACEMENT . L OW -PRECISION PROTECTED -CHANNEL FORMATS PRESERVE THE BF16-PROTECTED PERFORMANCE , WHEREAS REPLACING THE SYMMETRIC DECODER WITH A LINEAR DECODER SUBSTANTIALLY DEGRADES MLP PROJECTIONS .
+
+Group Setting Protected format Decoder Res. blocks Stages Attn Avg. ↑ MLP Avg. ↑ Overall Avg. ↑
+
+Protected format Protected-BF16 BF16 symmetric 1 2 66.67 57.68 62.82 Protected-E4M3 FP8-E4M3 symmetric 1 2 67.04 58.12 63.22 Protected-E5M2 FP8-E5M2 symmetric 1 2 66.33 58.79 63.10 Protected-INT8 INT8 symmetric 1 2 67.32 57.94 63.30 
+
+Decoder design Symmetric-res1 BF16 symmetric 1 2 66.67 57.68 62.82 Symmetric-res0 BF16 symmetric 0 2 67.70 58.34 63.69 
+
+Linear-2stage BF16 linear 0 2 64.80 50.67 58.74 Linear-3stage BF16 linear 0 3 64.83 49.86 58.42 
+
+TABLE V INPUT -CHANNEL VERSUS OUTPUT -CHANNEL PROTECTION WITH THE SAME 1% PROTECTION RATIO . W IKI TEXT -2 PERPLEXITY IS REPORTED ,
+
+AND LOWER IS BETTER .Category Input 1% Output 1% Better 
+
+qproj 5.59 5.68 Input 
+
+kproj 5.58 5.72 Input 
+
+vproj 5.86 5.98 Input 
+
+oproj 5.76 5.75 Output 
+
+gate proj 5.94 5.91 Output 
+
+up proj 5.92 5.91 Output 
+
+down proj 6.10 6.29 Input Avg. 5.82 5.89 Input 
+
+channel protection for MLP projections. V. D ISCUSSION 
+
+BISC O-LLM shifts part of the storage burden from explicit vector codebooks to shared neural decoders. This trade-off is 
+
+TABLE VI PROTECTION -RATIO SWEEP ON SENSITIVE CATEGORIES . I NPUT -CHANNEL PROTECTION IS USED . W IKI TEXT -2 PERPLEXITY IS REPORTED , AND LOWER IS BETTER .Category 0% 1% 3% Gain by 1% 
+
+vproj 6.05 5.86 5.76 65.5% 
+
+down proj 6.58 6.10 6.05 90.6% Avg. 6.32 5.98 5.91 81.7% 
+
+beneficial only when the decoder parameters are sufficiently amortized over many weight chunks and module instances. For this reason, nominal code rate alone is not an adequate mea-sure of compression quality. The real storage budget should include the bit-packed BSQ streams, decoder parameters, protected-channel payloads, LoRA adapters, and metadata. This accounting is particularly important when comparing BISC O-LLM with explicit-VQ, lattice-code, or projection-based methods, because different representations may have 13 
+
+similar code rates but different auxiliary storage costs. The proposed pipeline is also more optimization-intensive than conventional scalar PTQ. The BSQ codecs require category-wise training, and recovery distillation introduces ad-ditional data dependence and trainable parameters. Category-batched codec optimization and packed residual decoding reduce the practical overhead, but they do not make the method equivalent to simple rounding in calibration cost. Therefore, the method is most suitable for deployment scenarios where the compressed model will be reused many times and where the reduced model size can amortize the one-time compression and recovery cost. Another implication is that weight reconstruction error should be treated as a necessary but insufficient objective. The diagnostics in this paper show that local loss reduction does not necessarily translate into assembled-model recov-ery. Category-wise distillation is introduced to reduce this mismatch, but it also makes the final model depend on the choice of recovery data, loss terms, and adapter placement. This dependence should be reported explicitly when compar-ing recovered models with purely post-training methods. In addition, codec-only and recovery-enhanced variants should be distinguished when analyzing the contribution of the binary spherical representation itself. The current formulation is primarily a weight-only compres-sion framework. At inference time, the decoded weights can be materialized and then used by standard matrix multiplication kernels, which simplifies integration but does not fully exploit the binary structure of the stored codes. Direct computation from binary spherical codes, fused load-time decoding, or weight–activation quantization would require additional kernel and runtime design. These directions are orthogonal to the storage representation studied here and can further improve serving efficiency if the decoding overhead is reduced or fused with linear computation. Finally, the present design uses mostly fixed code rates and a small fixed protected-channel ratio. A more principled exten-sion is mixed-rate allocation across module categories, layers, and residual stages. Residual energy, activation statistics, or Hessian-based sensitivity can be measured before assigning additional capacity, suggesting that sensitive modules may benefit from more residual bits or a slightly larger protected-channel budget, while stable modules may use a smaller payload. Such adaptive allocation would turn B ISC O-LLM from a uniform 2-bit-oriented codec into a storage-constrained rate-allocation framework for LLM compression. VI. C ONCLUSION 
+
+This paper presented BISC O-LLM, a storage-aware codebook-free binary spherical coding framework for extreme low-bit LLM weight compression. The method replaces ex-plicit VQ centroids with bit-packed unit-sphere binary codes and compact neural decoders, assigns additional code capacity to the residual left by the base BSQ codec, and performs category-wise recovery distillation after each Transformer module category is replaced. A small 8-bit protected-channel path is used only as an auxiliary mechanism for sensitive channels, and its payload is reported separately from the main BSQ code stream. The experiments support the main design choices at several levels: code-space utilization and granularity diagnostics motivate residual coding; category-replacement results show that the second BSQ stage and 1% protected channels improve most tested module categories; decoder ablations indicate that a compact nonlinear decoder is preferable to a linear decoder under the tested setting; and the Qwen3-8B comparison shows a WikiText-2 perplexity of 10.18 and an average downstream accuracy gap of 1.87 points relative to the FP16/BF16 baseline over the reported seven-task set. These results suggest that codebook-free spherical coding is a viable representation for 2-bit-oriented LLM compression when real storage accounting and recovery cost are explicitly considered. The discussion further identifies weight–activation quantization, fused binary-code kernels, and more principled mixed-rate allocation across categories and stages as natural extensions of the current framework. REFERENCES [1] T. B. Brown, B. Mann, N. Ryder, M. Subbiah, J. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. M. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei, “Language models are few-shot learners,” in Advances in Neural Information Processing Systems , 2020. [2] H. Touvron, T. Lavril, G. Izacard, X. Martinet, M.-A. Lachaux, T. Lacroix, B. Rozi` ere, N. Goyal, E. Hambro, F. Azhar, A. Rodriguez, A. Joulin, E. Grave, and G. Lample, “Llama: Open and efficient foundation language models,” arXiv preprint arXiv:2302.13971 , 2023. [3] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat et al. , “Gpt-4 technical report,” arXiv preprint arXiv:2303.08774 , 2023. [4] A. Liu, B. Feng, B. Xue, B. Wang et al. , “V3 technical report,” arXiv preprint arXiv:2412.19437 , 2024. [5] D. Guo, D. Yang, H. Zhang, J. Song et al. , “R1: Incentivizing rea-soning capability in llms via reinforcement learning,” arXiv preprint arXiv:2501.12948 , 2025. [6] Kimi Team, “Kimi k2: Open agentic intelligence,” arXiv preprint arXiv:2507.20534 , 2025. [7] A. Zeng, X. Lv, Q. Zheng, Z. Hou et al. , “Arc foundation models,” arXiv preprint arXiv:2508.06471 , 2025. [8] E. Frantar, S. Ashkboos, T. Hoefler, and D. Alistarh, “GPTQ: Accurate post-training quantization for generative pre-trained transformers,” in                       
+
+> International Conference on Learning Representations , 2023. [9] Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, D. Y. Fu, Z. Xie, B. Chen, C. Barrett, J. E. Gonzalez, P. Liang, C. R´ e, I. Stoica, and C. Zhang, “Flexgen: High-throughput generative inference of large language models with a single gpu,” in International Conference on Machine Learning , 2023. [10] Y. J. Kim, R. Henry, R. Fahim, and H. H. Awadalla, “Finequant: Unlocking efficiency with fine-grained weight-only quantization for llms,” arXiv preprint arXiv:2308.09723 , 2023. [11] J. Lin, J. Tang, H. Tang, S. Yang, X. Dang, and S. Han, “AWQ: Activation-aware weight quantization for large language model com-pression and acceleration,” in Proceedings of Machine Learning and Systems , 2024. [12] T. Gunter, Z. Wang, C. Wang, R. Pang, A. Narayanan et al. , “Apple intel-ligence foundation language models,” arXiv preprint arXiv:2407.21075 ,2024. [13] B. Rama, K. Mei, and Y. Zhang, “Cerebrum (aios sdk): A platform for agent development, deployment, distribution, and discovery,” arXiv preprint arXiv:2503.11444 , 2025. [14] X. Wang, S. Rosenberg, J. Michelini, C. Smith, H. Tran et al. , “Open-hands software agent sdk,” arXiv preprint arXiv:2511.03690 , 2025. [15] Z. Yao, R. Y. Aminabadi, M. Zhang, X. Wu, C. Li, and Y. He, “ZeroQuant: Efficient and affordable post-training quantization for large-scale transformers,” in Advances in Neural Information Processing Systems , 2022. 14
+
+[16] W. Shao, M. Chen, Z. Zhang, P. Xu, L. Zhao, Z. Li, K. Zhang, P. Gao, Y. Qiao, and P. Luo, “OmniQuant: Omnidirectionally calibrated quantization for large language models,” in International Conference on Learning Representations , 2024. [17] T. Dettmers, M. Lewis, Y. Belkada, and L. Zettlemoyer, “LLM.int8(): 8-bit matrix multiplication for transformers at scale,” in Advances in Neural Information Processing Systems , 2022. [18] Z. Yuan, C. Xue, Y. Chen, Q. Wu, and G. Sun, “RPTQ: Reorder-based post-training quantization for large language models,” 2023. [19] G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han, “SmoothQuant: Accurate and efficient post-training quantization for large language models,” in International Conference on Machine Learn-ing , 2023. [20] T. Dettmers, R. Svirschevski, V. Egiazarian, D. Kuznedelev, E. Frantar, S. Ashkboos, A. Borzunov, T. Hoefler, and D. Alistarh, “SpQR: A sparse-quantized representation for near-lossless LLM weight compres-sion,” in International Conference on Learning Representations , 2024. [21] S. Kim, C. Hooper, A. Gholami, M. W. Mahoney, Y. Shao, and K. Keutzer, “SqueezeLLM: Dense-and-sparse quantization,” in Interna-tional Conference on Machine Learning , 2024. [22] Y. Zhao, J. Lin, J. Tang, S. Yang, and S. Han, “Atom: Low-bit quantization for efficient and accurate LLM serving,” in Proceedings of Machine Learning and Systems , 2024. [23] S. Ashkboos, M. L. Croci, M. G. d. Nascimento, T. Hoefler, and J. Hensman, “QuaRot: Outlier-free 4-bit inference in rotated LLMs,” 2024. [24] Z. Liu, C. Zhao, I. Fedorov, B. Soran, D. Choudhary, R. Krishnamoorthi, V. Chandra, and Y. Tian, “SpinQuant: LLM quantization with learned rotations,” 2024. [25] Q. Zhu, Y. Ren, L. Yang, M. Lin, Y. Li et al. , “Squeeze10-llm: Squeezing llms’ weights by 10 times via a staged mixed-precision quantization method,” arXiv preprint arXiv:2507.18073 , 2025. [26] X. Li, O. Hanna, C. Fragouli, and S. Diggavi, “Icquant: Index coding enables low-bit llm quantization,” arXiv preprint arXiv:2505.00850 ,2025. [27] X. Zhang, X. Wu, J. Wang, and W. Lin, “Learning grouped lat-tice vector quantizers for low-bit llm compression,” arXiv preprint arXiv:2510.20984 , 2025. [28] T. F. A. van der Ouderaa, M. van Baalen, P. Whatmough, and M. Nagel, “Leech lattice vector quantization for efficient llm compression,” arXiv preprint arXiv:2603.11021 , 2026. [29] V. Egiazarian, A. Panferov, D. Kuznedelev, E. Frantar, A. Babenko, and D. Alistarh, “Extreme compression of large language models via additive quantization,” in International Conference on Machine Learning , 2024. [30] Y. Liu, J. Wen, Y. Wang, S. Ye, L. L. Zhang, T. Cao, C. Li, and M. Yang, “VPTQ: Extreme low-bit vector post-training quantization for large language models,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing . Miami, Florida, USA: Association for Computational Linguistics, 2024, pp. 8181–8196. [31] Y. Tian, C. Wang, J. Han, Y. Tang, and K. Han, “Pocketllm: Ulti-mate compression of large language models via meta networks,” arXiv preprint arXiv:2511.17637 , 2025. [32] L. He, X. Liu, J. Liu, T. Feng, T. Lu, C. Gan, Z. Peng, Y. Du, H. Yang, Y. Liu, and L. Du, “LiftQuant: Continuous bit-width LLM via dimensional lifting and projection,” 2026. [33] H. Wang, H. Zhao, X. Yu, Z. Yao, X. Han, Z. Liu, and M. Sun, “Unisvq: 2-bit unified scalar-vector quantization,” arXiv preprint arXiv:2606.10520 , 2026. [34] H. Wang, X. Yu, H. Zhao, F. Wang, and X. Han, “Lc-qat: Data-efficient 2-bit qat for llms via linear-constrained vector quantization,” arXiv preprint arXiv:2606.10531 , 2026. [35] L. Yu, J. Lezama, N. B. Gundavarapu, L. Versari, K. Sohn, D. Minnen, Y. Cheng, V. Birodkar, A. Gupta, X. Gu, A. G. Hauptmann, B. Gong, M.-H. Yang, I. Essa, D. A. Ross, and L. Jiang, “Language model beats diffusion: Tokenizer is key to visual generation,” in International Conference on Learning Representations , 2024. [36] Y. Zhao, Y. Xiong, and P. Kr¨ ahenb¨ uhl, “Image and video tokenization with binary spherical quantization,” 2024. [37] C. Lee, J. Jin, T. Kim, H. Kim, and E. Park, “OWQ: Outlier-aware weight quantization for efficient fine-tuning and inference of large language models,” in Proceedings of the AAAI Conference on Artificial Intelligence , 2024. [38] Y. Ma, H. Li, X. Zheng, F. Ling, X. Xiao, R. Wang, S. Wen, F. Chao, and R. Ji, “AffineQuant: Affine transformation quantization for large language models,” in International Conference on Learning Representations , 2024. [Online]. Available: https://openreview.net/ forum?id=of2rhALq8l [39] Z. Liu, B. Oguz, C. Zhao, E. Chang, P. Stock, Y. Mehdad, Y. Shi, R. Krishnamoorthi, and V. Chandra, “LLM-QAT: Data-free quantization aware training for large language models,” in Findings of the Associ-ation for Computational Linguistics: ACL 2024 . Bangkok, Thailand: Association for Computational Linguistics, 2024, pp. 467–484. [40] D. Du, Y. Zhang, S. Cao, J. Guo, T. Cao, X. Chu, and N. Xu, “BitDistiller: Unleashing the potential of sub-4-bit LLMs via self-distillation,” in Proceedings of the 62nd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) . Bangkok, Thailand: Association for Computational Linguistics, 2024, pp. 102– 116. [41] Y. Xu, X. Han, Z. Yang, S. Wang, Q. Zhu, Z. Liu, W. Liu, and W. Che, “OneBit: Towards extremely low-bit large language models,” in Advances in Neural Information Processing Systems , 2024. [42] A. van den Oord, O. Vinyals, and K. Kavukcuoglu, “Neural discrete representation learning,” in Advances in Neural Information Processing Systems , 2017. [43] M. van Baalen, A. Kuzmin, M. Nagel, P. Couperus, C. Bastoul, E. Mahurin, T. Blankevoort, and P. Whatmough, “GPTVQ: The blessing of dimensionality for LLM quantization,” 2024. [44] J. Chee, Y. Cai, V. Kuleshov, and C. M. De Sa, “QuIP: 2-bit quantization of large language models with guarantees,” in Advances in Neural Information Processing Systems , 2023. [45] A. Tseng, J. Chee, Q. Sun, V. Kuleshov, and C. De Sa, “QuIP#: Even better LLM quantization with hadamard incoherence and lattice codebooks,” in International Conference on Machine Learning , 2024. [46] ——, “QTIP: Quantization with trellises and incoherence processing,” 2024. [47] F. Mentzer, D. Minnen, E. Agustsson, and M. Tschannen, “Finite scalar quantization: VQ-VAE made simple,” in International Conference on Learning Representations , 2024. [48] Z. Luo, F. Shi, Y. Ge, Y. Yang, L. Wang, and Y. Shan, “Open-MAGVIT2: An open-source project toward democratizing auto-regressive visual generation,” 2024. [49] M. Weber, L. Yu, Q. Yu, X. Deng, X. Shen, D. Cremers, and L.-C. Chen, “MaskBit: Embedding-free image generation via bit tokens,” 
+
+Transactions on Machine Learning Research , 2024. [50] Y. Zhu, T. Ibuki, M. Reid, Y. Matsuo, S. S. Gu, and Y. Iwasawa, “SimVQ: Addressing representation collapse in vector quantized models with one linear layer,” 2024. [51] C. Fifty, R. G. Junkins, D. Duan, A. Iyengar, J. W. Liu, E. Amid, S. Thrun, and C. R´ e, “Restructuring vector quantization with the rotation trick,” 2024. [52] J. Wang, Z. Qin, Y. Zhang, V. T. Hu, B. Ommer, R. Briq, and S. Kessel-heim, “Scaling image tokenizers with grouped spherical quantization,” 2024. [53] E. Frantar and D. Alistarh, “SparseGPT: Massive language models can be accurately pruned in one-shot,” in Proceedings of the 40th International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, vol. 202. PMLR, 2023. [54] M. Sun, Z. Liu, A. Bair, and J. Z. Kolter, “A simple and effective pruning approach for large language models,” in International Conference on Learning Representations , 2024. [55] X. Ma, G. Fang, and X. Wang, “LLM-Pruner: On the structural pruning of large language models,” in Advances in Neural Information Process-ing Systems , 2023. [56] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen, “LoRA: Low-rank adaptation of large language models,” in International Conference on Learning Representations , 2022. [57] T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer, “QLoRA: Efficient finetuning of quantized LLMs,” in Advances in Neural Infor-mation Processing Systems , 2023. [58] Y. Xu, L. Xie, X. Gu, X. Chen, H. Chang, H. Zhang, Z. Chen, X. Zhang, and Q. Tian, “QA-LoRA: Quantization-aware low-rank adaptation of large language models,” in International Conference on Learning Rep-resentations , 2024. [59] Y. Li, Y. Yu, C. Liang, N. Karampatziakis, P. He, W. Chen, and T. Zhao, “LoftQ: LoRA-fine-tuning-aware quantization for large language mod-els,” in International Conference on Learning Representations , 2024. [60] H. Guo, P. Greengard, E. P. Xing, and Y. Kim, “LQ-LoRA: Low-rank plus quantized matrix decomposition for efficient language model finetuning,” 2023. [61] H. Jeon, Y. Kim, and J.-J. Kim, “L4Q: Parameter efficient quantization-aware fine-tuning on large language models,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) . Vienna, Austria: Association for Computational Linguistics, 2025, pp. 2002–2024. 15 
+
+[62] G. Lee, J. Lee, S. Hong, M. Kim, E. Ahn, D.-S. Chang, and J. Choi, “RILQ: Rank-insensitive LoRA-based quantization error compensation for boosting 2-bit large language model accuracy,” in Proceedings of the AAAI Conference on Artificial Intelligence , 2025. [63] Y. Park, H. Kim, and S. Choi, “SERQ: Saliency-aware low-rank error reconstruction for LLM quantization,” 2026. [64] J. Lee, S.-w. Hwang, and S. Rajbhandari, “SpenseGPT: Practical one-shot pruning enabling sparse and dense GEMMs for LLM inference,” 2026. [65] S.-H. Zhang, L.-T. Huang, X.-S. Deng, X.-Y. Zou, C. Wu, N. Li, and S.-Q. Zhang, “EdgeRazor: A lightweight framework for large language models via mixed-precision quantization-aware distillation,” 
+
+arXiv preprint arXiv:2605.04062 , 2026. [66] R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. B. Hashimoto, “Stanford alpaca: An instruction-following LLaMA model,” https://github.com/tatsu-lab/stanford alpaca, 2023. [67] W. Lian, B. Goodson, E. Pentland, A. Cook, C. Vong, and Teknium, “OpenOrca: An open dataset of GPT augmented FLAN reasoning traces,” https://huggingface.co/datasets/Open-Orca/OpenOrca, 2023. [68] G. Penedo, H. Kydl´ ıˇ cek, L. Ben Allal, A. Lozhkov, M. Mitchell, C. Raf-fel, L. Von Werra, and T. Wolf, “The FineWeb datasets: Decanting the web for the finest text data at scale,” arXiv preprint arXiv:2406.17557 ,2024. [69] G. Lai, Q. Xie, H. Liu, Y. Yang, and E. Hovy, “RACE: Large-scale ReAding comprehension dataset from examinations,” in Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing , 2017, pp. 785–794. [70] J. Welbl, N. F. Liu, and M. Gardner, “Crowdsourcing multiple choice science questions,” in Proceedings of the 3rd Workshop on Noisy User-generated Text , 2017, pp. 94–106. [71] Y. Chen, S. Qian, H. Tang, X. Lai, Z. Liu, S. Han, and J. Jia, “Lon-gLoRA: Efficient fine-tuning of long-context large language models,” 
+
+arXiv preprint arXiv:2309.12307 , 2023. [72] Y. Bai, X. Lv, J. Zhang, Y. He, J. Qi, L. Hou, J. Tang, Y. Dong, and J. Li, “LongAlign: A recipe for long context alignment of large language models,” arXiv preprint arXiv:2401.18058 , 2024. [73] S. Merity, C. Xiong, J. Bradbury, and R. Socher, “Pointer sentinel mixture models,” arXiv preprint arXiv:1609.07843 , 2017. [74] C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu, “Exploring the limits of transfer learning with a unified text-to-text transformer,” Journal of Machine Learning Research , vol. 21, no. 140, pp. 1–67, 2020. [75] C. Clark, K. Lee, M.-W. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova, “BoolQ: Exploring the surprising difficulty of natural yes/no questions,” in Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , 2019, pp. 2924–2936. [76] A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. R. Bowman, “GLUE: A multi-task benchmark and analysis platform for natural language understanding,” in International Conference on Learning Rep-resentations , 2019. [77] K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi, “WinoGrande: An adversarial winograd schema challenge at scale,” Communications of the ACM , vol. 64, no. 9, pp. 99–106, 2021. [78] P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord, “Think you have solved question answering? try ARC, the AI2 reasoning challenge,” in arXiv preprint arXiv:1803.05457 , 2018. [79] T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal, “Can a suit of armor conduct electricity? a new dataset for open book question answering,” in 
+
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , 2018, pp. 2381–2391. [80] Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi, “PIQA: Reasoning about physical commonsense in natural language,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 34, no. 05, 2020, pp. 7432–7439. [81] D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt, “Measuring massive multitask language understanding,” in 
+
+International Conference on Learning Representations , 2021. [82] X. Hu, Y. Cheng, D. Yang, Z. Xu, Z. Yuan, J. Yu, C. Xu, Z. Jiang, and S. Zhou, “OSTQuant: Refining large language model quantization with orthogonal and scaling transformations for better distribution fitting,” 2025.
