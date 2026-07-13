@@ -1,0 +1,976 @@
+Title: Differentially Private Natural Gradient Descent
+
+URL Source: https://arxiv.org/pdf/2607.05866v1
+
+Published Time: Wed, 08 Jul 2026 00:41:09 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Differentially Private Natural Gradient Descent 
+
+# Li Pan 
+
+Institute of Information Engineering, Chinese Academy of Sciences Beijing, China lipan@iie.ac.cn 
+
+# Chen Kai 
+
+Institute of Information Engineering, Chinese Academy of Sciences Beijing, China chenkai@iie.ac.cn 
+
+# Chang Shuai 
+
+Institute of Information Engineering, Chinese Academy of Sciences Beijing, China changshuai751x@iie.ac.cn 
+
+# Zhang Sheng Zhi 
+
+Department of Computer Science, Metropolitan College, Boston University Boston, United States shengzhi@bu.edu 
+
+# Lv Pei Zhuo 
+
+Nanyang Technological University Singapore, Singapore lvpeizhuo@gmail.com 
+
+# He Jin Wen 
+
+Institute of Information Engineering, Chinese Academy of Sciences Beijing, China hejinwen@iie.ac.cn 
+
+## ABSTRACT 
+
+Under a fixed privacy budget, the utility of differentially private (DP) training is ultimately determined by its optimization efficiency. Standard first-order DP optimizers such as DP-SGD rely solely on local gradients and ignore the underlying loss curvature. This geometric blindness causes severe zigzagging in ill-conditioned landscapes, squandering precious privacy budgets on inefficient iterations. Practitioners are thus trapped in a bind: either stop training prematurely or inject massive per-step noise, both of which critically compromise final model utility. Natural Gradient Descent (NGD) resolves this by preconditioning gradients with curvature, aligning updates with the loss geometry and extracting more efficient signal from every noisy step, offering a principled pathway to break the privacy-utility bottleneck. Despite its theoretical appeal, directly integrating NGD with DP introduces fundamental challenges: curvature estimation itself con-sumes prohibitive privacy budgets, isotropic DP operations conflict with the anisotropic scaling of NGD, and the inverse curvature cat-astrophically amplify parameter updates in flat directions, causing training instability. We propose DP-NGD, a practical framework that systematically addresses these obstacles by decoupling curvature estimation from private data, reconciling isotropic DP constraints with anisotropic second-order optimization via a whitened-space mechanism, and dynamically clamping the curvature to stabilize training. Extensive experiments on standard benchmarks demonstrate that DP-NGD achieves state-of-the-art accuracy, breaking through the utility ceilings of first-order baselines while delivering up to a 
+
+10 × convergence speedup under the same privacy budget. 
+
+PVLDB Reference Format: 
+
+Li Pan, Chen Kai, Chang Shuai, Zhang Sheng Zhi, Lv Pei Zhuo, and He Jin Wen. Differentially Private Natural Gradient Descent. PVLDB, 14(1): XXX-XXX, 2026. doi:XX.XX/XXX.XX 
+
+> This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment. Proceedings of the VLDB Endowment, Vol. 14, No. 1 ISSN 2150-8097. doi:XX.XX/XXX.XX
+
+PVLDB Artifact Availability: 
+
+The source code, data, and/or other artifacts have been made available at https://github.com/XXX. 
+
+## 1 INTRODUCTION 
+
+Differential Privacy (DP) [ 14 , 15 ] has emerged as the gold standard for privacy-preserving machine learning. Under a fixed privacy budget, the final utility of DP training is bottlenecked by its optimization efficiency. Standard first-order DP optimizers, such as DP-SGD [ 1, 8 ]and its adaptive variants, suffer from inherent “geometric blindness”: they rely solely on local gradients and ignore the loss curvature. This leads to the severe zigzagging and slow convergence in highly ill-conditioned loss landscapes typical of deep networks, as illustrated in Fig. 1(a). In non-private training, slow convergence is often harmless, since one can simply run more iterations. However, in DP training, every iteration strictly consumes the privacy budget. This inefficiency squanders the precious budget on uninformative steps and traps practitioners in a bind: either stop training prematurely or inject massive per-step noise, both of which critically compromise final model utility. Natural Gradient Descent (NGD) [ 25 , 29 ], a classic second-order optimization method, fundamentally resolves this geometric blindness. As depicted in Fig. 1(b), by preconditioning the gradient with a curvature matrix 𝐹 (e.g., the Fisher Information Matrix), NGD corrects the update direction to point more directly toward the local optimum, significantly accelerating convergence across ill-conditioned landscapes. Crucially, this acceleration directly translates to higher utility under the same privacy guarantee. Under standard DP accounting mechanisms (e.g., Rényi DP [ 32 , 33 ] or Moments Accountant [ 16 , 40 ]), the required per-step noise multiplier 𝜎 scales as 𝜎 ∝ √𝑇 for a fixed total privacy budget. By drastically reducing the required number of iterations 𝑇 , NGD enables substantially lower per-step noise injection, thereby elevating the signal-to-noise ratio (SNR) throughout training. This provides a mathematically principled pathway to break the longstanding privacy-utility bottleneck. Despite its theoretical appeal, integrating NGD with DP is hin-dered by three fundamental challenges. First, standard NGD requires accurate curvature estimation from private data, which would con-sume a prohibitive fraction of the privacy budget in DP settings. Diverting the budget 𝜖 to this auxiliary computation starves the arXiv:2607.05866v1 [cs.LG] 7 Jul 2026 (a) SGD (geometry-blind) (b) NGD (curvature-aware) 
+
+Figure 1: Why optimization efficiency dictates differential privacy utility. Here, 𝜃 𝑡 represents the current model parameters and 𝜃 ∗ is the local optimum. (a) SGD (geometry-blind). The gradient 𝑔 simply follows the orthogonal direction of the loss contours rather than pointing toward the local optimum. This blindness induces severe zigzagging and slow convergence, rapidly depleting the fixed privacy budget. (b) NGD (curvature-aware). Second-order methods precondition the gradient with the inverse curvature 𝐹 −1. The resulting natural gradient 𝐹 −1𝑔 points more directly toward 𝜃 ∗, significantly accelerating convergence and drastically reducing inefficient steps. Because fewer iterations allow the fixed budget to be concentrated, it significantly lowers the per-step noise ( 𝜎 ∝ √𝑇 ) and raises the effective signal-to-noise ratio, ultimately unlocking superior model utility. 
+
+primary optimization process, largely negating any theoretical SNR gain. Second, differential privacy mandates isotropic clipping and noise injection to uniformly bound sensitivity, whereas NGD relies on anisotropic, curvature-aware scaling to achieve acceleration. Directly imposing isotropic DP constraints on natural gradients corrupts the geometric properties essential for second-order optimization. Third, in flat directions of the loss landscape where the eigenvalues of 𝐹 
+
+approach zero ( 𝜆 𝑖 → 0), the inverse curvature 𝐹 −1 magnifies the noisy gradients by 1/𝜆 𝑖 → ∞ , triggering training instability and catastrophic divergence. To systematically resolve these bottlenecks, we propose DP-NGD, a practical and robust framework. First, we eliminate the privacy overhead of curvature estimation by computing 𝐹 solely on a small public auxiliary dataset to extract structural priors, thereby preserving the entire privacy budget for gradient updates. Second, we resolve the geometric incompatibility via an 𝐹 −1/2-whitened space update mechanism. We prove that performing isotropic DP operations in this whitened space mathematically translates to applying anisotropic, curvature-aware updates in the original parameter space. Crucially, this theoretical alignment reveals a profound connection—it unifies the DP sensitivity constraint with the KL trust region of NGD. Finally, to prevent parameter explosion in flat directions, we derive a dynamic clamping floor from the expected Euclidean step size of DP-SGD. By clamping the curvature eigenvalues consistently above this threshold, we effectively suppress flat-direction parameter explosion while preserving second-order acceleration in steep directions. 
+
+Contributions. Our main contributions are summarized as follows: 
+
+• Privacy-Free Curvature Acceleration. Our key insight is that DP noise disproportionately corrupts fine-grained gradient components, making DP training inherently tolerant of curvature estimation errors in these directions. Consequently, coarse-grained structural priors suffice for effective second-order acceleration. We realize this through a decoupled DP-NGD framework that estimates the curvature entirely on a small public auxiliary dataset, incurring zero additional privacy cost over standard DP-SGD. 
+
+• KL-DP Duality. We prove that applying isotropic DP opera-tions within an 𝐹 −1/2-whitened space mathematically translates to curvature-aligned anisotropic updates in the original parameter space. This establishes a rigorous KL-DP Duality that unifies the DP sensi-tivity constraint with the KL trust region of NGD. To ensure stable training, we further introduce a dynamic clamping mechanism that effectively prevents parameter explosion in flat directions. 
+
+• Superior Efficiency and Utility. Across multiple benchmarks, DP-NGD consistently achieves state-of-the-art accuracy while dra-matically accelerating convergence. For instance, it breaks through the utility ceilings of baselines with up to a 10 × convergence speedup (e.g., reaching the peak accuracy of DP-SGD using only 42.8 % of the iterations on CIFAR-10 under 𝜖 = 1.0 ). DP-NGD offers a highly practical and robust second-order accelerator for privacy-preserving deep learning. 
+
+## 2 PRELIMINARIES 2.1 Differential Privacy & DP-SGD 
+
+Differential Privacy. Differential Privacy (DP) [ 13 ] provides a rigor-ous mathematical framework for privacy-preserving computation. A randomized algorithm M satisfies (𝜖, 𝛿 )-DP if, for any two adjacent datasets 𝐷 and 𝐷 ′ differing by at most one example, and for any subset of outputs 𝑆 ⊆ Range (M) , it holds that: 
+
+Pr [M ( 𝐷 ) ∈ 𝑆 ] ≤ 𝑒 𝜖 Pr [M ( 𝐷 ′) ∈ 𝑆 ] + 𝛿. (1) 
+
+> 2
+
+DP-SGD & Isotropic Operations. The standard approach to train-ing deep networks under DP is DP-SGD. At each iteration, it com-putes the per-sample gradient 𝑔 𝑖 and clips it to a maximum 𝐿 2-norm bound 𝐶 , i.e., ¯𝑔 𝑖 = 𝑔 𝑖 · min (1, 𝐶   
+
+> ∥𝑔 𝑖 ∥2
+
+). Then, it aggregates the clipped gradients and injects Gaussian noise to ensure privacy: 
+
+˜𝑔 = 1
+
+|B|  ∑︁ 𝑖 ∈ B 
+
+¯𝑔 𝑖 + N ( 0, 𝜎 2𝐶 2I)
+
+!
+
+, (2) where B is the mini-batch and 𝜎 is the noise multiplier. Crucially, both the 𝐿 2-norm clipping boundary and the spherical Gaussian noise covariance ( 𝜎 2𝐶 2I) are strictly isotropic across the entire parameter space. 
+
+Privacy Accounting. To rigorously track the privacy loss over 𝑇 
+
+iterations, modern implementations typically rely on advanced pri-vacy accounting methods[ 39 ], such as the Moments Accountant [ 40 ]or Rényi Differential Privacy (RDP) [ 32 , 33 ]. Under standard com-position theorems, for a fixed overall privacy budget (𝜖, 𝛿 ) and sampling rate 𝑞 = |B|/ 𝑁 , the required per-step noise multiplier 𝜎 
+
+asymptotically scales as: 
+
+𝜎 ∝ 𝑞 √︁ 𝑇 log (1/𝛿 )
+
+𝜖 . (3) This establishes a fundamental property: when other privacy param-eters are fixed, the injected noise scales with the square root of the total iterations ( 𝜎 ∝ √𝑇 ). Consequently, accelerating convergence to reduce 𝑇 provides a mathematically principled pathway to decrease per-step noise and improve model utility. 
+
+## 2.2 Natural Gradient Descent & K-FAC 
+
+KL Trust Region. Natural Gradient Descent (NGD) approaches optimization from an information-geometric perspective. Instead of updating parameters in the Euclidean space, NGD minimizes the objective L within a local KL-divergence trust region [ 35 , 42 ] to maintain distributional stability. The KL-divergence between the predictive distributions of the current parameters 𝜃 and the updated parameters 𝜃 + Δ𝜃 can be approximated via its second-order Taylor expansion: KL (𝑃 𝜃 ∥𝑃 𝜃 +Δ𝜃 ) ≈ 12 Δ𝜃 𝑇 𝐹 Δ𝜃, (4) where 𝐹 = E𝑥,𝑦 ∼𝑃 𝜃 [∇ 𝜃 log 𝑃 𝜃 (𝑦 |𝑥 )∇ 𝜃 log 𝑃 𝜃 (𝑦 |𝑥 )𝑇 ] is the Fisher Information Matrix (FIM), which captures the local loss curvature. Solving the trust-region optimization yields the NGD update rule: 
+
+Δ𝜃 = −𝜂𝐹 −1∇𝜃 L, (5) where 𝜂 is the learning rate and 𝑔 ≜ ∇𝜃 L denotes the first-order gradient of the loss. In this context, 𝐹 −1𝑔 is formally defined as the natural gradient. Unlike standard first-order methods, preconditioning the gradients with inverse curvature 𝐹 −1 enforces an anisotropic scaling: it aggressively accelerates progress along flat directions while damping updates in steep directions. 
+
+K-FAC Approximation. In deep neural networks, computing and inverting the exact FIM [ 24 , 36 ] is computationally intractable due to the massive parameter dimensionality. The Kronecker-Factored Approximate Curvature (K-FAC) [ 11 , 20 ] efficiently approximates 𝐹 
+
+by assuming independence between the activations 𝑎 𝑙 and the pre-activation gradients 𝑔 𝑙 of each layer 𝑙 . This decouples the layer-wise FIM block 𝐹 𝑙 into a Kronecker product of two smaller matrices: 
+
+𝐹 𝑙 ≈ 𝐴 𝑙 ⊗ 𝐺 𝑙 , where 𝐴 𝑙 = E[𝑎 𝑙 𝑎 𝑇 𝑙 ] and 𝐺 𝑙 = E[𝑔 𝑙 𝑔 𝑇 𝑙 ]. This structural factorization compresses the curvature degrees of freedom from 
+
+O( 𝑑 2) to O( 𝑑 2 
+
+> in
+
++ 𝑑 2
+
+> out
+
+), where 𝑑 in , 𝑑 out ≪ 𝑑 , drastically reducing the requisite sample complexity. This provides a mathematical justifi-cation for why a limited public dataset suffices to extract reliable coarse-grained geometric priors. 
+
+## 3 THE DP-NGD FRAMEWORK 
+
+To address the three fundamental challenges that hinder the integra-tion of NGD and DP, we propose DP-NGD, a practical and robust framework built upon three mutually reinforcing components. We introduce each component in the following sections, and finally unify them into a complete training algorithm. 
+
+## 3.1 Privacy-Free Coarse-Grained Curvature Estimation 
+
+Standard natural gradient descent (NGD) estimates the curvature matrix directly from the training data. In a DP setting, doing so would consume a substantial portion of the privacy budget merely for preconditioning, leaving little budget for the actual gradient updates that drive learning. We avoid this prohibitive overhead through strict computational decoupling: curvature estimation is performed exclusively on a public auxiliary dataset ( Dpub ), while gradient clipping and DP noise injection are confined entirely to the private training set ( Dpriv ). Because Dpub is a priori public and disjoint from Dpriv —lying strictly outside the adjacency relation defining DP—this computation incurs zero privacy cost. Consequently, the entire privacy budget 𝜖 is preserved for gradient updates. A natural question arises: why does an out-of-distribution (OOD) public dataset suffice for effective curvature estimation? We identify a fundamental synergy between DP and NGD, termed Coarse-Grained Curvature Transferability . The cornerstone of this synergy is that DP noise disproportionately corrupts fine-grained gradient components. Specifically, in the flat directions of the loss landscape, the true gradient signals are typically small and are therefore dominated by the injected DP noise. Preconditioning these fine-grained directions with inaccurate curvature merely maps random noise into random noise, incurring minimal utility loss. Consequently, DP training is inherently tolerant of curvature estimation errors in these fine-grained dimensions: it demands structural fidelity exclusively in the dominant, coarse-grained eigenspaces to achieve effective second-order acceleration. Fortunately, this requirement for coarse-grained fidelity is naturally satisfied in our optimization paradigm. First, a shared model archi-tecture imposes strong inductive priors [ 7, 30 ], yielding covariance matrices that are structurally homomorphic across datasets. Second, natural images share universal low-level statistics [ 21 , 38 ]—such as edges, textures, and color smoothness—that dominate the top eigenspaces of the curvature matrix, allowing even OOD data to reliably capture the macroscopically steep directions. Third, the K-FAC approximation acts as a low-pass filter: its expectation over samples effectively averages out fine-grained fluctuations, isolating precisely the statistically stable, coarse-grained structures we rely on. Together, these properties ensure that the coarse-grained curvature priors essential for acceleration can be effectively extracted even from OOD public auxiliary dataset [6, 27]. 
+
+> 3
+
+Specifically, we precompute the curvature matrix 𝐹 on Dpub via the K-FAC approximation. For each layer 𝑙 , the diagonal block 𝐹 𝑙 is constructed as the Kronecker product of the activation covariance 𝐴 𝑙 
+
+and the pre-activation gradient covariance 𝐺 𝑙 :
+
+𝐹 𝑙 = 𝐴 𝑙 ⊗ 𝐺 𝑙 , 𝐴 𝑙 = EDpub [𝑎 𝑙 𝑎 ⊤ 
+
+> 𝑙
+
+], 𝐺 𝑙 = EDpub [𝑔 𝑙 𝑔 ⊤ 
+
+> 𝑙
+
+]. (6) The complete curvature is then assembled as a block-diagonal matrix across all layers: 𝐹 = diag (𝐹 1, 𝐹 2, . . . , 𝐹 𝐿 ). Notably, our method requires only a small public auxiliary set for effective curvature estimation (e.g., ∼ 1% of the private training data size; detailed in Section 4.4). This extreme sample efficiency stems from two factors. First, K-FAC drastically reduces the requisite sample complexity from O( 𝑑 ) to the order of a single layer’s width. Second, as analyzed above, our framework primarily relies on the dominant eigenspaces and naturally tolerates fine-grained estimation inaccuracies, further relaxing the sample requirement. 
+
+## 3.2 Reconciling Isotropic Privacy with Anisotropic Optimization 
+
+Directly imposing isotropic DP constraints on anisotropic natural gradients corrupts the geometric properties essential for second-order optimization. To resolve this conflict, we introduce a Whitened-Space Update Mechanism. By shifting all DP operations into an 
+
+𝐹 −1/2-whitened space, we prove that the isotropic DP mechanism translates into anisotropic, curvature-aligned parameter updates in the original space—thus fully preserving the acceleration of NGD under DP constraints. Crucially, the whitening matrix 𝐹 −1/2 is not chosen arbitrarily: it emerges directly from aligning the DP 𝐿 2-norm constraint with the KL trust region, a derivation we provide in Appendix A for completeness. Algorithm 1 formalizes the Whitened-Space Update Mechanism. For each sample in the Poisson-sampled batch, the raw gradient is first projected into the whitened space via 𝐹 −1/2 (Line 2). This geometric transformation creates an isotropic space with respect to the geometry induced by 𝐹 . Within this whitened space, standard 𝐿 2-norm clipping can be safely applied without distorting the relative scale of curvature directions (Line 3). Following clipping, the gradients are aggregated and perturbed with isotropic Gaussian noise (Lines 5–6). This procedure is identical to standard DP-SGD, except that it operates on the whitened gradients ˆ𝑔 𝑖 rather than the raw gradients 𝑔 𝑖 . Finally, the sanitized gradient is projected back to the original parameter space (Line 7). Since the whitening matrix 𝐹 −1/2 is precomputed entirely on public data, it acts as a linear transformation strictly independent of the sensitive data. By the post-processing property of DP [ 44 , 45 ], this inverse projection does not incur any additional privacy cost. Consequently, the privacy accounting remains identical to DP-SGD. A formal privacy analysis is provided in Section 3.5. Having established the privacy guarantees of the whitened-space mechanism, we now formally prove that the resulting parameter update is anisotropic and curvature-aligned, successfully recovering the natural gradient in expectation. 
+
+Theorem 3.1 (Curvature Alignment of Whitened-Space Updates). Let Δ𝜃 be the parameter update generated by Algorithm 1, and let 𝐹 be the estimated curvature matrix. For any sample 𝑖 , define its adaptive clipping scalar as 𝑐 𝑖 = min 
+
+
+
+1, 𝐶   
+
+> ∥𝐹 −1/2𝑔 𝑖 ∥2
+
+
+
+. In expectation over the isotropic Gaussian noise 𝜉 ∼ N ( 0, 𝜎 2𝐶 2I), the parameter 
+
+Algorithm 1: Whitened-Space Update Mechanism 
+
+Require: Poisson-sampled batch B, per-sample gradients {𝑔 𝑖 }𝑥 𝑖 ∈ B ,whitening matrix 𝐹 −1/2, clipping threshold 𝐶 , noise multiplier 
+
+𝜎 , expected batchsize 𝐵 , learning rate 𝜂 .
+
+Ensure: Parameter update Δ𝜃  
+
+> 1:
+
+for each sample 𝑥 𝑖 ∈ B do  
+
+> 2:
+
+ˆ𝑔 𝑖 ← 𝐹 −1/2𝑔 𝑖 {Project to the whitened space}  
+
+> 3:
+
+¯𝑔 𝑖 ← ˆ𝑔 𝑖 · min 
+
+
+
+1, 𝐶   
+
+> ∥ˆ𝑔 𝑖 ∥2
+
+
+
+{Isotropic 𝐿 2 clipping}  
+
+> 4:
+
+end for  
+
+> 5:
+
+𝜉 ∼ N  0, 𝜎 2𝐶 2I {Sample isotropic Gaussian noise}  
+
+> 6:
+
+˜𝑔 ← 1
+
+> 𝐵
+
+  Í 𝑖 ∈ B ¯𝑔 𝑖 + 𝜉  {Aggregate and inject noise}  
+
+> 7:
+
+Δ𝜃 ← − 𝜂𝐹 −1/2 ˜𝑔 {Project back to original space}  
+
+> 8:
+
+return Δ𝜃 
+
+update recovers the adaptively clipped natural gradient: 
+
+E𝜉 [Δ𝜃 ] = − 𝜂 𝐵 ∑︁ 𝑖 ∈ B 
+
+𝑐 𝑖 𝐹 −1𝑔 𝑖 
+
+Furthermore, the injected DP noise is transformed into an anisotropic, curvature-aligned distribution in the original parameter space, with a covariance matrix proportional to 𝐹 −1:Cov (Δ𝜃 ) = 𝜂 2𝜎 2𝐶 2
+
+𝐵 2 𝐹 −1
+
+Proof. Based on Algorithm 1, the final parameter update Δ𝜃 is a linear combination of the gradient signal and the injected noise. Its complete algebraic expression is formulated as: 
+
+Δ𝜃 = −𝜂𝐹 −1/2 ˜𝑔 = − 𝜂 𝐵 ∑︁ 𝑖 ∈ B 
+
+𝐹 −1/2 ¯𝑔 𝑖 − 𝜂 𝐵 𝐹 −1/2𝜉 (7) where ¯𝑔 𝑖 = ˆ𝑔 𝑖 min (1, 𝐶    
+
+> ∥ˆ𝑔 𝑖 ∥2
+
+) is the clipped gradient in the whitened space, and 𝜉 ∼ N ( 0, 𝜎 2𝐶 2I) is the isotropic Gaussian noise. We establish the curvature alignment of the final parameter update by analyzing its expectation and covariance, respectively. 
+
+Part I: Parameter Update Expectation. For each sample 𝑖 , we denote its adaptive clipping factor as 𝑐 𝑖 = min 
+
+
+
+1, 𝐶   
+
+> ∥ˆ𝑔 𝑖 ∥2
+
+
+
+. Since 𝑐 𝑖 
+
+is a scalar, it commutes with matrix multiplication. Together with the fact that the injected DP noise is zero-mean ( E𝜉 [𝜉 ] = 0), the stochastic noise term in Eq. (7) vanishes. Taking the expectation over 
+
+𝜉 , we obtain: 
+
+E𝜉 [Δ𝜃 ] = − 𝜂 𝐵 ∑︁ 𝑖 ∈ B 
+
+𝐹 −1/2 
+
+𝑐 𝑖 𝐹 −1/2𝑔 𝑖 
+
+
+
+= − 𝜂 𝐵 ∑︁ 𝑖 ∈ B 
+
+𝑐 𝑖 𝐹 −1𝑔 𝑖 (8) Because the clipping factor 𝑐 𝑖 exclusively rescales the magnitude without altering the vector’s orientation, this expectation recovers the adaptively clipped natural gradient 𝐹 −1𝑔 𝑖 .
+
+Part II: Parameter Update Covariance. Next, we analyze the covariance matrix of the update Δ𝜃 . Since the first term in Eq. (7) is deterministic with respect to the DP mechanism, it contributes nothing to the variance. The covariance is entirely determined by the linear transformation of the Gaussian noise term 𝜉 . Using the property of covariance under affine transformations, Cov (𝐴𝑋 ) = 𝐴 Cov (𝑋 )𝐴 𝑇 ,
+
+> 4
+
+we derive: Cov (Δ𝜃 ) = Cov 
+
+
+
+− 𝜂 𝐵 𝐹 −1/2𝜉 
+
+
+
+=
+
+
+
+− 𝜂 𝐵 𝐹 −1/2 
+
+Cov (𝜉 )
+
+
+
+− 𝜂 𝐵 𝐹 −1/2 𝑇 
+
+= 𝜂 2
+
+𝐵 2 𝐹 −1/2 (𝜎 2𝐶 2I)𝐹 −1/2
+
+= 𝜂 2𝜎 2𝐶 2
+
+𝐵 2 𝐹 −1 (9) Here we utilize the symmetry of 𝐹 −1/2, a property intrinsically inherited from the Fisher information matrix. This demonstrates that the originally isotropic noise is transformed into an anisotropic distribution whose covariance is precisely shaped by the inverse curvature 𝐹 −1, thereby aligning with the natural gradient. Combining Part I and Part II, the whitened-Space mechanism preserves the curvature-aligned geometry for both the gradient signal and the DP perturbation, thereby completing the proof. □
+
+Together with the privacy guarantee established, Theorem 3.1 confirms that the Whitened-Space Update Mechanism resolves the inherent geometric conflict between DP and NGD. By achieving this theoretical alignment, our method strictly satisfies the differential pri-vacy constraints while preserving the crucial acceleration properties of second-order optimization. 
+
+The KL-DP Duality. Theorem 3.1 reveals a deeper structural connec-tion within our method: the DP sensitivity bound 𝐶 simultaneously defines the radius of the KL trust region for NGD. To avoid destabilizing updates caused by pathological curvature, NGD controls the per-step distributional shift by bounding the KL divergence. Under the standard small-step assumption of NGD, higher-order terms are negligible and the KL divergence is locally governed by 
+
+𝐷 KL (𝑃 𝜃 ∥ 𝑃 𝜃 +Δ𝜃 ) = 12 Δ𝜃 ⊤𝐹 Δ𝜃 . (10) Consider the parameter update contributed by a single clipped sample in our whitened-space mechanism: Δ𝜃 𝑖 = −𝜂𝐹 −1/2 ¯𝑔 𝑖 . Substituting this into the above KL divergence yields: 
+
+𝐷 KL = 12
+
+
+
+−𝜂𝐹 −1/2 ¯𝑔 𝑖 
+
+⊤
+
+𝐹 
+
+
+
+−𝜂𝐹 −1/2 ¯𝑔 𝑖 
+
+
+
+= 𝜂 2
+
+2 ¯𝑔 ⊤
+
+> 𝑖
+
+
+
+𝐹 −1/2𝐹 𝐹 −1/2 
+
+¯𝑔 𝑖 
+
+= 𝜂 2
+
+2 ∥ ¯𝑔 𝑖 ∥22. (11) Since DP clipping in the whitened space enforces ∥ ¯𝑔 𝑖 ∥2 ≤ 𝐶 , we immediately obtain 
+
+∥ ¯𝑔 𝑖 ∥2 ≤ 𝐶 =⇒ 𝐷 KL ≤ 𝜂 2
+
+2 𝐶 2. (12) This implies that the scalar 𝐶 plays a dual role. As a privacy safeguard, it bounds the maximal contribution of any individual sample, rigor-ously ensuring differential privacy. As an optimization boundary, it explicitly limits the distributional shift that any single data point can induce, matching the trust-region constraint required for stable NGD convergence. This marks a fundamental departure from standard DP-SGD, where the clipping threshold is an arbitrary, isotropic bound imposed without regard to the geometry of the loss landscape. In our framework, the DP sensitivity constraint is instead defined in a prin-cipled, curvature-aware manner derived directly from second-order optimization theory. The underlying mechanism behind this duality is the geometric equivalence established by the whitening transformation: 
+
+∥ ˆ𝑔 𝑖 ∥2 = ∥𝐹 −1/2𝑔 𝑖 ∥2 =√︃ 𝑔 ⊤ 
+
+> 𝑖
+
+𝐹 −1𝑔 𝑖 = ∥𝑔 𝑖 ∥𝐹 −1 . (13) Geometrically, this equivalence explains how our mechanism na-tively adapts to the local loss landscape. Bounding the 𝐿 2-norm in the whitened space ( ∥ ˆ𝑔 𝑖 ∥2 ≤ 𝐶 ) is mathematically equivalent to bounding the curvature-aware Mahalanobis norm in the parameter space ( ∥𝑔 𝑖 ∥𝐹 −1 ≤ 𝐶 ). Consequently, steep directions (associated with large eigenvalues of 𝐹 ) are inherently suppressed to prevent diver-gence, while informative components along flat directions (small eigenvalues) are faithfully preserved. 
+
+## 3.3 Dynamic Curvature Clamping via Euclidean Step Equivalence 
+
+Although DP clipping bounds the gradient’s 𝐿 2-norm in the whitened space, the inverse projection via 𝐹 −1/2 leaves the Euclidean step size unbounded in the original parameter space. In flat directions where the curvature eigenvalues approach zero ( 𝜆 𝑖 → 0), parameter updates are magnified by a factor of 1/√𝜆 𝑖 → ∞ , causing severe training instability. Crucially, this parameter explosion can occur without violating the KL trust region: flat directions permit large parameter moves with negligible distributional shift [ 10 , 17 ], making the KL constraint structurally blind to such instability. An explicit Euclidean safeguard on the parameter update is therefore necessary. 
+
+Deriving the Euclidean Safety Bound. To establish this safeguard, we adopt standard DP-SGD as a trusted baseline. DP-SGD maintains well-controlled expected Euclidean displacements throughout train-ing. By enforcing that the expected displacement of our DP-NGD update does not exceed that provable upper bound, we obtain a rigorous safety floor for robust convergence. In standard DP-SGD, the parameter update is formulated as 
+
+Δ𝜃 sgd = −𝜂 sgd 
+
+  ¯𝑔 sgd + 1 
+
+> 𝐵
+
+𝜉 sgd 
+
+, where the gradient is clipped to 
+
+∥ ¯𝑔 sgd ∥2 ≤ 𝐶 sgd and the noise is 𝜉 sgd ∼ N ( 0, 𝜎 2𝐶 2
+
+> sgd
+
+I). Because the DP noise is zero-mean and independent of the gradient, the cross term E[ ¯𝑔 ⊤
+
+> sgd
+
+𝜉 sgd ] vanishes. Substituting E[∥ 𝜉 sgd ∥22] = 𝑑𝜎 2𝐶 2 
+
+> sgd
+
+for the 
+
+𝑑 -dimensional Gaussian noise, the expected squared Euclidean step size simplifies to 
+
+E[∥ Δ𝜃 sgd ∥22] = 𝜂 2
+
+> sgd
+
+
+
+∥ ¯𝑔 sgd ∥22 + 1
+
+𝐵 2 E[∥ 𝜉 sgd ∥22]
+
+
+
+≤ 𝜂 2
+
+> sgd
+
+𝐶 2
+
+> sgd
+
+
+
+1 + 𝑑𝜎 2
+
+𝐵 2
+
+
+
+. (14) For our DP-NGD framework, the parameter update is formu-lated as Δ𝜃 ngd = −𝜂 ngd 𝐹 −1/2   ¯𝑔 ngd + 1 
+
+> 𝐵
+
+𝜉 ngd 
+
+. Taking the expectation and applying the Rayleigh quotient bound for symmetric matrices (𝑣 ⊤𝐹 −1𝑣 ≤ 1 
+
+> 𝜆 min
+
+∥𝑣 ∥22), we obtain the upper bound 
+
+E[∥ Δ𝜃 ngd ∥22] = 𝜂 2
+
+> ngd
+
+
+
+¯𝑔 ⊤
+
+> ngd
+
+𝐹 −1 ¯𝑔 ngd + 1
+
+𝐵 2 E𝜉 ⊤
+
+> ngd
+
+𝐹 −1𝜉 ngd 
+
+ 
+
+≤ 𝜂 2
+
+> ngd
+
+𝜆 min 
+
+𝐶 2
+
+> ngd
+
+
+
+1 + 𝑑𝜎 2
+
+𝐵 2
+
+
+
+. (15) 
+
+> 5
+
+Assuming matched privacy configurations (identical batch size 
+
+𝐵 and noise multiplier 𝜎 ), enforcing E[∥ Δ𝜃 ngd ∥22] ≤ E[∥ Δ𝜃 sgd ∥22]
+
+allows the common factor (1 + 𝑑𝜎 2/𝐵 2) to cancel out. Solving for the minimum eigenvalue yields the safety bound 𝜆 safe :
+
+𝜆 min ≥
+
+ 𝜂 ngd 𝐶 ngd 
+
+𝜂 sgd 𝐶 sgd 
+
+2
+
+≜ 𝜆 safe . (16) This inequality reveals that as long as every eigenvalue satisfies 
+
+𝜆 𝑖 ≥ 𝜆 safe , the expected Euclidean norm of the DP-NGD update is bounded by that of the DP-SGD baseline. To enforce this guarantee throughout training, each time the curvature matrix 𝐹 is estimated, we dynamically clamp its eigenvalues to this safety floor: 
+
+˜𝜆 𝑖 = max (𝜆 𝑖 , 𝜆 safe ). (17) Preconditioning the gradient with this clamped curvature ensures optimization stability in the Euclidean space. Unlike standard NGD, which routinely adds a damping term (𝐹 +𝜆𝐼 )−1 that indiscriminately perturbs all eigen-directions and sacrifices curvature accuracy in steep directions, our clamping operation is highly selective. It leaves well-conditioned, steep directions ( 𝜆 𝑖 ≥ 𝜆 safe ) completely untouched, fully preserving their second-order acceleration, while safely lifting dangerously flat directions ( 𝜆 𝑖 < 𝜆 safe ) to the safety floor. 
+
+The Dynamic Clamping Schedule. Enforcing 𝜆 safe as a fixed clamping floor effectively suppresses parameter explosion, but is unnecessarily conservative during the high-SNR mid-training phase. The theoretical bound assumes a worst-case scenario where all eigenvalues are clamped to 𝜆 safe . In practice, however, most eigen-directions remain steep ( 𝜆 𝑖 ≫ 𝜆 safe ) during this mid-phase, and the actual Euclidean displacement is far below the safety limit. A static floor ignores this available margin, needlessly sacrificing curvature accuracy and suppressing second-order acceleration when Euclidean safety is already guaranteed. To recover this lost efficiency during mid-training without com-promising robust convergence in late-stage flat basins, we introduce a dynamic clamping schedule over a total of 𝑇 iterations: 
+
+𝜆 𝑡 =
+
+
+
+𝜆 safe − ( 𝜆 safe − 𝜆 base ) · 𝑡 𝑇 1 , if 0 ≤ 𝑡 < 𝑇 1
+
+𝜆 base + ( 𝜆 safe − 𝜆 base ) · 
+
+ 𝑡 −𝑇 1 
+
+> 𝑇 −𝑇 1
+
+𝑝 
+
+, if 𝑇 1 ≤ 𝑡 ≤ 𝑇 (18) where 𝑇 1 is a brief warmup period, 𝜆 base < 𝜆 safe is a standard numerical stabilizer adopted from classical NGD, and 𝑝 > 1 controls the steepness of the polynomial transition. Both 𝑇 1 (as a fraction of 
+
+𝑇 ) and 𝑝 are insensitive within practical ranges; a detailed sensitivity analysis is provided in Section 4.7. This formulation naturally yields three distinct phases. In the initial warmup ( 0 ≤ 𝑡 < 𝑇 1), curvature estimates are highly unreliable due to random initialization; thus, the floor starts at the conservative bound 𝜆 safe and linearly decays to 𝜆 base as training stabilizes. During the prolonged mid-phase ( 𝑇 1 ≤ 𝑡 ≪ 𝑇 ), the exponent 𝑝 > 1 creates an implicit acceleration plateau where 𝜆 𝑡 remains nearly flat around 
+
+𝜆 base , fully unleashing second-order acceleration while the signal-to-noise ratio remains high. Finally, as the model enters flat basins in the late stage and the clamped fraction of eigenvalues inevitably rises, the polynomial tail drives 𝜆 𝑡 rapidly back to 𝜆 safe at 𝑇 , seamlessly restoring the theoretical Euclidean safety guarantee. 
+
+Algorithm 2: Differentially Private Natural Gradient Descent (DP-NGD) 
+
+Require: Private dataset D (size 𝑁 ), public dataset Dpub , learning rate 𝜂 , DP clipping bound 𝐶 , noise multiplier 𝜎 , expected batch size 𝐵 , curvature update interval 𝑇 cur , total iterations 𝑇 .
+
+Ensure: Differentially private model parameters 𝜃 𝑇 . 
+
+> 1:
+
+Initialize model parameters 𝜃 0. 
+
+> 2:
+
+Compute theoretical safety floor 𝜆 safe via Eq. (16).  
+
+> 3:
+
+for 𝑡 = 0 to 𝑇 − 1 do  
+
+> 4:
+
+[Module 1] Privacy-Free Curvature Estimation  
+
+> 5:
+
+if 𝑡 mod 𝑇 cur = 0 then  
+
+> 6:
+
+Compute empirical curvature 𝐹 on Dpub via K-FAC.  
+
+> 7:
+
+Perform eigendecomposition: 𝐹 = 𝑄 Λ𝑄 ⊤. {Cache 𝑄 , Λ for 
+
+𝑇 cur steps}  
+
+> 8:
+
+end if  
+
+> 9:
+
+[Module 2] Dynamic Curvature Clamping  
+
+> 10:
+
+Compute dynamic clamping floor 𝜆 𝑡 for step 𝑡 via Eq. (18).  
+
+> 11:
+
+Clamp eigenvalues element-wise: ˜Λ = max (Λ, 𝜆 𝑡 I). 
+
+> 12:
+
+Update whitening matrix: ˜𝐹 −1/2 = 𝑄 ˜Λ−1/2𝑄 ⊤. 
+
+> 13:
+
+[Module 3] Whitened-Space Update Mechanism  
+
+> 14:
+
+Sample batch B𝑡 ⊆ D with probability 𝑞 = 𝐵 /𝑁 . 
+
+> 15:
+
+Compute per-sample gradients: 𝑔 (𝑡 ) 
+
+> 𝑖
+
+= ∇𝜃 L( 𝑥 𝑖 , 𝜃 𝑡 ) for each sample 𝑥 𝑖 ∈ B 𝑡 . 
+
+> 16:
+
+Δ𝜃 𝑡 ← WhitenedSpaceUpdate  {𝑔 (𝑡 ) 
+
+> 𝑖
+
+}𝑥 𝑖 ∈ B 𝑡 , ˜𝐹 −1/2, 𝐶, 𝜎 .{Algorithm 1: Project → Clip → Noise → Inverse project}  
+
+> 17:
+
+Update parameters: 𝜃 𝑡 +1 = 𝜃 𝑡 + Δ𝜃 𝑡 . 
+
+> 18:
+
+end for  
+
+> 19:
+
+Return 𝜃 𝑇 .
+
+## 3.4 The Complete Algorithm 
+
+We consolidate our three core components into a unified, end-to-end DP-NGD framework. Algorithm 2 outlines the complete training procedure, which is structurally divided into three modules corresponding to the fundamental challenges. 
+
+Module 1: Privacy-Free Curvature Estimation. To avoid incur-ring significant privacy cost on curvature estimation, we precompute the empirical Fisher matrix 𝐹 exclusively on a small public auxil-iary dataset Dpub using the K-FAC approximation. To amortize the computational overhead, curvature estimation and its subsequent eigendecomposition ( 𝐹 = 𝑄 Λ𝑄 ⊤) are performed once every 𝑇 cur 
+
+iterations and cached for reuse. 
+
+Module 2: Dynamic Curvature Clamping. Before constructing the whitening matrix ˜𝐹 −1/2, we clamp the curvature eigenvalues to a dynamically scheduled floor 𝜆 𝑡 : ˜Λ = max (Λ, 𝜆 𝑡 I). Here, 𝜆 𝑡 is generated solely based on the current training step 𝑡 according to Eq. (18). This stage-aware clamping serves a threefold purpose: it stabilizes randomly initialized parameters during the early phase, fully unleashes second-order acceleration in the high-SNR mid-phase, and ensures robust convergence in late-stage flat basins. 
+
+Module 3: Whitened-Space Update Mechanism. A minibatch 
+
+B𝑡 is sampled from the private dataset via Poisson subsampling with probability 𝑞 . We then compute the per-sample gradients {𝑔 (𝑡 ) 
+
+> 𝑖
+
+}𝑥 𝑖 ∈ B 𝑡 
+
+and execute the whitened-space mechanism defined in Algorithm 1. 
+
+> 6
+
+This subroutine follows a seamless pipeline: projecting gradients into the whitened space, applying isotropic 𝐿 2-norm clipping, inject-ing isotropic Gaussian noise, and finally mapping the aggregated update back to the parameter space via ˜𝐹 −1/2. By the mathematical equivalence established in Theorem 3.1, this mechanism preserves the anisotropic acceleration of NGD under rigorous DP guaranties. 
+
+Remark: Computational Efficiency. Despite the additional steps introduced by curvature estimation, the computational overhead of DP-NGD is well-amortized. This efficiency stems from three structural properties: (1) curvature estimation operates on a small public batch and is lazily updated only once every 𝑇 cur iterations; (2) the K-FAC approximation reduces the eigendecomposition com-plexity from O( 𝑑 3) to O( 𝑑 3 
+
+> in
+
++ 𝑑 3
+
+> out
+
+), where 𝑑 in , 𝑑 out ≪ 𝑑 ; and (3) second-order optimization substantially reduces the total number of iterations required to achieve baseline accuracy, effectively offset-ting the additional per-step cost. A detailed empirical analysis of end-to-end wall-clock runtime is provided in Section 4.6. 
+
+## 3.5 Privacy Analysis 
+
+We now establish the privacy guarantee of the complete DP-NGD framework. Among the three modules of Algorithm 2, Modules 1 and 2 incur zero privacy cost. The curvature matrix 𝐹 is estimated exclusively on the public auxiliary dataset Dpub , which is disjoint from the private training set and lies strictly outside the adjacency relation that defines differential privacy. The dynamic clamping floor 𝜆 𝑡 is computed solely from the current training step 𝑡 and the predefined hyperparameters 𝜂 and 𝐶 , without accessing any private data. Both modules are therefore privacy-free by construction. Module 3, the whitened-space update, is the only component that accesses private data. It consists of four privacy-relevant operations: projecting gradients through the precomputed linear map ˜𝐹 −1/2;clipping them to a constant 𝐿 2-sensitivity 𝐶 ; injecting isotropic Gaussian noise parameterized by 𝜎 and 𝐶 ; and performing the inverse projection via ˜𝐹 −1/2. Because the whitening matrix ˜𝐹 −1/2
+
+is derived from public data and remains fixed for the current step, it acts as a linear transformation strictly independent of the private data. By the post-processing property of DP, both the projection and the inverse projection via ˜𝐹 −1/2 incur no additional privacy cost. Consequently, the privacy loss of Module 3 stems exclusively from the intermediate clipping and noise injection steps. The clipping and noise injection steps in DP-NGD are executed identically to those in standard DP-SGD, while the only differences are the clipping space (whitened vs. Euclidean) and the clipping threshold ( 𝐶 ngd vs. 𝐶 sgd ), as summarized in Table 1. The clipping space depends solely on the whitening matrix ˜𝐹 −1/2, which has been shown to leave the privacy budget unchanged. The clipping threshold acts symmetrically as a scaling factor for both the global sensitivity and the injected noise variance, mathematically canceling out in the privacy loss derivation. Thus, the step-wise privacy loss of DP-NGD is identical to that of standard DP-SGD. Given this strict equivalence, the end-to-end privacy guarantee over 𝑇 iterations composes identically to that of standard DP-SGD, and the final (𝜖, 𝛿 )-DP bound can be tightly tracked by any standard privacy accountant (e.g., Rényi DP or the PRV accountant) without modification. 
+
+Table 1: Privacy cost comparison between DP-SGD and DP-NGD.The only differences are the clipping space and the clipping threshold. The former depends on a fixed linear mapping ˜𝐹 −1/2
+
+that does not alter the privacy cost. The latter identically scales both global sensitivity and noise variance, canceling out in the privacy loss derivation. Therefore, identical per-step privacy loss is guaranteed, yielding the exact same total privacy budget. Component Standard DP-SGD DP-NGD (Ours) 
+
+Clipping space Euclidean ( ∥ · ∥ 2) Whitened ( ∥ · ∥ ˜𝐹 −1 )Clipping threshold 𝐶 sgd 𝐶 ngd 
+
+Noise mechanism N  0, 𝜎 2𝐶 2
+
+> sgd
+
+I N  0, 𝜎 2𝐶 2
+
+> ngd
+
+I
+
+Per-step Privacy Loss Determined by 𝜎, 𝑞 Determined by 𝜎, 𝑞 
+
+Total Budget (𝜖, 𝛿 ) (𝜖, 𝛿 )
+
+## 4 EVALUATION 4.1 Experimental Setup 
+
+Datasets and Models. We evaluate on three standard benchmarks: CIFAR-10 [ 2], SVHN [ 28 ], and UTKFace [ 9], covering diverse image domains. We adopt WRN-16-4 [ 37 ] and ResNet-20 [ 22 ]as our model architectures, both widely used in DP research. All Batch Normalization layers are replaced with Group Normalization (GN) [ 4, 41 ] to prevent privacy leakage through batch statistics. A small public auxiliary set containing 500 images ( ≈ 1% of the training set size) is constructed by random sampling from out-of-distribution (OOD) sources—CIFAR-100 and ImageNet. All images are resized to 32 × 32 pixels. 
+
+Baselines. The essence of NGD lies in utilizing curvature to precondition (or project) the first-order gradients. Consequently, the advantage of our method hinges on the quality of the curva-ture estimation. To validate this, we construct a strictly controlled suite of baselines, which also leverage public data to construct their own preconditioners or projections. To ensure fair comparison, every auxiliary-data-assisted baseline adopts exactly the same public dataset Dpub .
+
+• DP-SGD & DP-SGD-PT . DP-SGD is the canonical isotropic first-order baseline, implemented following the state-of-the-art recipe of DeepMind [ 12 ]. To verify that our gains stem from geometric curvature extraction rather than mere feature initialization, we addi-tionally introduce DP-SGD-PT, which is pre-trained on Dpub before DP training. 
+
+• AdaDPS . AdaDPS [ 26 ] is a representative adaptive DP optimizer that uses Dpub to estimate gradient second moments, approximating the diagonal of the Fisher matrix 𝐹 as per parameter learning -rate scalers. This baseline tests whether capturing only diagonal variance is sufficient under DP; the performance gap relative to DP-NGD re-veals the necessity of capturing parameter cross-correlations through our block-diagonal preconditioner. 
+
+• GEP . Gradient Embedding Perturbation (GEP) [ 43 ] uses Dpub to construct a low-rank subspace via PCA [ 19 , 23 ], and subsequently projects private gradients onto this subspace to reduce the noise dimension. Comparing against GEP demonstrates that low-rank geometric projections tend to discard critical tail features, whereas our block-diagonal preconditioner operates in the full-dimensional 
+
+> 7
+
+parameter space, preserving the complete manifold topology without information truncation. 
+
+Unified Training Configuration. To establish strong baselines, all methods share a unified modern DP training recipe: 16 × augmentation multiplicity [ 5], exponential moving average (EMA) [ 3, 34 ] for evaluation, and a uniformly large batch size of 𝐵 = 4096 . We evaluate the privacy-utility trade-off across privacy budgets 𝜖 ∈{1.0, 2.0, 4.0, 6.0, 8.0} with a fixed 𝛿 = 10 −5. The expected batch size 𝐵 = 4096 implies the same subsampling rate 𝑞 = 𝐵 /𝑁 for all methods. To guarantee absolute comparison fairness, the per-step noise multiplier 𝜎 is independently calibrated for each method via the PRV accountant [ 18 , 31 ] provided by Opacus, ensuring that the target privacy budget is exactly exhausted at the final iteration. Crucially, we emphasize that the varying choices of the clip-ping threshold 𝐶 do not compromise comparison fairness. Since 
+
+𝐶 symmetrically scales both the global sensitivity and the injected noise variance, it cancels out mathematically in the privacy loss derivation, thus affecting solely the optimization dynamics rather than the privacy budget. Notably, by the KL-DP duality established in Section 3.2, our clipping threshold simultaneously defines the KL trust-region radius of NGD. We therefore adopt a fixed 𝐶 = 10 .0,directly inherited from the standard NGD KL constraint. For the baseline methods, we set the clipping threshold 𝐶 to 1.0 for DP-SGD and 2.0 for AdaDPS, following their respective optimal configura-tions. For GEP, we adopt its recommended settings of 𝐶 = 10 .0 for the gradient embedding and 𝐶 = 2.0 for the residual gradient. 
+
+Hyperparameter Tuning. To report every method at its peak per-formance, we conduct a rigorous hyperparameter tuning protocol. For the universal optimization parameters—specifically the learning rate 𝜂 and total training epochs 𝑇 —we perform a comprehensive grid search to identify the optimal utility-privacy trade-off for each individual method. For method-specific structural parameters (e.g., adaptive momentum factors), we strictly adopt the recommended values from the original papers; when explicit recommendations are absent, we search within a narrow range around the original experimental settings. This protocol ensures that any observed per-formance gaps reflect fundamental algorithmic advantages rather than suboptimal hyperparameter choices. For our DP-NGD, we set the auxiliary public dataset size to |D pub | = 500 (approximately 1% 
+
+of the private training data), the curvature update interval to 𝑇 cur = 8,and configure the dynamic clamping schedule with 𝑇 1 = 0.1𝑇 and 
+
+𝑝 = 10 . The robustness of these choices is validated by the sensitivity analysis in Section 4.7. 
+
+## 4.2 End-to-End Utility Evaluation 
+
+Table 2 summarizes the test accuracies across three standard bench-marks and five privacy budgets. DP-NGD consistently achieves the highest performance in every setting. The advantage is more pronounced under strict privacy constraints: at 𝜖 = 1.0, DP-NGD outperforms the most competitive baseline by 4.78% on SVHN and 
+
+4.20% on UTKFace. This aligns with our core insight—when first-order gradients are heavily corrupted by DP noise, coarse-grained curvature priors deliver the strongest acceleration benefit. As 𝜖 in-creases and the signal-to-noise ratio improves, the relative gains from second-order acceleration gradually moderate (e.g., sub-1% 
+
+improvement on CIFAR-10 at 𝜖 = 8.0). This is because, when the noise magnitude is sufficiently low, the residual inaccuracies in curvature estimation from public data become a limiting factor for leveraging precise fine-grained gradient components. Comparing DP-NGD against AdaDPS and GEP validates the necessity of our block-diagonal preconditioner. AdaDPS captures only diagonal variance, while GEP projects gradients into a low-rank subspace; both methods simplify the geometry and inevitably discard information—cross-parameter correlations in AdaDPS, and fine-grained tail features in GEP. By employing a block-diagonal preconditioner that operates in the full-dimensional parameter space, DP-NGD consistently surpasses both. The performance of DP-SGD-PT further sharpens this picture: simple pre-training on Dpub yields only marginal utility gains over standard DP-SGD and is largely outperformed by methods that actively exploit the geometry of the gradient space. This empirical gap confirms that the primary value of auxiliary public data lies not in mere feature initialization, but in extracting transferable geometric priors that reshape the optimization dynamics. Ultimately, these comparisons establish that the structural fidelity of the geometric prior directly dictates the utility gains under differential privacy. 
+
+## 4.3 Convergence Efficiency and Speedup 
+
+Figure 2 reports the test accuracy of DP-NGD, DP-SGD-PT, and AdaDPS at varying total training steps under a low privacy budget (CIFAR-10, 𝜖 = 1.0) and a moderate privacy budget (SVHN, 𝜖 = 6.0). Each point on the horizontal axis represents an independent full training run with a given total number of steps, where the per-step noise multiplier 𝜎 is calibrated to exactly exhaust the target privacy budget at the final step. DP-NGD consistently achieves higher accuracy than the baselines when evaluated at the same training step. Moreover, it reaches the peak performance of the baselines with substantially fewer steps. On CIFAR-10, DP-NGD attains 59 .75% at step 360, already exceeding the best accuracy of AdaDPS ( 58 .28% at step 840)—a 2.3× reduction in the steps required to reach that utility level. On SVHN, DP-NGD reaches 89 .38% at step 340, surpassing the peak of both DP-SGD-PT and AdaDPS ( 89 .25% at step 3400), corresponding to a 10 .0× efficiency gain. This advantage stems from the higher per-step optimization efficiency of curvature-aware updates. By preconditioning gradients with the block-diagonal inverse curvature, DP-NGD aligns each update with the dominant geometric directions of the loss landscape. This effectively suppresses wasteful oscillations in ill-conditioned terrain and extracting more meaningful signal per noisy step compared to diagonal (AdaDPS) or isotropic (DP-SGD-PT) approaches. 
+
+## 4.4 Sample Efficiency of Public Data 
+
+Figure 3 evaluates the impact of the public dataset size |D pub | on model utility using the UTKFace dataset at 𝜖 = 2.0. By varying the number of public samples from 50 to 5000 , we assess how effectively each method extracts geometric priors from limited auxiliary data. DP-NGD exhibits remarkable sample efficiency and a distinct in-sensitivity to |D pub |. With as few as 50 public samples, our method already achieves 69 .29% test accuracy, and this performance fluctu-ates by less than 1% across the entire evaluated range. In striking contrast, the baselines show a clear dependence on the volume of public data. While the accuracy of DP-SGD-PT, AdaDPS, and GEP 
+
+> 8
+
+Table 2: Test accuracy (%) across three datasets and five privacy budgets. Results report the mean and standard deviation over 5 independent runs. Best results are in bold. All public-data-assisted methods use exactly the same auxiliary dataset. 
+
+Dataset (Model) Method 𝜖 = 1.0 𝜖 = 2.0 𝜖 = 4.0 𝜖 = 6.0 𝜖 = 8.0
+
+ACC ACC ACC ACC ACC 
+
+CIFAR-10 DP-SGD 58.16% ±0.35 65.71% ±0.41 72.73% ±0.48 77.49% ±0.65 80.42% ±0.52 
+
+(WRN-16-4) DP-SGD-PT 58.68% ±0.32 65.83% ±0.49 73.06% ±0.35 77.94% ±0.61 80.83% ±0.39 
+
+GEP 58.75% ±0.41 66.48% ±0.36 73.46% ±0.30 78.24% ±0.58 80.55% ±0.25 
+
+AdaDPS 59.25% ±0.45 66.94% ±0.39 73.59% ±0.54 78.57% ±0.49 80.62% ±0.66 
+
+DP-NGD (Ours) 60.78% ±0.38 67.75% ±0.56 74.02% ±0.44 78.61% ±0.49 81.09% ±0.45 
+
+SVHN DP-SGD 79.34% ±0.58 83.96% ±0.35 87.01% ±0.41 87.49% ±0.28 88.60% ±0.55 
+
+(WRN-16-4) DP-SGD-PT 79.54% ±0.45 84.11% ±0.52 87.37% ±0.39 88.59% ±0.46 89.18% ±0.54 
+
+GEP 79.73% ±0.31 86.21% ±0.37 88.27% ±0.54 88.84% ±0.60 89.29% ±0.58 
+
+AdaDPS 79.87% ±0.35 86.12% ±0.51 88.23% ±0.38 89.35% ±0.44 89.98% ±0.41 
+
+DP-NGD (Ours) 84.65% ±0.37 88.42% ±0.45 90.70% ±0.52 92.28% ±0.48 92.67% ±0.47 
+
+UTKFace DP-SGD 57.53% ±0.45 65.02% ±0.40 70.15% ±0.35 73.10% ±0.31 74.17% ±0.58 
+
+(ResNet-20) DP-SGD-PT 58.20% ±0.41 65.46% ±0.36 70.32% ±0.32 73.29% ±0.58 74.55% ±0.55 
+
+GEP 58.49% ±0.52 67.90% ±0.45 71.24% ±0.38 74.43% ±0.44 75.38% ±0.53 
+
+AdaDPS 58.75% ±0.55 68.49% ±0.48 71.19% ±0.41 74.56% ±0.37 75.58% ±0.33 
+
+DP-NGD (Ours) 62.95% ±0.55 70.01% ±0.38 73.88% ±0.48 76.05% ±0.45 76.22% ±0.52 0 200 400 600 800 1000 1200  
+
+> Training Steps
+> 45.0
+> 47.5
+> 50.0
+> 52.5
+> 55.0
+> 57.5
+> 60.0
+> 62.5
+> Accuracy (%)
+> Baseline Ceiling (59.28%)
+> 2.3 ×Speedup
+> (840 vs. 360 steps)
+
+(a) CIFAR-10 ( = 1.0 )        
+
+> DP-SGD-PT
+> AdaDPS
+> DP-NGD (Ours)
+> 0500 1000 1500 2000 2500 3000 3500
+> Training Steps
+> 75.0
+> 77.5
+> 80.0
+> 82.5
+> 85.0
+> 87.5
+> 90.0
+> 92.5
+> Accuracy (%)
+> Baseline Ceiling (89.25%)
+> 10.0 ×Speedup
+> (3400 vs. 340 steps)
+
+(b) SVHN ( = 6.0 )
+
+> DP-SGD-PT
+> AdaDPS
+> DP-NGD (Ours)
+
+Figure 2: Convergence efficiency vs. total training steps. We compare the test accuracy of DP-NGD, DP-SGD-PT, and AdaDPS under a strict privacy budget (CIFAR-10, 𝜖 = 1.0) and a moderate privacy budget (SVHN, 𝜖 = 6.0). Each point represents an independent full training run with a given total number of steps, where the per-step noise multiplier 𝜎 is calibrated to exactly exhaust the target privacy budget at the final step. DP-NGD consistently achieves higher accuracy at every step budget, demonstrating superior per-step optimization efficiency. 
+
+improves steadily as |D pub | increases, they consistently underperform DP-NGD even when utilizing the maximum available 5000 samples. This stark difference directly reinforces our core claim: coarse-grained curvature priors are sufficient for effective second-order acceleration under DP. The K-FAC approximation compresses cur-vature degrees of freedom from O( 𝑑 2) to layer-width dimensions, enabling reliable estimation of the dominant geometric directions from very few public samples. Although additional public data might refine fine-grained curvature components, these precise directions are ultimately overwhelmed by DP noise during training, resulting in diminishing returns. Conversely, baselines relying on diagonal scaling (AdaDPS) or low-rank subspaces (GEP) require significantly more samples to construct statistically stable surrogates of the loss geometry. Furthermore, DP-SGD-PT, which exploits public data merely for weight initialization, yields the weakest per-sample bene-fit. Overall, these results confirm that extracting structural geometric priors is a fundamentally more data-efficient strategy to leverage auxiliary information. 
+
+## 4.5 Ablation Studies 
+
+The Necessity of Curvature Decoupling. We verify the necessity of decoupling curvature estimation from private data by comparing       
+
+> 950 100 500 1000 5000
+> Size of Public Data |Dpub |(Log Scale)
+> 56
+> 58
+> 60
+> 62
+> 64
+> 66
+> 68
+> 70
+> Test Accuracy (%)
+> Sample Efficiency of Public Data ( Dpub )
+> DP-SGD-PT
+> GEP
+> AdaDPS
+> DP-NGD (Ours)
+
+Figure 3: Sample efficiency of public auxiliary data. Test accuracy is reported on the UTKFace dataset ( 𝜖 = 2.0) across varying public dataset sizes |D pub |. DP-NGD achieves near-peak accuracy with very few public samples and remains insensitive to |D pub |
+
+across the entire range. In contrast, DP-SGD-PT, AdaDPS, and GEP all exhibit a clear dependence on the amount of public data, with their accuracy improving steadily with more data. Table 3: Necessity of curvature decoupling on CIFAR-10 at 
+
+𝜖 = 2.0 and 4.0. We evaluate the impact of allocating a fraction of the privacy budget ( 20% or 50% ) to private curvature estimation. Even a modest budget split severely degrades accuracy, dropping performance below the first-order DP-SGD-PT baseline that uses no curvature at all.                 
+
+> Variant Configuration 𝜖 =2.0𝜖 =4.0
+> DP-SGD-FT (No Curvature) 65.86% 72.75% Private DP-NGD ( 𝜖 split 50/50) 54.35% 61.23% Private DP-NGD ( 𝜖 split 20/80) 56.12% 64.50%
+> Public DP-NGD (Decoupled) 67.78% 73.88%
+
+three strategies on CIFAR - 10 at 𝜖 = 2.0 and 4.0: (i) our default DP - NGD, which estimates the curvature matrix entirely on public data and preserves the full privacy budget for gradient updates; (ii) a variant that estimates curvature on private data, allocating a fraction of the privacy budget to the curvature computation and the remainder to gradient updates; and (iii) DP - SGD - PT, which merely pre - trains on public data without any curvature estimation. When 20% of the privacy budget is diverted to private curvature estimation, the accuracy drops dramatically from 67 .78% to 56 .12% 
+
+at 𝜖 = 2.0, and from 73 .88% to 64 .50% at 𝜖 = 4.0. A 50% split worsens the results further, yielding only 54 .35% and 61 .23% , respectively. In sharp contrast, our public - data - driven curvature estimation incurs zero privacy cost and consistently outperforms even the DP -SGD -PT baseline ( 65 .86% and 72 .75% ). These results expose a fundamental tension: under a fixed privacy budget, splitting that budget between curvature and gradients severely degrades the signal - to -noise ratio of the updates that actually drive learning, leading to catastrophic utility collapse. Decoupling curvature extraction from private data is therefore not merely a convenience but a necessary condition for making second - order optimization viable under differential privacy. 
+
+Table 4: Ablation on whitened-space clipping on CIFAR-10 (𝜖 ∈ { 2.0, 4.0}). We compare our whitened-space DP operations against two alternatives: pre-conditioning clipping (clipping raw gradients before applying curvature) and post-conditioning clipping (clipping the natural gradient directly). Pre-conditioning suffers from geometric incompatibility, while post-conditioning distorts the anisotropic descent direction despite being privacy-compliant. Whitened-space clipping uniquely satisfies both the strict DP sensitivity bound and the directional integrity of second-order updates.             
+
+> Clipping Strategy 𝜖 =2.0𝜖 =4.0
+> Pre-conditioning Clipping 61.25% 66.82% Post-conditioning Clipping 64.54% 68.48%
+> Whitened-Space Clipping (Ours) 67.78% 73.88%
+
+Ablation on Whitened-Space Clipping. We validate the necessity of whitened-space clipping on CIFAR-10 ( 𝜖 ∈ { 2.0, 4.0}) by comparing it against two alternatives: clipping raw gradients before applying curvature ( pre-conditioning ), and clipping the resulting natural gra-dients directly ( post-conditioning ). Our method achieves the highest accuracy ( 67 .78% and 73 .88% ), substantially outperforming both pre-conditioning ( 61 .25% and 66 .82% ) and post-conditioning ( 64 .54% and 
+
+68 .48% ). Pre-conditioning performs worst: isotropic 𝐿 2 clipping in the original space treats all gradient directions uniformly, irreversibly corrupting the gradient structure before curvature information can be incorporated. Post-conditioning, although privacy-compliant because the curvature matrix comes from public data, applies an isotropic clip to the already anisotropic natural gradient, thereby distorting its care-fully aligned descent direction. Whitened-space clipping resolves this tension by performing DP operations in the 𝐹 −1/2-whitened space, where an isotropic 𝐿 2 constraint is mathematically equivalent to the anisotropic Fisher-norm constraint required by NGD. This preserves both the strict DP sensitivity bound and the directional integrity of second-order updates. 0 200 400 600 800  
+
+> Training Steps
+> 1.2 × 10 0
+> 1.4 × 10 0
+> 1.6 × 10 0
+> 1.8 × 10 0
+> Training Loss (Log Scale)
+> Ablation on Damping Floor
+> Fixed floor safe
+> No Clamping Floor
+> Dynamic Scheduling
+
+Figure 4: Ablation on the clamping floor using UTKFace ( 𝜖 = 2.0). Training loss trajectories for three strategies are shown. Training diverges rapidly without clamping, while both clamped strategies converge stably. Our dynamic schedule further relaxes the floor to avoid over-suppressing well-conditioned eigenvalues, yielding lower loss in high-SNR mid-phase and higher final accuracy. 10 Ablation on the Clamping Floor. We evaluate the impact of the dynamic clamping schedule on training stability and final utility using UTKFace ( 𝜖 = 2.0). We compare three configurations: (i) our proposed dynamic schedule, (ii) a fixed clamping floor set to the theoretical safety bound 𝜆 safe , and (iii) no clamping floor at all. Training without any clamping diverges rapidly within the first few steps, producing NaN values and confirming that bounding only the 
+
+𝐿 2-norm in the whitened space is insufficient to guarantee Euclidean stability of the resulting natural gradient. Both the fixed 𝜆 safe and our dynamic schedule converge stably. In the early phase ( < 200 
+
+steps), when curvature estimates are unreliable, the fixed 𝜆 safe yields a slightly lower training loss. However, as training stabilizes and enters the high-SNR mid-phase, the fixed floor becomes overly conservative. The loss curve of our dynamic schedule consistently lies below that of the fixed 𝜆 safe from the mid-phase onward, indicating that a static floor persistently lifts eigenvalues that are already well-conditioned, needlessly sacrificing curvature accuracy and suppressing the second-order acceleration. Our dynamic schedule avoids this by relaxing the floor toward a low base value, achieving consistently lower training loss and a markedly higher final test accuracy ( 70 .06% vs. 68 .53% ). 
+
+## 4.6 End-to-End System Overhead 
+
+Table 5: End-to-end system overhead comparison between DP-NGD and DP-SGD-PT. Despite a higher per-step cost, DP-NGD achieves comparable or lower total runtime due to sharply fewer steps. All runs use a single NVIDIA RTX 3090.                   
+
+> Dataset (𝜖 )Method Per-step Time
+> (s)
+> Total Steps Total Time
+> (Hrs) CIFAR-10 (𝜖 =1.0)DP-SGD-PT 14.2 840 3.31
+> DP-NGD 38.2 360 3.82
+> SVHN (𝜖 =6.0)DP-SGD-PT 13.6 3400 12.84
+> DP-NGD 39.8 340 3.76
+
+Table 5 reports the per-step wall-clock time, the number of training steps required to reach the peak accuracy of DP-SGD-PT, and the resulting total wall-clock time for both methods on two representative benchmarks. All measurements are performed on a single NVIDIA GeForce RTX 3090 GPU under identical batch size, augmentation, and privacy configurations. DP-NGD incurs a higher per-step cost than DP-SGD-PT ( 38 –40 s vs. 14 s), primarily due to the whitened-space projection and the periodic curvature estimation. However, this overhead is substantially offset by the sharply reduced number of steps resulting from curvature-aware optimization. On CIFAR-10 (𝜖 = 1.0), DP-NGD reaches the peak accuracy of DP-SGD-PT in only 
+
+360 steps, compared to 840 steps for the baseline. The total runtime is 3.82 hours, comparable to that of DP-SGD-PT ( 3.31 hours), while achieving higher final accuracy. On SVHN ( 𝜖 = 6.0), the advantage is dramatic: DP-NGD requires only 340 steps to match the baseline accuracy that demands 3,400 steps for DP-SGD-PT. The total runtime drops from 12 .84 hours to 3.76 hours—a 3.4× speedup. This stark contrast shows that in ill-conditioned optimization landscapes, the ability of curvature-aware preconditioning to suppress wasteful oscillations far outweighs its per-step computational cost. Overall, these results confirm that DP-NGD offers practical accelerator for differentially private training. 
+
+## 4.7 Hyperparameter Robustness 
+
+Table 6: Hyperparameter sensitivity on UTKFace ( 𝜖 = 2.0). We evaluate the robustness of DP-NGD to the curvature update interval 𝑇 cur , the polynomial exponent 𝑝 , and the transition step ratio 𝑇 1. Test accuracy remains stable across all three parameters, with fluctuations within a narrow range. Default values are underlined.                                    
+
+> (a) Sensitivity to Curvature Update Interval (𝑇 𝑐𝑢𝑟 )Value 14816 32 Accuracy 70.14% 70.02% 70.05% 69.87% 67.53%
+> (b) Sensitivity to Polynomial Exponent (𝑝 )Value 23510 15 Accuracy 68.96% 69.21% 69.08% 70.05% 69.63%
+> (c) Sensitivity to Transition Step (𝑇 1ratio) Value 0.05 0.1 0.15 0.2 0.25 Accuracy 69.51% 70.05% 69.25% 69.46% 69.26%
+
+Table 6 evaluates the sensitivity of DP-NGD to its three key hyperparameters on UTKFace ( 𝜖 = 2.0): the curvature update interval 
+
+𝑇 cur , the polynomial exponent 𝑝 , and the transition step ratio 𝑇 1. Across all three parameters, the test accuracy remains stable within a narrow range, confirming the robustness of our framework to these design choices. The curvature update interval 𝑇 cur can be extended from 1
+
+to 16 steps with less than a 0.3% accuracy drop; only at an extremely sparse update frequency of 32 steps does accuracy decline noticeably to 67 .53% , still a competitive result. The polynomial exponent 𝑝 and the transition ratio 𝑇 1 exhibit similar insensitivity: varying 𝑝 from 
+
+2 to 15 or 𝑇 1 from 0.05 to 0.25 induces fluctuations of less than 1% .This robustness reflects the underlying stability of coarse-grained geometric priors: once the dominant eigen-directions of the curvature are captured from public data, the precise details of the dynamic clamping schedule exert only a marginal influence on optimization dynamics. The high tolerance to these hyperparameters significantly reduces the tuning burden in practical deployments. 
+
+## 5 CONCLUSION 
+
+We proposed DP-NGD, a practical framework that enables effective second-order optimization under differential privacy. By decou-pling curvature estimation from private data, reconciling isotropic DP operations with anisotropic natural gradient updates through a whitened-space mechanism, and dynamically clamping curvature eigenvalues, DP-NGD systematically resolves the three fundamental obstacles that have so far prevented the integration of NGD and DP. Extensive experiments demonstrate that DP-NGD consistently achieves state-of-the-art accuracy across multiple benchmarks and privacy budgets, breaking through the utility ceilings of first-order baselines with up to 10 × convergence speedup. Notably, these gains are obtained with a trivially small public auxiliary dataset and without incurring additional privacy cost. Our work opens up several promis-ing directions, including extending coarse-grained curvature priors to large-scale models, relaxing the reliance on public data through fully private geometric estimation, and exploring curvature-aware optimization under other privacy notions. 
+
+> 11
+
+## A DERIVATION OF THE WHITENING MATRIX 𝑊 = 𝐹 −1/2
+
+To reconcile this conflict between DP and NGD, we exploit two critical property: (1) the DP privacy guarantee holds strictly as long as the sensitivity is bounded under the 𝐿 2 norm in any coordinate space; (2) The acceleration of NGD requires only the final parameter updates to align with the local loss geometry. This insight motivates a natural strategy: transfer all DP operations into an intermediate projected space where the isotropic 𝐿 2 constraint can be safely applied, and then map the result back to the original parameter space so that the final update recovers the curvature-aligned geometry of NGD. We now formalize the two geometric requirements. First, NGD constrains the per-step distributional shift via the KL divergence. Under the standard second-order Taylor expansion and the NGD update rule Δ𝜃 = −𝜂𝐹 −1𝑔 , the KL constraint reduces to a bound on the Fisher norm of the gradient: 
+
+∥𝑔 ∥2  
+
+> 𝐹 −1
+
+= 𝑔 ⊤𝐹 −1𝑔. (19) Second, DP requires that the update vector used for clipping and noising has a bounded 𝐿 2 norm. In a projected space defined by a linear map 𝑊 , the 𝐿 2 norm of the projected gradient is 
+
+∥𝑊 𝑔 ∥22 = 𝑔 ⊤ (𝑊 ⊤𝑊 )𝑔. (20) To guarantee that the isotropic DP operations in the projected space do not corrupt the curvature-aware information, the 𝐿 2 geometry of the projected space must be intrinsically equivalent to the KL geometry of the original space. Equating the quadratic forms in Eqs. (19) and (20) yields the fundamental condition 
+
+𝑊 ⊤𝑊 = 𝐹 −1. (21) This equation demands a matrix 𝑊 whose symmetric product recovers the inverse Fisher. Since the Fisher matrix 𝐹 and its inverse 𝐹 −1 are symmetric and positive semi-definite, the unique symmetric positive semi-definite solution to Eq. (21) is the inverse square root of 𝐹 :
+
+𝑊 = 𝐹 −1/2. (22) The derivation reveals why the 𝐹 −1/2-whitened space is the unique geometry that aligns DP and NGD. In this space, bounding the 𝐿 2
+
+norm of the projected gradient ∥𝐹 −1/2𝑔 ∥2 is mathematically identical to bounding the Fisher norm ∥𝑔 ∥𝐹 −1 , which in turn is equivalent to respecting the NGD trust region. Consequently, performing standard isotropic DP clipping and noising in the 𝐹 −1/2-whitened space, and then mapping back via 𝐹 1/2, automatically yields an anisotropic, curvature-aware update in the original parameter space. This provides the theoretical foundation for the KL-DP duality. 
+
+Efficient computation via K-FAC.. In deep networks, constructing the full 𝐹 −1/2 would be prohibitive. The Kronecker-Factored Approx-imate Curvature (K-FAC) resolves this by factorizing each layer’s Fisher block as 𝐹 𝑙 ≈ 𝐴 𝑙 ⊗ 𝐺 𝑙 . The whitening matrix can then be efficiently computed via eigendecomposition of the small Kronecker factors: 
+
+𝐹 −1/2 
+
+> 𝑙
+
+≈ ( 𝑄 𝐴 Λ−1/2 
+
+> 𝐴
+
+𝑄 ⊤ 
+
+> 𝐴
+
+) ⊗ ( 𝑄 𝐺 Λ−1/2 
+
+> 𝐺
+
+𝑄 ⊤ 
+
+> 𝐺
+
+),
+
+reducing the complexity from O( 𝑑 3) to O( 𝑑 3
+
+> in
+
++𝑑 3
+
+> out
+
+), where 𝑑 in , 𝑑 out ≪
+
+𝑑 . This makes the whitened-space update computationally tractable. 
+
+## B OPTIMAL HYPERPARAMETER CONFIGURATIONS 
+
+Table 7 lists the best hyperparameter configurations identified via grid search for DP-NGD across all datasets and privacy budgets reported in the main text. These settings correspond to the results presented in Table 2. 
+
+Table 7: Optimal learning rates and total training steps for DP-NGD. All configurations use a fixed batch size of 𝐵 = 4096 ,curvature update interval 𝑇 cur = 8, warmup fraction 𝑇 1 = 0.1,polynomial exponent 𝑝 = 10 , and auxiliary public dataset size 
+
+|D pub | = 500 .Dataset (Model) 𝜖 Total Steps 𝑇 Learning Rate 𝜂 
+
+CIFAR-10 (WRN-16-4) 1.0 840 0.01 2.0 1320 0.01 4.0 1920 0.01 6.0 1800 0.02 8.0 2640 0.02 SVHN (WRN-16-4) 1.0 1360 0.01 2.0 1870 0.01 4.0 2040 0.01 6.0 2380 0.02 8.0 3400 0.02 UTKFace (ResNet-20) 1.0 550 0.01 2.0 850 0.01 4.0 900 0.02 6.0 1100 0.02 8.0 1700 0.02 
+
+> 12
+
+## REFERENCES 
+
+[1] Martín Abadi, Andy Chu, Ian J. Goodfellow, H. B. McMahan, Ilya Mironov, Kunal Talwar, and Li Zhang. 2016. Deep Learning with Differential Privacy. Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications Security 
+
+(2016). https://api.semanticscholar.org/CorpusID:207241585 [2] Yehya Abouelnaga, Ola S Ali, Hager Rady, and Mohamed Moustafa. 2016. Cifar-10: Knn-based ensemble of classifiers. In 2016 International Conference on Computational Science and Computational Intelligence (CSCI) . IEEE, 1192–1195. [3] Kwangjun Ahn and Ashok Cutkosky. 2024. Adam with model exponential moving average is effective for nonconvex optimization. ArXiv abs/2405.18199 (2024). https://api.semanticscholar.org/CorpusID:270068108 [4] Bachina Harish Babu, V. R. Vinothini, Gautam Solaimalai, R. Vanitha, Ajay Singh Yadav, P. Sukania, Vishal Vijayan, and Revanth Srinivasan. 2024. Theoretical optimization of group size in group normalization for enhanced deep neural network training. AIP Conference Proceedings (2024). https://api.semanticscholar.org/ CorpusID:274008853 [5] Wenxuan Bao, F. Pittaluga, Vijay Kumar, and Vincent Bindschaedler. 2023. DP-Mix: Mixup-based Data Augmentation for Differentially Private Learning. ArXiv 
+
+abs/2311.01295 (2023). https://api.semanticscholar.org/CorpusID:264935065 [6] Adam Block, Mark Bun, Rathin Desai, Abhishek Shetty, and Zhiwei Steven Wu. 2024. Oracle-Efficient Differentially Private Learning with Public Data. ArXiv 
+
+abs/2402.09483 (2024). https://api.semanticscholar.org/CorpusID:267682343 [7] Enric Boix-Adserà. 2025. On the inductive bias of infinite-depth ResNets and the bottleneck rank. ArXiv abs/2501.19149 (2025). https://api.semanticscholar.org/ CorpusID:276079304 [8] Zhiqi Bu, Yu-Xiang Wang, Sheng Zha, and George Karypis. 2022. Automatic Clipping: Differentially Private Deep Learning Made Easier and Stronger. ArXiv 
+
+abs/2206.07136 (2022). https://api.semanticscholar.org/CorpusID:249674655 [9] Praveen Kumar Chandaliya, V.Chandra Kumar, Mayank Harjani, and Neeta Nain. 2019. SCDAE: Ethnicity and Gender Alteration on CLF and UTKFace Dataset. In International Conference on Computer Vision and Image Processing .https://api.semanticscholar.org/CorpusID:214730428 [10] Pratik Chaudhari, Anna Choromańska, Stefano Soatto, Yann LeCun, Carlo Baldassi, Christian Borgs, Jennifer Tour Chayes, Levent Sagun, and Ric-cardo Zecchina. 2016. Entropy-SGD: biasing gradient descent into wide val-leys. Journal of Statistical Mechanics: Theory and Experiment 2019 (2016). https://api.semanticscholar.org/CorpusID:13807351 [11] Felix Dangel, Johannes Müller, and Marius Zeinhofer. 2024. Kronecker-factored approximate curvature for physics-informed neural networks. Advances in Neural Information Processing Systems 37 (2024), 34582–34636. [12] Soham De, Leonard Berrada, Jamie Hayes, Samuel L. Smith, and Borja Balle. 2022. Unlocking High-Accuracy Differentially Private Image Classification through Scale. ArXiv abs/2204.13650 (2022). https://api.semanticscholar.org/CorpusID: 248427073 [13] Wei Dong, Yuting Liang, and Ke Yi. 2022. Differentially Private Covariance Re-visited. ArXiv abs/2205.14324 (2022). https://api.semanticscholar.org/CorpusID: 249191345 [14] Cynthia Dwork. 2006. Differential Privacy. In International Colloquium on Au-tomata, Languages and Programming . https://api.semanticscholar.org/CorpusID: 2565493 [15] Cynthia Dwork and Aaron Roth. 2014. The Algorithmic Foundations of Differential Privacy. Found. Trends Theor. Comput. Sci. 9 (2014), 211–407. https://api. semanticscholar.org/CorpusID:207178262 [16] Shuya Feng, Meisam Mohammady, Hanbin Hong, Shenao Yan, Ashish Kundu, Binghui Wang, and Yuan Hong. 2024. Harmonizing Differential Privacy Mecha-nisms for Federated Learning: Boosting Accuracy and Convergence. Proceedings of the Fifteenth ACM Conference on Data and Application Security and Privacy 
+
+(2024). https://api.semanticscholar.org/CorpusID:278238496 [17] Pierre Foret, Ariel Kleiner, Hossein Mobahi, and Behnam Neyshabur. 2020. Sharpness-Aware Minimization for Efficiently Improving Generalization. ArXiv 
+
+abs/2010.01412 (2020). https://api.semanticscholar.org/CorpusID:222134093 [18] Sivakanth Gopi, Yin Tat Lee, and Lukas Wutschitz. 2021. Numerical Composition of Differential Privacy. In Neural Information Processing Systems . https://api. semanticscholar.org/CorpusID:235358383 [19] Michael Greenacre, Patrick J. F. Groenen, Trevor J. Hastie, Alfonso Iodice D’Enza, Angelos I. Markos, and Elena Tuzhilina. 2003. Principal Component Analysis. 
+
+Technometrics 45 (2003), 276 – 276. https://api.semanticscholar.org/CorpusID: 2534141 [20] Roger Grosse and James Martens. 2016. A kronecker-factored approximate fisher matrix for convolution layers. In International Conference on Machine Learning .PMLR, 573–582. [21] Florentin Guth and Brice M’enard. 2024. On the universality of neural encodings in CNNs. ArXiv abs/2409.19460 (2024). https://api.semanticscholar.org/CorpusID: 272987466 [22] Tianjiao Huo, Jiaqi Fan, Xin Li, Hong Chen, Bingzhao Gao, and Xuesong Li. 2020. Traffic Sign Recognition Based on ResNet-20 and Deep Mutual Learning. 2020 Chinese Automation Congress (CAC) (2020), 4770–4774. https: //api.semanticscholar.org/CorpusID:231737679 [23] Ian T. Jolliffe and Jorge Cadima. 2016. Principal component analysis: a review and recent developments. Philosophical Transactions of the Royal Society A: Mathematical, Physical and Engineering Sciences 374 (2016). https://api. semanticscholar.org/CorpusID:20101754 [24] Daigo Kudo and Hiroyasu Tajima. 2022. Fisher information matrix as a resource measure in the resource theory of asymmetry with general connected-Lie-group symmetry. Physical Review A (2022). https://api.semanticscholar.org/CorpusID: 248562504 [25] Frederik Kunstner, Philipp Hennig, and Lukas Balles. 2019. Limitations of the empirical fisher approximation for natural gradient descent. Advances in neural information processing systems 32 (2019). [26] Tian Li, Manzil Zaheer, Sashank J. Reddi, and Virginia Smith. 2022. Private Adaptive Optimization with Side Information. In International Conference on Machine Learning . https://api.semanticscholar.org/CorpusID:246823521 [27] Andrew Lowy, Zeman Li, Tianjian Huang, and Meisam Razaviyayn. 2023. Optimal Differentially Private Learning with Public Data. ArXiv abs/2306.15056 (2023). https://api.semanticscholar.org/CorpusID:275750699 [28] PSS Madhulika and Nalini Sampath. 2022. An application of normalizer free neural networks on the SVHN dataset. In 2022 International conference on applied artificial intelligence and computing (ICAAIC) . IEEE, 238–242. [29] James Martens. 2020. New insights and perspectives on the natural gradient method. Journal of Machine Learning Research 21, 146 (2020), 1–76. [30] Christian H. X. Ali Mehmeti-Göpel and Michael Wand. 2025. ResNets Are Deeper Than You Think. ArXiv abs/2506.14386 (2025). https://api.semanticscholar.org/ CorpusID:279410014 [31] Sebastian Meiser and Esfandiar Mohammadi. 2018. Tight on Budget?: Tight Bounds for r-Fold Approximate Differential Privacy. Proceedings of the 2018 ACM SIGSAC Conference on Computer and Communications Security (2018). https://api.semanticscholar.org/CorpusID:52504941 [32] Ilya Mironov. 2017. Rényi Differential Privacy. 2017 IEEE 30th Computer Security Foundations Symposium (CSF) (2017), 263–275. https://api.semanticscholar.org/ CorpusID:9386213 [33] Ilya Mironov, Kunal Talwar, and Li Zhang. 2019. Rényi Differential Privacy of the Sampled Gaussian Mechanism. ArXiv abs/1908.10530 (2019). https: //api.semanticscholar.org/CorpusID:201660159 [34] Daniel Morales-Brotons, Thijs Vogels, and Hadrien Hendrikx. 2024. Expo-nential Moving Average of Weights in Deep Learning: Dynamics and Benefits. 
+
+Trans. Mach. Learn. Res. 2024 (2024). https://api.semanticscholar.org/CorpusID: 270355881 [35] Joni Pajarinen, Hong Linh Thai, Riad Akrour, Jan Peters, and Gerhard Neumann. 2019. Compatible natural gradient policy search. Machine Learning 108 (2019), 1443 – 1466. https://api.semanticscholar.org/CorpusID:59842948 [36] Carl L Rodriguez, Benjamin Farr, Will M Farr, and Ilya Mandel. 2013. Inadequacies of the Fisher information matrix in gravitational-wave parameter estimation. 
+
+Physical Review D—Particles, Fields, Gravitation, and Cosmology 88, 8 (2013), 084013. [37] Xinyu Tang, Ashwinee Panda, Vikash Sehwag, and Prateek Mittal. 2023. Differ-entially Private Image Classification by Learning Priors from Random Processes. 
+
+J. Priv. Confidentiality 15 (2023). https://api.semanticscholar.org/CorpusID: 259129508 [38] Ragav Venkatesan, Vijetha Gattupalli, and Baoxin Li. 2016. On the generality of neural image features. 2016 IEEE International Conference on Image Processing (ICIP) (2016), 41–45. https://api.semanticscholar.org/CorpusID:9264808 [39] Hua Wang, Sheng yang Gao, Huanyu Zhang, Milan Shen, and Weijie Su. 2022. Edgeworth Accountant: An Analytical Approach to Differential Privacy Composi-tion. J. Amer. Statist. Assoc. (2022). https://api.semanticscholar.org/CorpusID: 249538149 [40] Yu-Xiang Wang, Borja Balle, and Shiva Prasad Kasiviswanathan. 2018. Sub-sampled Rényi Differential Privacy and Analytical Moments Accountant. In 
+
+International Conference on Artificial Intelligence and Statistics . https: //api.semanticscholar.org/CorpusID:51893629 [41] Yuxin Wu and Kaiming He. 2018. Group normalization. In Proceedings of the European conference on computer vision (ECCV) . 3–19. [42] Haotian Xu, Junyu Xuan, Guangquan Zhang, and Jie Lu. 2024. Trust region policy optimization via entropy regularization for Kullback-Leibler divergence constraint. 
+
+Neurocomputing 589 (2024), 127716. https://api.semanticscholar.org/CorpusID: 269195555 [43] Da Yu, Huishuai Zhang, Wei Chen, and Tie-Yan Liu. 2021. Do Not Let Privacy Overbill Utility: Gradient Embedding Perturbation for Private Learning. ArXiv 
+
+abs/2102.12677 (2021). https://api.semanticscholar.org/CorpusID:232046284 [44] Keyu Zhu, Ferdinando Fioretto, and Pascal Van Hentenryck. 2022. Post-processing of Differentially Private Data: A Fairness Perspective. ArXiv abs/2201.09425 (2022). https://api.semanticscholar.org/CorpusID:246240328 [45] Keyu Zhu, Pascal Van Hentenryck, and Ferdinando Fioretto. 2020. Bias and Variance of Post-processing in Differential Privacy. ArXiv abs/2010.04327 (2020). https://api.semanticscholar.org/CorpusID:222272017
