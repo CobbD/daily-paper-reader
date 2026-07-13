@@ -1,0 +1,469 @@
+Title: CILC: Cryptographically-secure Inter-agent Loop Closure Candidate Detection for Multi-Agent Collaborative SLAM
+
+URL Source: https://arxiv.org/pdf/2607.06700v1
+
+Published Time: Thu, 09 Jul 2026 00:05:30 GMT
+
+Number of Pages: 9
+
+Markdown Content:
+# CILC: Cryptographically-secure Inter-agent Loop Closure Candidate Detection for Multi-Agent Collaborative SLAM 
+
+Andrew Fishberg 1, Yixuan Jia 1, Jonathan P. How 1
+
+Abstract — Multi-agent Simultaneous Localization and Mapping (SLAM) and collaborative SLAM (CSLAM) require robots to continuously exchange global descriptors (GDs) to detect inter-agent loop closures (ILCs). While encrypted radios protect this traffic from external eavesdroppers, they offer no protection against a compromised swarm member. We show this threat is concrete by demonstrating how a corrupted agent can reconstruct approxima-tions of an honest agent’s imagery and trajectory from its public GD broadcasts. To address this, we propose CILC (Cryptographically-secure Inter-agent Loop Closure candidate detection), a first-of-its-kind system leveraging Secure Multi-Party Computation (SMPC) to detect ILC candidates without exchang-ing GDs in the clear. Rather than securing the en-tire CSLAM pipeline, we apply SMPC only to ILC candidate detection (i.e., GD similarity comparison), a privacy-sensitive yet computationally lightweight step, yielding an advantageous privacy-to-overhead trade-off. We validate in both simulation and hard-ware experiments that CILC remains real-time and communication-feasible across multimodal GDs (vi-sual and LiDAR), while mitigating information leak-age to a compromised swarm agent. 
+
+I. Introduction 
+
+Multi-agent robotic systems offer significant advan-tages over single-agent systems, including distributed operation, greater spatial coverage, and improved robust-ness to individual failures [1]. These benefits, however, come at the cost of increased communication and infor-mation sharing among agents, creating new privacy and security challenges as larger teams collect, exchange, and coordinate using potentially sensitive data. Recent robot-fleet takeovers and software supply-chain attacks make compromised agents within the swarm a realistic concern for deployed robotic systems [2], [3]. While virtually all modern multi-agent robotic systems rely on encrypted inter-agent communication, this base-line security model exposes a critical gap in the prevailing threat model. As shown in Figure 1, encryption protects data in transit from external adversaries but provides no protection during computation among coordinating agents. Standard practice therefore focuses primarily on external attacks such as eavesdropping, while remaining vulnerable to compromised agents operating within the        
+
+> * This work is supported by ARL DCIST under Cooperative Agreement Number W911NF-17-2-0181.
+> 1Department of Aeronautics and Astronautics, Massachusetts Institute of Technology, Cambridge, MA 02139 USA.
+
+{fishberg,yixuany,jhow}@mit.edu         
+
+> Fig. 1: Threat model addressed by CILC. A heterogeneous robot team performs collaborative SLAM , exchanging observations to detect inter-agent loop closures (ILCs). Blue agents are honest collaborators, while the red agent is a compromised but otherwise legitimate swarm member. Transport-layer encryption prevents external eavesdropping, but the compromised agent can access all broadcast data and exfiltrate it to an external adversary without being detected. CILC limits information disclosure by revealing data only when sufficient evidence exists to support an ILC match.
+
+swarm. Because robots routinely exchange sensitive in-formation, including images, locations, maps, and tra-jectories, without treating it as private between agents, a single compromised agent could gain access to the collective data of the entire team. Such an adversary may leak mission-critical information, disrupt coordina-tion, manipulate shared state estimates, or otherwise act maliciously from within the system. This standard security practice in multi-agent robotics creates a inherent tension between effective collabora-tion and privacy : collaboration often requires robots to share information, yet increased sharing expands the potential consequences of data leakage, compromise, or misuse. This tension is particularly acute in multi-agent Collaborative Simultaneous Localization and Mapping (CSLAM), where robots must continuously exchange observations to jointly estimate maps and trajectories while maintaining a consistent swarm-wide representa-tion of large-scale, dynamic environments. While un-restricted information sharing among trusted peers is often assumed to be acceptable under the assumption of complete trust, this assumption often breaks down in deployed, real-world systems, particularly as the swarm’s attack surface expands with increasing robot heterogene-ity and the number of fielded agents. Without informa-tion compartmentalization, the compromise of any single agent, including one that was initially trustworthy, can expose information about the entire swarm. Privacy concerns are not new in SLAM research: [4]–[7] explicitly identify privacy as a key motivator for leveraging distributed optimization. However, these works focus primarily on the SLAM back-end (i.e., using arXiv:2607.06700v1 [cs.RO] 7 Jul 2026 distributed optimization to keep inter-agent pose data private during pose-graph optimization) while overlook-ing the upstream front-end that generates the measure-ments the back-end consumes. Specifically, inter-agent loop closures (ILC) – i.e., relative pose measurements between agents detected by the CSLAM front-end – are essential for aligning independently estimated tra-jectories, but detecting them requires agents to compare observations against one another. In practice, this is done by continuously broadcasting compact global descriptors 
+
+(GD) across the swarm [8], [9] to inexpensively flag ILC candidates , so that higher-bandwidth data exchange and expensive geometric verification (GV) occur only when a candidate pair warrants it (Figure 2). This broadcast step, however, can expose observational information that may reveal agent locations, environmental structure, or mission intent to any compromised swarm member (Fig-ure 1). Consequently, protecting GD matching provides a disproportionate privacy benefit while modifying only a small portion of the overall CSLAM pipeline, namely a simple vector-comparison operation. Recent advances in Secure Multi-Party Computation 
+
+(SMPC) 1 offer a promising path forward. As a security mechanism developed and popularized by the cryptog-raphy community, SMPC enables multiple agents to jointly perform computations while formally limiting what information is revealed to each participant. This in turn supports novel privacy policies and threat mod-els that are either overlooked or simply unachievable in multi-agent robotics and CSLAM under encrypted communication alone. In this work, we leverage SMPC for privacy-preserving ILC detection in CSLAM. Specif-ically, we propose a framework that allows agents to identify ILC candidates without continuous disclosure of observational data, only revealing information when sufficient evidence of a match exists. By reconciling the competing demands of collaboration and privacy, our approach enables efficient and robust cooperation in adversarial multi-agent environments. This paper makes three key contributions: 1) We analyze SMPC for CSLAM, identifying ILC can-didate detection as a privacy-sensitive yet compu-tationally lightweight stage that is particularly well suited to secure computation (Section III). 2) We demonstrate a privacy vulnerability often over-looked in the CSLAM literature (Section IV). 3) We develop, to our knowledge, the first privacy-preserving ILC candidate detection framework for CSLAM. We validate the proposed approach through simulation and hardware experiments across multiple sensing modalities (Section V).                                      
+
+> 1We use the term Secure Multi-Party Computation (SMPC) over the more common Multi-Party Computation (MPC) to emphasize its security and avoid confusion with Model Predictive Control.
+> Fig. 2: A typical CSLAM pipeline between Agents A and B, shown from A’s perspective with emphasis on the front-end. The front-end converts raw sensor data I0into relative pose measurements
+> ˜Todom ,˜TLC ,˜TLC ∈SE(3) , which the back-end consumes for pose-graph optimization. ˜Todom and ˜TLC are computed locally on A (thus, blue), whereas ˜TLC require data from both agents (thus, purple). ˜TLC are found by broadcasting compact global descriptors
+> (GD) v0across the swarm and cheaply comparing them against vi
+> to flag inter-agent loop closure (ILC) candidates ; higher-bandwidth data Iiand expensive geometric verification GV (I0,Ii)follow only when score (v0,vi)≥tol . CILC (this work), reduces data leakage from the v0broadcast during ILC candidate detection.
+
+II. Related Works 
+
+While cybersecurity has historically received limited attention in multi-agent robotics, interest is growing rapidly [10]. Privacy has a longer history in controls, particularly through differential privacy [11]–[16] and homomorphic-encryption-based control and optimization methods [17]. Although related by “privacy” or “trust” concerns, SMPC [18], differential privacy [11], blockchain [19], and reputation-based methods [20] address distinct orthogonal issues. SMPC is a mature technology, with theoretical foun-dations dating to the 1980s [18] and practical imple-mentations emerging in the 2010s [21], [22]. Hastings et al.’s SoK [21] remains a useful overview of SMPC approaches, threat models, and terminology. This work uses the more recent MP-SPDZ [22] library, an actively developed SMPC compiler that supports multiple proto-cols with differing security guarantees and performance characteristics, along with their associated primitives (Section III). SMPC has also been applied in robotics-adjacent settings including cloud-based control, satellite deconfliction, multi-robot task allocation, secure neural-network inference, and secure localization [23]–[27]. To the best of our knowledge, this paper is the first to directly integrate SMPC into a multi-agent CSLAM pipeline by applying it to ILC candidate detection, al-though several robotics and computer vision researchers have studied closely related problems. For example, Pollefeys et al. have a long line of work on privacy-preserving image queries, localization, and structure-from-motion (SfM), offering a promising non-SMPC path toward private ILC detection [28]–[34]. Since conven-tional image descriptors [35]–[38] are not designed with privacy in mind, any data obfuscation they provide is merely a byproduct of being compact (lossy) vectorized image representations. This is not the same as privacy, and it does not prevent information leakage through the GD broadcast step of a multi-agent CSLAM pipeline (Section IV). By contrast, Pollefeys and colleagues pur-sue privacy by design, developing image representations that intentionally obfuscate visual information through transformations such as line-cloud descriptors [30], [32]. However, some of these approaches have subsequently been shown to remain vulnerable to image reconstruction attacks [39]. More fundamentally, they require special-ized privacy-preserving descriptors rather than lever-aging modern state-of-the-art semantic representations, potentially sacrificing place-recognition performance rel-ative to descriptors such as DINOv3 [38]. Most similar to our approach is Snail [27], a privacy-preserving localization system that uses SMPC to local-ize a robot without revealing either the query image or map data. In contrast, our work addresses multi-agent CSLAM, where agents jointly compute over private data to build and localize within a shared map. Rather than protecting the entire pipeline, we apply SMPC only to ILC candidate detection. Geometric verification is then performed in the clear only when a privately computed similarity score exceeds a threshold, preventing informa-tion leakage when no loop closure exists. Because this stage is computationally lightweight (essentially a vector comparison), it delivers substantial privacy benefits with far less overhead than protecting the full pipeline. In summary, prior work has explored privacy in the CSLAM back-end, privacy-preserving visual representa-tions, and SMPC for related robotics problems. How-ever, none uses SMPC for privacy-preserving inter-agent loop closure candidate detection in multi-agent CSLAM, which is the central contribution of this paper. 
+
+III. Bridging SMPC & CSLAM 
+
+A full treatment of SLAM [40] and SMPC [18], [21] is beyond our scope, but a high-level understanding of both motivates our system and its design choices. This work leverages MP-SPDZ [22], a mature library compiling sim-ple scripts to over 25 SMPC protocols. Throughout, we color-code Agent A’s private values blue (e.g., x), Agent B’s red, jointly-computed values purple (e.g., res := 
+
+f (x, y )), and secure values green (e.g., Beaver Triples 
+
+(ak, b k, c k), see Section III-B). CSLAM ILC candidate detection via GD is discussed in Section III-D. 
+
+A. SMPC: Overview, Key Guarantees, & Limitations 
+
+SMPC enables mutually distrusting parties to jointly compute a function over their private inputs, peer-to-peer, without revealing those inputs to one another (Figure 3). Within an assumed adversary model (Sec-tion III-C), it provides two key guarantees: (i) privacy of inputs and intermediate values during computation, and (ii) correctness of the output with respect to the provided inputs [18]. Both have important limitations. Privacy (i) is bounded by what the output reveals: SMPC cannot prevent leakage through the agreed-upon output itself. If Agents A and B compute the mean                      
+
+> TABLE I: Cost profile of SMPC primitives in a two-party setting. Communication Rounds and Field Elements Sent refer to online phase (i.e., Beaver Triples are generated a priori in offline phase ).
+> Operation Comm. Rounds Field Elements Sent BTs Consumed
+> Secret Share 110Secure Addition 000Secure Multiplication 121 (scalar) Secure Dot Product (Naive) N2NN (scalar) Secure Dot Product (Efficient) 12N1 (vector)
+
+res := x+y 
+
+> 2
+
+of their private values, either party can recover the other’s input from res and its own. Correctness (ii) holds with respect to supplied inputs, but does not imply input integrity: a party submitting a fabricated input still has the function faithfully com-puted over it. Enforcing integrity requires an orthogonal mechanism, e.g., a reputation system [20]. 
+
+B. SMPC: Primitives, Operations, and Overhead 
+
+SMPC is often performed over Fp, a finite prime field of order p, using two primitive operations: Secure Addi-tion and Secure Multiplication . Any conventionally com-putable function can be realized under SMPC [18], so the central concern is not expressiveness but computational overhead, since private versions of familiar operations and number representations shift sharply in relative cost (e.g., (÷) ≫ (×) ≫ (+) and float ≫ int = fixed ). Agents A and B computing res := f (x, y ) over private 
+
+x, y ∈ Fp (Figure 3c) have three online steps to consider: 
+
+(i) Distribute Input Secret Shares: Each agent splits each private variable into uniform random secret shares , one per agent. A maps x 7 → ([ x]A, [x]B), keeping 
+
+[x]A and sending [x]B to B; B maps y 7 → ([ y]A, [y]B)
+
+likewise. Shares are sampled uniformly over Fp, with the owner’s final share chosen so all shares sum (mod 
+
+p) to the original value (e.g., [x]A := x − [x]B implying 
+
+x = [ x]A + [ x]B). Each share thus reveals nothing on its own. A hidden value can be opened at any time by having all agents broadcast and sum over all shares. 
+
+(ii) Secure Computation: Each agent computes its shares of the output (and all intermediate values) using secure operations, which preserves the privacy (i.e., the uniform-distribution property) of shares throughout. As typically implemented [18], [22], Secure Addition is an entirely local (inexpensive) operation, while Secure Mul-tiplication requires one round of communication between agents per multiplication (expensive). The difficulty of Secure Multiplication arises because the product of two secret-shared values depends on shares held by other agents, so it cannot be computed locally. To resolve this without revealing any agent’s shares, a Beaver Triple 
+
+(BT) – a tuple of secret-shared helper values (ak, b k, c k)
+
+s.t. ck = akbk – allows the agents to open masked versions of the private terms that can represent the product’s value without directly exposing the terms. Additionally, many structured calculations admit fur-ther optimizations. For example, the Private Dot Prod-uct of two N -vectors (useful in Section V-A) needs a single communication round using one vector BT –(a) Full-Trust Paradigm (b) Trusted Third Party (TTP) Paradigm (c) SMPC Paradigm [Our Approach] 
+
+Fig. 3: Three paradigms for the joint calculation of res := f (x, y ), where res depends on both A’s private input x and B’s private input 
+
+y. All arrows represent encrypted inter-agent communication, so every approach is protected from external eavesdroppers. (a) A shares 
+
+x directly with B, who computes and returns res . This approach is simple and computationally efficient, since all computation is done in the clear, but it exposes x to B in plaintext and thus requires A to fully trust B with its private input x and to honestly compute and return res . (b) A and B outsource the computation to a mutually trusted third party (TTP), here C. Both parties provide their private inputs to C in plaintext, and C computes res in the clear and returns only res to A and B. Since only C accesses the private inputs, A cannot learn y and B cannot learn x. When such a trusted entity is available, this approach is simple and efficient. However, establishing trust in a third party can be difficult in the field, and reliance on a secured centralized node is often operationally undesirable or infeasible in practice. (c) A and B perform SMPC, which provides the same privacy guarantees as a TTP without requiring one (i.e., SMPC can be thought of as creating a “virtual trusted third party” through peer-to-peer distributed computation). The tradeoff is that, without an actual TTP, the agreed-upon function cannot be computed in the clear, incurring additional privacy-protecting overhead. TABLE II: SMPC adversarial models [18] and the corresponding relevant MP-SPDZ protocols implementing each (i.e., over a prime field with a dishonest-majority corruption model) [22]. The listed protocols are those our system is benchmarked with in Section V.             
+
+> Model Adversary Model Description Protocol(s)
+> More Secure  −−→←−Less Overhead  Malicious
+> a.k.a. “active” Corrupted parties may deviate arbitrarily, while hon-est parties always get correct output or abort.
+> MASCOT
+> Covert Corrupted parties may deviate arbitrarily, but are caught with fixed probability, a probabilistic deterrent.
+> CowGear
+> Semi-Honest
+> a.k.a. “passive” -or-“honest-but-curious”
+> Corrupted parties follow protocol honestly, but cannot learn more than the output.
+> Semi ,Hemi ,
+> Temi ,Soho
+
+(⃗a k,⃗ b k, c k) s.t. ck =⃗a k ·⃗ bk – instead of N element-wise multiplications. Table I shows key primitives and costs. Because BTs are independent of the parties’ inputs, they can be bulk-generated a priori during an offline phase , separate from steps (i) –(iii) (the online phase ). This distinction is standard in the SMPC literature and critical for online performance [18]. For instance, an 
+
+offline-only trusted party (OOTP) – an honest server available only before, but not during, deployment – can trivially generate and distribute BTs ahead of time. 2
+
+In the absence of an OOTP (or when additional BTs are needed at runtime), parties can still generate BT shares in a secure peer-to-peer manner, although doing so requires expensive cryptographic protocols such as Oblivious Transfer (OT) [18]. In practice, this is orders of magnitude more costly than the entire SMPC online phase in terms of both runtime and communication, and is ideally avoided when possible. Fortunately, in many practical applications (e.g., robotics), a pre-mission OOTP is typical (e.g., to distribute radio encryption keys) and can thus be additionally tasked to efficiently generate BTs during the offline phase .
+
+(iii) Opening Result: Once each agent holds its share of the output ( [res ]A, [res ]B), the result is publicly opened ( res := [ res ]A + [ res ]B). Only the final output is opened, keeping inputs and intermediates hidden. 
+
+C. SMPC: Protocols and Threat Models 
+
+MP-SPDZ compiles to over 25 SMPC protocols, each named and categorized by the field it operates over and its threat model. The adversary model specifies how agents may misbehave (Table II), while the corruption model specifies how many agents are corrupted (≥50% 
+
+dishonest majority vs. <50% honest majority ). Lower security requirements permit more efficient protocols. Our application uses prime fields and assumes a dishonest majority (honest majority is moot with two parties). Table II lists the most relevant protocols (which we benchmark our system with in Section V) and their respective adversary-model assumptions. 
+
+D. SLAM: Global Descriptor (GD) Similarity Scoring 
+
+Figure 2 depicts a typical CSLAM pipeline. From Agent A’s perspective, ILC step has a raw observation I0
+
+(e.g., image, LiDAR scan) processed to extract a compact GD vector: v0 := extract (I0). GDs are broadcast across the swarm, where they are scored for similarity 
+
+score (v0, vi) against other agents’ GDs vi. An ILC candidate is flagged when GD similarity exceeds tol :
+
+is_candidate (v0, vi) := score (v0, vi) ≥ tol 
+
+Only then do higher-bandwidth data Ii and expensive 
+
+geometric verification GV (I0, Ii) 7 → ˜TLC follow. Each type of GD defines its own extract and score .We consider the following image-based GDs: DBoW2 [35] (a “classical” bag-of-words descriptor popularized by ORB-SLAM [41]), NetVLAD [36] (a learned CNN descriptor bridging classical and transformer-based ap-proaches), DINOv2 [37] (a self-supervised vision trans-former foundation model), and DINOv3 [38] (a more recent, state-of-the-art version). To demonstrate multi-modality, we also consider Scan Context [42] (a LiDAR-based GD): our implementation (Section V) is agnostic to the sensor type and extract function, only needing 
+
+> 2
+
+An OOTP can directly generate 5 uniform random values 
+
+[ak ]A, [ak ]B, [bk ]A, [bk ]B, [ck ]A ∈ Fp, selecting the last s.t. [ck ]B := ([ ak ]A + [ ak ]B)([ bk ]A + [ bk ]B) − [ck ]A, then distribute the shares 
+
+([ ak ]A, [bk ]A, [ck ]A) to A and ([ ak ]B, [bk ]B, [ck ]B) to B accordingly. A’s original          
+
+> I0
+> B’s malicious
+> extract −1(v0)
+> Fig. 4: We demonstrate a simple image reconstruction attack on a 1536-D DINOv2 GD. Typical CSLAM pipelines (Figure 6a) are vulnerable to this attack, but CILC (our approach, Figure 6b) pro-tects against this. Top row: A’s original ImageNet [43] images (not seen during training). Bottom row: B’s malicious reconstructions of each I0from broadcasted v0. Additional details in Section IV-A.
+
+to implement is_candidate (i.e., score ) over v0 and 
+
+vi. Table III details each considered GD and its score .
+
+IV. Demonstration of Security Vulnerabilities 
+
+To motivate our security concerns, consider two at-tacks a compromised swarm agent B can mount against an honest A during typical CSLAM operation. As a trusted peer, B sits on the encrypted communication network, so transport-layer encryption offers A no pro-tection. Both attacks are undetectable by A, as they require only listening to A’s ILC GD broadcast (some-thing an honest B would do anyway) and withholding ILC candidates that only B knows about. 
+
+A. Image Reconstruction from GD Broadcast 
+
+Figure 4 demonstrates a basic image reconstruction at-tack on a 1536-D GD made using DINOv2 [37]. Merely by listening to Agent A’s GD broadcast, a corrupted Agent B can unknowingly reconstruct an approximate, lossy version of A’s original image. Each GD concatenates DINOv2 ViT-B/14’s classification token (768-D) and the mean of its patch tokens (768-D) into a fixed-length 1536-D vector. We train a convolutional decoder to approxi-mate the inverse mapping extract −1 from descriptor space v0 to image space I0: a fully-connected layer projects the descriptor into a 512 -channel 7 × 7 feature map, which five upsampling stages (each a residual block, 
+
+2× nearest-neighbor upsample, and 3 × 3 convolution) enlarge to a 224 ×224 RGB image. We train for 40 epochs (batch size 16) on the first 114,592 ImageNet training images [43] against a weighted sum of L1 pixel, LPIPS perceptual [44], and descriptor-consistency losses, using a single NVIDIA GeForce RTX 2080. Although this simple decoder may not generalize beyond ImageNet, it shows that GDs divulge significant information with little ef-fort. This underscores the severity of the vulnerability in CSLAM systems, where GDs are broadcast and not all agents can be trusted. 
+
+B. Path Reconstruction from GD Broadcast 
+
+Figure 5 demonstrates a basic trajectory reconstruction attack on real robot hardware using the same DINOv2 GD. Each agent is a Red Rover robot (Figures 5a and 5b) equipped with a Livox Mid-360 LiDAR for odometry, a RealSense D455 for ILC detection, and a NUC13 for onboard compute (13th Gen Intel i7-1360P (16) @ 5 GHz, 64 GB RAM). A and B patrol the same office environment, while compromised B maliciously reports 
+
+is_candidate as False , preventing A from receiving any ILCs. Although B cannot perform GV without I0, it still receives every v0 in the clear. By comparing each v0
+
+against its own vi and recording where is_candidate 
+
+is True in its local map, B can gradually reconstruct A’s approximate trajectory using only A’s public GDs. This further demonstrates how readily GDs leak sensitive information, reinforcing the findings of Section IV-A. 
+
+V. System Architecture & Experiments 
+
+A. CILC Protocol Design 
+
+To address the CSLAM security vulnerabilities of Section IV, we propose CILC (Cryptographically-secure Inter-agent Loop Closure candidate detection), which uses SMPC to detect ILC candidates without continuous GD disclosure. This mitigates data exfiltration by com-promised agents while preserving the benefits of CSLAM. Figure 6 compares a conventional CSLAM ILC pipeline (Figure 6a) with CILC (Figure 6b). Running the entire pipeline under SMPC would offer maximal protection but incur prohibitive overhead (e.g., runtime, and comms usage). Instead, our analysis (Section III) identifies ILC candidate detection as a privacy-sensitive yet computationally simple step ( is_candidate is typ-ically a vector-norm threshold check). This makes it well-suited for efficient SMPC, yielding an advantageous privacy to overhead trade-off. Thus, CILC computes is_candidate (v0, vi) under SMPC, keeping v0, vi, and all intermediate values hidden while revealing only whether the GD similarity threshold was met (True /False ). GV still runs in the clear, but the additional information Ii is exposed only on a candidate match, significantly constraining what acompromised B can exfiltrate from honest A.                    
+
+> (a) Agent A
+> (b) Agent B (c) B’s malicious reconstruction of A’s trajectory
+> Fig. 5: We demonstrate a simple trajectory reconstruction attack
+> using the pictured robot hardware and 1536-D DINOv2 GDs. A and B patrol the same office hallways without following the same path. Nevertheless, B reconstructs a close approximation of A’s trajectory with minimal effort and without GV . Blue Squares show A’s true position when broadcasting a GD v0; Red Dots show positions where B collected a visimilar to v0(i.e., where
+> is_candidate (v0,vi)is True ); and Red Xs show B’s malicious reconstructions of A’s positions, computed solely from B’s local knowledge and A’s broadcast GDs by simply averaging the Red Dots. Additional details in Section IV-B.
+
+TABLE III: Comparison of global descriptors (GD) used for visual and LiDAR-based inter-agent loop closure (ILC) candidate detection. Vector lengths refer to typical / default configurations as reported in the original works (many expose parameters that change the size). 
+
+ID Descriptor Modality Typical descriptor dimensionality Similarity Score description 
+
+D1 DBoW2 (2012) [35] Image Size of vocabulary (e.g., between 10 3 and 10 6 words) L1-dist on TF-IDF as L1-unit-vec 
+
+D2 NetVLAD (2016) [36] Image 16k-D or 32k-D, reduced to 4096-D by PCA, whitening, & normalization Cosine similarity 
+
+D3 DINOv2 (2023) [37] Image 2 tokens × 384-D (S) / 768-D (B) / 1024-D (L) / 1536-D (g) Cosine similarity 
+
+D4 DINOv3 (2025) [38] Image 2 tokens × 384-D (S/S+) / 768-D (B) / 1024-D (L) / 1280-D (H+) / 4096-D (7B) Cosine similarity 
+
+D5 Scan Context (2018) [42] LiDAR 20 × 60 = 1200-D matrix (radial-by-azimuth bins); 20-D vector (retrieval) Cosine similarity; L1 (retrieval) Agent A Agent B 
+
+Collect Keyframe Image 
+
+I0
+
+Extract Global Descriptor 
+
+extract : I0 7 → v0
+
+Geometric Verification ˜TLC := GV (I0, Ii)
+
+Detect Candidate ILC: 
+
+∀ (vi, Ii) ∈ Database 
+
+si := score (v0, vi)Candidate ILC Indices: 
+
+{ i | si ≥ tol }       
+
+> Send Global Descriptor v0
+> Send ILC Candidates
+> {Ii|si≥tol }
+
+SLAM Back-End Pose-Graph Optimization                                   
+
+> .Caution: Asends v0to Bin the clear so Bcan com-pute the joint value si.In doing so, Areveals its sen-sitive information v0to Band trusts Bto honestly use it to compute siand reveal Iito Awhen appropriate. A compromised Bcan then infer A’s location and/or other sensitive information without sharing anything useful in return, and without Ahaving any ability to detect or prevent this.
+> Accept ˜TLC Reject ˜TLC
+
+(a) Data-leaking ILC protocol [Typical Approach] Agent A Agent B 
+
+Obtain Beaver Triples Shares 
+
+([ ak]A, [bk]A, [ck]A)
+
+Collect Keyframe Image 
+
+I0
+
+Extract Global Descriptor 
+
+extract : I0 7 → v0
+
+Generate Shares 
+
+v0 7 → ([ v0]A, [v0]B)[v0]B := Rnd (0 , p ) =⇒ [v0]A := v0 − [v0]B
+
+Exchange Shares    
+
+> Asends [ v0]BAreceives [ vi]A
+
+SMPC Computation [si]A := score ([ v0]A, [vi]A)[out i]A := bool ([ si]A ≥ tol )
+
+Open Secure Variable: out i     
+
+> Asends [ out i]AAreceives [ out i]B
+> out i= [ out i]A+ [ out i]B
+
+Use SMPC Result: out i            
+
+> if ( out iis False ):
+> •No candidate LC detected →Terminate Otherwise ( out iis True ):
+> •Alistens for Bto send Ii
+
+Geometric Verification ˜TLC := GV (I0, Ii)
+
+Obtain Beaver Triples Shares 
+
+([ ak]B, [bk]B, [ck]B)
+
+Perform SMPC with A
+
+∀ (vi, Ii) ∈ Database 
+
+Generate Shares 
+
+vi 7 → ([ vi]A, [vi]B)[vi]A := Rnd (0 , p ) =⇒ [vi]B := vi − [vi]A
+
+Exchange Shares    
+
+> Bsends [ vi]ABreceives [ v0]B
+
+SMPC Computation [si]B := score ([ v0]B, [vi]B)[out i]B := bool ([ si]B ≥ tol )
+
+Open Secure Variable: out i     
+
+> Bsends [ out i]BBreceives [ out i]A
+> out i= [ out i]A+ [ out i]B
+
+Use SMPC Result: out i            
+
+> if ( out iis False ):
+> •No candidate LC detected →Terminate Otherwise ( out iis True ):
+> •Bsends Iito listening A
+
+SMPC 
+
+Offline Phase 
+
+SMPC 
+
+Online Phase 
+
+MISSION START                 
+
+> Exchange [ v0]B, [ vi]A
+> Recall, [ v0]Band [ vi]Aare uniform and reveal no info alone
+> Private Joint Calculation
+> of siand out i
+> Consume 1 Beaver Triple and perform 1 communication per Secure Multiplication/Dot Product
+> Exchange [ out i]A, [ out i]B
+> Recall, by definition
+> x=[x]A+[x]B
+> Send Iiif out iis True
+
+SLAM Back-End Pose-Graph Optimization                                                                                 
+
+> Accept ˜TLC Reject ˜TLC
+> Note: ABeaver Triple is a tuple ( ak, b k, c k) s.t.
+> ak·bk=ck.One triple is spent per secure multiplica-tion/dot product. Triples are independent of runtime input and thus can be generated a priori during the
+> SMPC Offline Phase .
+> Note: At the end of the SMPC Online Phase :
+> •Ahas not learned specific info about B’s viand Ii
+> •Ahas not leaked specific info about v0and I0to B
+> •Bhas not learned specific info about A’s v0and I0
+> •Bhas not leaked specific info about viand Iito A
+> •Aand Bonly learn out i(w/o learning si’s value) If ( out iis False ), then:
+> •Aand Bonly learn (0 , i ) is not a candidate LC pair Otherwise ( out iis True ):
+> •Aand Blearn (0 , i ) is a candidate LC pair
+> •Based on protocol, Anow expects Bto send Ii
+> •Bfailing to send a valid Ii=⇒Bis compromised
+
+(b) Privacy-preserving ILC protocol [Our Approach: CILC] 
+
+Fig. 6: Comparison between conventional CSLAM ILC candidate detection pipeline and our approach, CILC . Details in Section V-A 
+
+Under CILC, B can no longer passively observe v0,learn the exact value of score (v0, vi), or lie about 
+
+is_candidate (v0, vi): it cannot learn from A’s v0
+
+without supplying its own vi, which in turn reveals information about B. B can still supply arbitrary GDs vi
+
+or images Ii3 to probe what A has seen, but a success-ful arbitrary probe requires guessing a high-dimensional (e.g., 8192 -D) vector vi within tol of private input 
+
+3Recall from Section III-A that SMPC guarantees output cor-rectness with respect to the provided inputs, but cannot compel a compromised party to supply truthful inputs. 
+
+v0 – generally improbable and impractical. Moreover, if is_candidate (v0, vi) returns True , both agents learn this under SMPC, so A then expects B to supply image Ii as the CILC protocol requires; failure to do so exposes B as compromised. Although B cannot be compelled to provide a true Ii for the supplied vi, evading detection requires supplying an Ii that is not obviously tampered with and whose corresponding GD falls within 
+
+tol of v0 (without knowing v0): once B reveals Ii in the clear, A simply checks that Ii 7 → vi is consistent with score (v0, vi) ≥ tol , and any inconsistency im-mediately identifies B as compromised. This strongly incentivizes B to supply only honest GD-image pairs it has actually observed, or risk detection. 
+
+B. Experimental Design 
+
+We implement CILC in MP-SPDZ (v0.4.2 ) and eval-uate it through benchmarking and hardware experi-ments. Benchmarking consists of a parameter sweep (10 trials/config) across 7 protocols (the 6 SMPC protocols in Table II plus the insecure Baseline ), 9 vector sizes (16 ≤ N ≤ 8192 ), and 10 score functions ( S1 -S10 ,see Table IV), for a total of 6300 trials. We benchmark 
+
+score directly because is_candidate simply applies a threshold check around the selected score implemen-tation. As is typical, BTs are assumed to be generated apriori during the offline phase (Section III-B). Table V summarizes results most relevant to our discussion 4 (raw metrics for all trials are available in our code reposi-tory). SMPC runtime and communication are measured directly by MP-SPDZ . Secure implementations use sfix 
+
+(MP-SPDZ ’s secure fixed-point type) configured as 64-bit with 16-bit fractional precision. The insecure Baseline 
+
+is implemented in C++ . All benchmarks were run on an Intel i9-10900K (20) @ 5.3 GHz CPU. Hardware ex-periments repeat the path reconstruction demonstration (Section IV-B, Figure 5) using CILC. 
+
+C. Discussion of Results 
+
+First, when score functions ( S1 -S10 , see Table IV) are compared with a fixed N and secure protocol (see 
+
+4Results for S10 are shown for all N because it is the preferred SMPC implementation (Section V-C). Results for all score func-tions are shown at N = 16 to highlight which are impractical under SMPC, even with small N . Additional results are shown for 
+
+N = 1536 (GD size used in Section IV) and N = 8192 (largest considered GD, formed by concatenating DINOv3 7B’s 4096-D classification and 4096-D mean patch tokens, similar to how the 1536-D DINOv2 GD was constructed in Section IV-A). TABLE IV: Information about the tested score (v0, vi) functions with a brief rationale for inclusion and expected performance under SMPC. The shorthand ¯v0, ¯vi and ˆv0, ˆvi represent computing the 
+
+L1- and L2-normalization of v0, vi respectively – i.e., computing 
+
+¯v := v/∥v∥1 and ˆv := v/∥v∥2 under SMPC for private input v.ID Score Name score (v0, vi) := Purpose & Analysis                                                                                                                           
+
+> S1 L1_dist_bar ∥¯v0−¯vi∥1
+> D1 ’s default. Under SMPC, expected to be inefficient since each L1(three total) requires N
+> conditionals (element-wise abs ) and normalizing vecs requires Nmultiplications each.
+> S2 L1_dist ∥v0−vi∥1
+> D5 ’s retrieval default. Equiv to S1 if v0,viare unit inputs. Under SMPC, expected to be more efficient than S1 (no normalization), but L1still requires Nconditionals.
+> S3 L2_dist_hat √(ˆv0−ˆvi)·(ˆv0−ˆvi)Common vec similarity. Under SMPC, expected to be inefficient since vec normalization and sqrt. Expected to outperform S1 ’s element-wise abs since ·is efficient under SMPC.
+> S4 L2_dist √(v0−vi)·(v0−vi)Common vec similarity. Equiv to S3 if v0,viare unit inputs. Under SMPC, expected to be more efficient than S3 (no normalization), but still inefficient because sqrt.
+> S5 L2sq_dist_hat (ˆv0−ˆvi)·(ˆv0−ˆvi)Common vec similarity. Under SMPC, expected to be more efficient than S3 (no sqrt), but still inefficient because normalizing vecs requires Nmultiplications each.
+> S6 L2sq_dist (v0−vi)·(v0−vi)Common vec similarity. Under SMPC, expected to be extremely efficient since addition does not communicate, ·is efficient under SMPC (same overhead as 1 mult), and no sqrt.
+> S7 cossim_hat ˆv0·ˆvi
+> D2 –D5 ’s default. S7 –S9 are all algebraically equiv but, under SMPC, this is expected to be the least performant of the three due to the ordering of the secure operations.
+> S8 cossim_2sqrt v0·vi
+> √(v0·v0)
+> √(vi·vi)
+> D2 –D5 ’s default. S7 –S9 are all algebraically equiv but, under SMPC, this is expected to be the middle-performing due to the ordering of the secure operations but having two sqrts.
+> S9 cossim_1sqrt v0·vi
+> √(v0·v0)( vi·vi)
+> D2 –D5 ’s default. S7 –S9 are all algebraically equiv but, under SMPC, this is expected to be the most performant due to the ordering of the secure operations and only having one sqrt.
+> S10 dotprod v0·vi
+> Equiv to S7 –S9 if v0,viare unit inputs. Under SMPC, expected to be most-performant of all S1 –S10 since only one efficient ·is needed (extremely efficient S6 still has Nadditions).
+
+Table V), we see large performance differences, reflecting how familiar mathematical operations have very dif-ferent relative costs under SMPC. 5 In particular, any 
+
+score function that performs vector normalization un-der SMPC is needlessly expensive because: (i) normal-ization requires N element-wise Secure Multiplications after computing magnitude, and (ii) since normalization depends only on each party’s private input, it can instead be performed locally before entering the SMPC calcu-lation. Consequently, S1 , S3 , S5 , S7 are impractical. Similarly, Cosine Similarity S7 –S9 reduces to a single Dot Product ( S10 ) after local L2-normalization, making 
+
+S7 -S9 impractical. Thus, S10 is the preferred implemen-tation of Cosine Similarity under SMPC. Second, even among the remaining candidates ( S2 ,
+
+S4 , S6 , S10 ), performance varies substantially. The 
+
+L1-distance (S2 ) is expensive because it requires N
+
+Secure Conditionals (i.e., element-wise abs ), while the 
+
+L2-distance ( S4 ) requires an expensive Secure Square Root. In contrast, L2-distance squared ( S6 ) requires only inexpensive Secure Additions plus an efficient Secure Dot Product, and S10 is just a Secure Dot Product, making them substantially more efficient under SMPC. Since cosine similarity is the dominant similarity metric among the surveyed global descriptors (Table III), S10 emerges as the preferred SMPC implementation, offering the best combination of practicality and performance. Finally, comparing MASCOT and Hemi demonstrates the expected security-performance trade-off. For S10 
+
+with N = 8192 (the largest considered GD), Hemi 
+
+is 2.06 × faster and requires roughly one-third less communication than MASCOT ; whether this security-performance trade-off is acceptable depends on the ap-plication and threat model. Compared with the insecure 
+
+Baseline , MASCOT incurs the expected overhead (e.g., 
+
+225 .63 × runtime and 6.01 × comms usage for S10 with 
+
+N = 8192 ). However, because CILC restricts SMPC 
+
+5Recall from Section III-B that Secure Addition requires no communication, Secure Multiplication requires one communication round, and a Secure Dot Product requires only one communication round (same as a single Secure Multiplication) regardless of vector length, though it sends 2N field elements rather than 2.TABLE V: Summary of selected CILC benchmarking results and parameter configurations most relevant to our discussion (Sec-tion V-C). The three highlighted protocols capture the primary tradeoffs: MASCOT (malicious secure , strongest security, highest 
+
+online phase overhead), Hemi (semi-honest secure , lowest measured 
+
+online phase overhead among the tested SMPC protocols), and 
+
+Baseline (lowest overhead, but insecure). See Table IV for score 
+
+definitions. Note secure and insecure columns use different units.                                                                                                                                                                                                                                                                                                                                                       
+
+> MASCOT
+> Malicious Secure
+> Hemi
+> Semi-Honest Secure
+> Baseline (C++ )
+> Insecure
+> NID Score Name t[ms] ↓Comms t[ms] Comms t[μs] Comms mean std [MB] [#] mean std [MB] [#] mean std [KB] [#] 16
+> S1 L1_dist_bar 52.32 3.32 3.266 311 19.33 2.16 3.264 208 1.45 0.05 0.128 2
+> S2 L1_dist 2.97 0.10 0.063 57 1.11 0.20 0.062 34 0.39 0.02 0.128 2
+> S3 L2_dist_hat 102.81 2.94 5.039 1465 32.30 0.70 5.029 1072 1.80 0.07 0.128 2
+> S4 L2_dist 21.25 1.36 0.355 623 6.72 0.15 0.350 458 0.50 0.02 0.128 2
+> S5 L2sq_dist_hat 82.83 1.98 4.688 871 26.25 1.48 4.681 628 2.30 0.32 0.128 2
+> S6 L2sq_dist 0.75 0.16 0.002 29 0.39 0.09 0.001 14 0.57 0.09 0.128 2
+> S7 cossim_hat 115.35 3.93 5.521 1695 35.76 1.02 5.507 1242 1.98 0.39 0.128 2
+> S8 cossim_2sqrt 35.55 1.38 0.836 853 10.38 0.34 0.829 628 0.75 0.15 0.128 2
+> S9 cossim_1sqrt 29.52 1.53 0.488 853 8.89 0.19 0.482 628 0.76 0.09 0.128 2
+> S10 dotprod 0.70 0.15 0.002 29 0.40 0.09 0.001 14 0.52 0.22 0.128 2256 S10 dotprod 1.22 0.14 0.013 29 0.52 0.09 0.009 14 1.72 0.56 2.048 2512 S10 dotprod 1.53 0.13 0.026 29 0.62 0.10 0.017 14 3.25 0.45 4.096 2768 S10 dotprod 1.80 0.18 0.038 29 0.79 0.12 0.025 14 6.26 1.72 6.144 21024 S10 dotprod 2.23 0.15 0.050 29 0.88 0.11 0.034 14 14.10 4.80 8.192 21536
+> S2 L1_dist 194.17 6.45 6.008 2657 58.94 1.83 5.972 1762 8.89 0.08 12.288 2
+> S4 L2_dist 27.52 1.74 0.501 629 8.78 0.26 0.447 458 17.05 6.65 12.288 2
+> S6 L2sq_dist 4.01 0.17 0.075 35 2.50 0.50 0.050 14 19.39 8.09 12.288 2
+> S10 dotprod 2.70 0.11 0.075 29 1.16 0.17 0.050 14 9.13 1.83 12.288 22048 S10 dotprod 3.69 0.67 0.099 29 1.33 0.09 0.066 14 23.23 22.64 16.384 24096 S10 dotprod 7.90 2.11 0.198 29 2.42 0.36 0.132 14 37.09 4.68 32.768 28192
+> S2 L1_dist 1043.92 19.76 32.043 14107 319.21 10.18 31.85 9378 50.06 1.74 65.536 2
+> S4 L2_dist 41.72 2.19 1.139 657 17.48 0.27 0.873 458 71.88 5.22 65.536 2
+> S6 L2sq_dist 19.86 5.42 0.394 63 10.28 0.26 0.263 14 51.44 7.53 65.536 2
+> S10 dotprod 9.42 0.91 0.394 29 4.57 0.72 0.263 14 41.75 7.10 65.536 2
+
+to ILC candidate detection, the absolute costs remain modest within the overall CSLAM pipeline: CILC’s on-line phase remains real-time and comms-feasible 
+
+(e.g., 2.70 ms and 0.075 MB for securely comparing two of the 1536-D DINOv2-based GDs used in Section IV, each of which is 0.012 MB in the clear), leaving other processes, such as geometric verification and pose-graph optimization , as potential bottlenecks. Hardware experi-ments show comparable performance while mitigating the reconstruction attacks from Section IV. 
+
+VI. Conclusion & Future Work 
+
+To the best of our knowledge, CILC is the first system to integrate SMPC directly into a multi-agent CSLAM pipeline. Typical CSLAM frameworks implicitly assume trusted peers, so continuously broadcasting GD exposes observational information to compromised swarm agents. Protecting GD comparisons is therefore both consequen-tial and unusually well-suited to SMPC. By restricting SMPC to the computationally lightweight ILC candidate detection step, CILC demonstrates that online crypto-graphic security – despite expected additional overhead – can remain real-time and comms-feasible while mitigat-ing information leakage to compromised swarm agents. Several directions remain for future work. Scaling beyond the current hardware demonstration (2 agents in a small map) is a necessary next step. Comparing multiple GDs simultaneously could enable more efficient comparisons (e.g., via secure k-d trees) while simulta-neous comparisons between 3+ agents allow the use of more efficient honest-majority protocols. Given SMPC’s substantial gains from hardware acceleration (FPGAs, ASICs), privacy-preserving hardware tailored to multi-agent robotics is also promising. Finally, reputation and trust mechanisms [20], [45], [46] could be implemented under SMPC to incentivize honest inputs to CILC. More broadly, CILC illustrates that carefully targeting privacy-sensitive components of a robotics pipeline can make practical cryptographic protection feasible without securing the entire system. 
+
+Acknowledgements 
+
+Thanks to Sarah Scheffler, Emily Shen, Trevor Ashley, J. Parker Diamond, Dan McGann, and Aneesa Sonawalla for their valuable feedback. Figure 1 was created using base artwork generated by ChatGPT. Claude and Chat-GPT were used for text-level refinements. 
+
+References 
+
+[1] M. Dorigo, G. Theraulaz, and V. Trianni, “Swarm Robotics: Past, Present, and Future [Point of View],” Proceedings of the IEEE , vol. 109, no. 7, pp. 1152–1165, Jul. 2021. [2] E. Ackerman, “Exploit allows for takeover of fleets of Unitree robots,” IEEE Spectrum , 9 2025, updated 29 Sep 2025. Published in print as “UniPwn Exploit Allowed for Takeover of Unitree Robots,” IEEE Spectrum , Dec. 2025. [Online]. Available: https://spectrum.ieee.org/unitree-robot-exploit [3] P. Przymus and T. Durieux, “Wolves in the repository: A software engineering analysis of the xz utils supply chain attack,” in IEEE/ACM 22nd Int. Conference on Mining Soft-ware Repositories (MSR) . IEEE, 2025, pp. 91–102. [4] S. Choudhary et al. , “Distributed mapping with privacy and communication constraints: Lightweight algorithms and object-based models,” The International Journal of Robotics Research , vol. 36, no. 12, pp. 1286–1311, Oct. 2017. [5] Y. Tian et al. , “Asynchronous and Parallel Distributed Pose Graph Optimization,” IEEE Robotics Autom. Lett. , vol. 5, no. 4, pp. 5819–5826, Oct. 2020. [6] ——, “Distributed Certifiably Correct Pose-Graph Optimiza-tion,” IEEE Trans. on Robotics , vol. 37, no. 6, pp. 2137–2156, Dec. 2021. [7] Y. Chang et al. , “Kimera-Multi: A System for Distributed Multi-Robot Metric-Semantic Simultaneous Localization and Mapping,” in IEEE Int. Conf. on Robotics and Automation (ICRA) , May 2021, pp. 11 210–11 218. [8] Y. Tian et al. , “Kimera-Multi: Robust, Distributed, Dense Metric-Semantic SLAM for Multi-Robot Systems,” IEEE Trans. on Robotics , vol. 38, no. 4, pp. 2022–2038, Aug. 2022. [9] T. Cieslewski and D. Scaramuzza, “Efficient Decentralized Visual Place Recognition Using a Distributed Inverted Index,” 
+
+IEEE Robotics Autom. Lett. , vol. 2(2), pp. 640–647, Apr. 2017. [10] A. Botta et al. , “Cyber security of robots: A comprehensive survey,” Intelligent Systems with Applications , vol. 18, p. 200237, May 2023. [11] C. Dwork and A. Roth, “The Algorithmic Foundations of Differential Privacy,” Foundations and Trends ® in Theoretical Computer Science , vol. 9, no. 3-4, pp. 211–487, Aug. 2014. [12] J. Le Ny and G. J. Pappas, “Differentially Private Filtering,” 
+
+IEEE Trans. on Automatic Control , vol. 59, no. 2, pp. 341– 354, Feb. 2014. [13] J. Cortés et al. , “Differential privacy in control and network systems,” in IEEE 55th Conference on Decision and Control (CDC) , Dec. 2016, pp. 4252–4272. [14] S. Han, U. Topcu, and G. J. Pappas, “Differentially Private Distributed Constrained Optimization,” IEEE Trans. on Au-tomatic Control , vol. 62, no. 1, pp. 50–64, Jan. 2017. [15] S. Han and G. J. Pappas, “Privacy in Control and Dynam-ical Systems,” Annual Review of Control, Robotics, and Au-tonomous Systems , vol. 1, no. 1, pp. 309–332, May 2018. [16] A. Benvenuti et al. , “Guaranteed Feasibility in Differentially Private Linearly Constrained Convex Optimization,” IEEE Control Systems Letters , vol. 8, pp. 2745–2750, 2024. [17] Y. Shoukry et al. , “Privacy-aware quadratic optimization us-ing partially homomorphic encryption,” in IEEE Conference on Decision and Control (CDC) , Dec. 2016, pp. 5053–5058. [18] D. Evans, V. Kolesnikov, and M. Rosulek, “A Pragmatic In-troduction to Secure Multi-Party Computation,” Foundations and Trends ® in Privacy and Security , vol. 2, no. 2-3, pp. 70– 246, Dec. 2018. [19] E. Shi, “Foundations of Distributed Consensus and Blockchains,” 2020, book manuscript. [Online]. Available: https://www.distributedconsensus.net [20] A. Jøsang, R. Ismail, and C. Boyd, “A survey of trust and rep-utation systems for online service provision,” Decision Support Systems , vol. 43, no. 2, pp. 618–644, Mar. 2007. [21] M. Hastings et al. , “SoK: General Purpose Compilers for Secure Multi-Party Computation,” in 2019 IEEE Symposium on Security and Privacy (SP) , May 2019, pp. 1220–1237. [22] M. Keller, “MP-SPDZ: A Versatile Framework for Multi-Party Computation,” in Proceedings of the 2020 ACM SIGSAC Con-ference on Computer and Communications Security . Virtual Event USA: ACM, Oct. 2020, pp. 1575–1590. [23] A. B. Alexandru and G. J. Pappas, “Secure Multi-party Com-putation for Cloud-Based Control,” in Privacy in Dynamical Systems , F. Farokhi, Ed. Springer, 2020, pp. 179–207. [24] L. Kamm and J. Willemson, “Secure floating point arithmetic and private satellite collision analysis,” International Journal of Information Security , vol. 14, no. 6, pp. 531–548, Nov. 2015. [25] M. Alsayegh et al. , “Privacy-Preserving Multi-Robot Task Allocation via Secure Multi-Party Computation,” in European Control Conference (ECC) , Jul. 2022, pp. 1274–1281. [26] J. P. Diamond et al. , “Optimizing Local Computation in Se-cure Matrix Multiplication for Outsourced Neural Networks,” in 2025 IEEE High Performance Extreme Computing Confer-ence (HPEC) , Sep. 2025, pp. 1–7. [27] J. Choncholas et al. , “Snail: Secure Single Iteration Localiza-tion,” arXiv preprint arXiv:2403.14916 , Mar. 2024. [28] P. Speciale et al. , “Privacy Preserving Image-Based Localiza-tion,” in 2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . Long Beach, CA, USA: IEEE, Jun. 2019, pp. 5488–5498. [29] ——, “Privacy Preserving Image Queries for Camera Local-ization,” in 2019 IEEE/CVF International Conference on Computer Vision (ICCV) . Seoul, Korea (South): IEEE, Oct. 2019, pp. 1486–1496. [30] M. Geppert et al. , “Privacy Preserving Structure-from-Motion,” in Computer Vision – ECCV 2020 , A. Vedaldi et al. ,Eds. Cham: Springer Int. Pub., 2020, vol. 12346, pp. 333–350. [31] M. Dusmanu et al. , “Privacy-Preserving Image Features via Adversarial Affine Subspace Embeddings,” in IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . IEEE, Jun. 2021, pp. 14 262–14 272. [32] M. Geppert et al. , “Privacy Preserving Localization and Map-ping from Uncalibrated Cameras,” in IEEE/CVF Confer-ence on Computer Vision and Pattern Recognition (CVPR) .IEEE, Jun. 2021, pp. 1809–1819. [33] ——, “Privacy Preserving Partial Localization,” in 
+
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . IEEE, Jun. 2022, pp. 17 316–17 326. [34] L. Pan et al. , “Privacy Preserving Localization via Coordinate Permutations,” in IEEE/CVF Int. Conf. on Computer Vision (ICCV) . IEEE, Oct. 2023, pp. 18 128–18 137. [35] D. Galvez-López and J. D. Tardos, “Bags of Binary Words for Fast Place Recognition in Image Sequences,” IEEE Trans. on Robotics , vol. 28, no. 5, pp. 1188–1197, Oct. 2012. [36] R. Arandjelovic et al. , “NetVLAD: CNN Architecture for Weakly Supervised Place Recognition,” Proceedings of the IEEE conference on computer vision and pattern recognition ,pp. 5297–5307, 2016. [37] M. Oquab et al. , “DINOv2: Learning Robust Visual Features without Supervision,” Feb. 2024. [38] O. Siméoni et al. , “DINOv3,” Aug. 2025. [39] K. Chelani, F. Kahl, and T. Sattler, “How Privacy-Preserving are Line Clouds? Recovering Scene Details from 3D Lines,” in IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . IEEE, Jun. 2021, pp. 15 663–15 673. [40] L. Carlone et al. , SLAM Handbook: From Localization and Mapping to Spatial Intelligence . Camb. Uni. Press, Oct. 2025. [41] R. Mur-Artal, J. M. M. Montiel, and J. D. Tardós, “ORB-SLAM: A Versatile and Accurate Monocular SLAM System,” 
+
+IEEE Trans. on Robotics , vol. 31(5), pp. 1147–1163, Oct. 2015. [42] G. Kim and A. Kim, “Scan Context: Egocentric Spatial De-scriptor for Place Recognition Within 3D Point Cloud Map,” in 2018 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , Oct. 2018, pp. 4802–4809. [43] J. Deng et al. , “Imagenet: A large-scale hierarchical image database,” in IEEE Conf. on Computer Vision and Pattern Recognition , 2009, pp. 248–255. [44] R. Zhang et al. , “The Unreasonable Effectiveness of Deep Fea-tures as a Perceptual Metric,” in 2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition . Salt Lake City, UT: IEEE, Jun. 2018, pp. 586–595. [45] M. Cavorsi et al. , “Dynamic Crowd Vetting: Collaborative Detection of Malicious Robots in Dynamic Communication Networks,” in 62nd IEEE Conference on Decision and Control (CDC) , Dec. 2023, pp. 7546–7553. [46] ——, “Exploiting Trust for Resilient Hypothesis Testing With Malicious Robots,” IEEE Trans. on Robotics , vol. 40, pp. 3514–3536, 2024.

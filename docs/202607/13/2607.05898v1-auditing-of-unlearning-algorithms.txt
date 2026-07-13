@@ -1,0 +1,2121 @@
+Title: Auditing of Unlearning Algorithms
+
+URL Source: https://arxiv.org/pdf/2607.05898v1
+
+Published Time: Wed, 08 Jul 2026 00:35:05 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Auditing of Unlearning Algorithms 
+
+## Sahasrajit Sarmasarkar Anastasia Koloskova Stanford University University of Zurich 
+
+## sahasras@stanford.edu anastasiia.koloskova@uzh.ch 
+
+## Sanmi Koyejo Stanford University 
+
+## sanmi@cs.stanford.edu 
+
+## July 8, 2026 
+
+Abstract 
+
+Evaluating whether unlearning algorithms truly remove training data influence remains an open challenge. We propose a practical auditor that computes data-dependent lower bounds on the unlearning parameter ε using membership inference attacks. Evaluating multiple unlearning algorithms, we find a sharp separation: algorithms with rigorous guarantees, such as model clipping and rewind-to-delete, achieve very small ε bounds that do not falsify their unlearning guarantees, whereas empirical methods such as Hessian-based unlearning, interleaved ascent–descent, ascent on the forget set, and fine-tuning on the retain set exhibit large bounds, indicating poor unlearning. Our auditor provides a practical tool for empirically falsifying unlearning claims through a hypothesis-testing framework, and we validate it on CIFAR-100 and Shakespeare text. 1.
+
+# 1 Introduction 
+
+Machine unlearning is the task of removing the influence of specific training samples from an already-trained model, ideally yielding a model that behaves as if those samples had never been seen during training Cao and Yang [2015]. Simply deleting a data point from the training set does not achieve this: its information remains embedded in the learned parameters and can often be recovered by an adversary with query access, e.g. via membership inference attacks Shokri et al. [2016], Carlini et al. [2022]. This motivates exact unlearning, which produces a model with the same distribution as one retrained from scratch on the retained data Bourtoule et al. [2021], Ginart et al. [2019], and 
+
+approximate unlearning, which relaxes this requirement in exchange for efficiency Guo et al. [2020], Sekhari et al. [2021], Neel et al. [2021], Golatkar et al. [2020], Kurmanji et al. [2023]. While exact unlearning offers the strongest guarantees, it is largely impractical at scale: existing schemes are either restricted to simple models such as k-means Ginart et al. [2019] or rely on data sharding Bourtoule et al. [2021], trading utility for cheap deletion. To scale to deep networks, a parallel line of work develops approximate unlearning algorithms, with two kinds of compromise. The first family is heuristic and provides no formal guarantee, including Fisher/Hessian-based parameter scrubbing Golatkar et al. [2020], gradient ascent on the forget set, fine-tuning on the retain set, and interleaved ascent–descent schemes such as SCRUB Kurmanji et al. [2023]. The second family adopts the certified (ε, δ )-indistinguishability notion of Guo et al. [2020], borrowed from differential privacy, which requires the unlearned model to be (ε, δ )-indistinguishable Dwork and Roth [2014] from one retrained from scratch. This guarantee bounds the distinguishing advantage of any test operating on the unlearnt model relative to the baseline retrained model. Most certified-unlearning algorithms require (strong) convexity of the loss Guo et al. [2020], Sekhari et al. [2021], Neel et al. [2021], Qiao et al. [2025], Zhang et al. [2025] or a unique minimiser Allouah et al. [2025]; only a handful of recent methods provide certified guarantees for genuinely nonconvex losses Koloskova et al. [2025], Mu and Klabjan [2025], Chien et al. [2024], Chourasia and Shah [2023].  
+
+> 1Code available at: https://github.com/Sahasrajit123/audit-unlearning-code
+
+1arXiv:2607.05898v1 [cs.LG] 7 Jul 2026 While the bounds above are theoretical, our goal in this paper is to design an auditor that uses empirical evidence to test whether a claimed unlearning guarantee actually holds. Formally, our goal is to reject the hypothesis ε < ε LB 
+
+for any certified (ε, δ ) unlearning algorithm in the spirit of recent work on differential-privacy auditing Jagielski et al. [2020], Nasr et al. [2023], Steinke et al. [2023]. While our audit draws on differential-privacy auditing, the unlearning setting is closer in spirit to group pri-vacy Dwork and Roth [2014]: certified unlearning gives (ε, δ )-indistinguishability under deletion of an arbitrary subset 
+
+of forget points rather than a single point, and the two notions differ by a multiplicative blow-up in ε. Off-the-shelf DP auditors therefore certify only the weaker single-point neighbouring guarantee and yield loose ε bounds in the unlearning setting; our meta-algorithm (Algorithm 1) extends the one-run auditor of Steinke et al. [2023] with new bounds tailored to subset-level guarantees. Our key contributions are summarised below. • Threat model. We adopt a strong adversary with black-box knowledge of the learning algorithm, the unlearning algorithm, the data-loading shuffler, and the initial model weights at the start of training. The adversary knows the underlying random mechanism used by these procedures but does not observe its specific random realisation on any given run. • Auditor. Leveraging the definition of (ε, δ )-unlearning with respect to arbitrary forget subsets, we design a hypothesis test that rejects the null hypothesis ε < ε LB with controlled Type I error for the case of δ = 0 (see Theorem 4.2). • Empirical evaluation. We develop two instantiations of this auditor in Section 5 and evaluate them across a range of unlearning algorithms, revealing a sharp separation between certified and uncertified methods: certified unlearning algorithms yield very small ε lower bounds, whereas uncertified algorithms produce lower bounds that frequently exceed 50 –60 .
+
+# 2 Related work 
+
+Empirically lower-bounding the privacy parameter ε of an (ε, δ )-DP mechanism has been studied in Jagielski et al. [2020], Nasr et al. [2021, 2023], Annamalai and De Cristofaro [2024], typically by planting canaries in a pair of neighbouring datasets and converting distinguishing accuracy into an ε lower bound via the hypothesis-testing interpretation of DP Kairouz et al. [2015], Wasserman and Zhou [2010]. These approaches require many independent training runs to drive the audit’s Type I/II error down. More recent work Steinke et al. [2023], Mahloujifar et al. [2025] reduces the run cost to a single training run for (ε, δ )-DP and f -DP respectively, by planting many independent canaries and auditing them jointly within one run. Our auditor borrows the joint-canary idea from Steinke et al. [2023], but the transfer to unlearning is not direct. As argued above, the subset-level guarantee yields weaker per-canary signal than the single-point neighbouring relation underlying standard DP audits, so we aggregate across multiple runs to obtain tight ε lower bounds, and converting the joint canary statistics into a valid bound under this neighbouring relation requires new lemmas. To tighten the resulting bounds further, we replace the loss-difference scoring of Steinke et al. [2023], Mahloujifar et al. [2025] with a LiRA-style Carlini et al. [2022] per-canary likelihood-ratio test on logit-scaled confidences, fitting Gaussians to the canary’s score under the in-forget-set and never-seen hypotheses. A separate line of work audits unlearning directly rather than DP: backdoor-based verification (e.g. Athena Sommer et al. [2022], though Zhang et al. [2024] show such schemes can be gamed by a dishonest provider), output-difference 
+
+audits such as TAPE Wang et al. [2025b] that train a reconstructor on the gap between pre- and post-unlearning models, and sample-level audits returning per-example unlearning-completeness scores Wang et al. [2025a], Triantafillou et al. [2024], Gu et al. [2025]. Our auditor instead returns a quantity calibrated to the certified-unlearning parameter ε itself, rather than a per-example completeness score: an empirical lower bound on the algorithm’s ε that is directly comparable to its claimed (ε, δ ) guarantee. Early MIA formulations Shokri et al. [2016], Yeom et al. [2018] were sharpened by likelihood-ratio attacks (LiRA Carlini et al. [2022], RMIA Zarifzadeh et al. [2024]). In the unlearning setting, Chen et al. [2021], Bertran et al. [2024] exploit the difference between original and unlearned models to infer or reconstruct deleted samples. These formulations often assume access to both pre and post unlearning models where as our audit is formulated around access to just the unlearnt model. 23 Problem setup 
+
+## 3.1 Unlearning definition 
+
+Let A be a training algorithm that, given a dataset D, outputs a trained model A(D). Suppose a subset Df ⊆ D , called the forget set , is requested to be removed. We write Dr := D \ D f for the corresponding retain set .A natural baseline for unlearning is to retrain the model from scratch on Dr . However, full retraining is often computationally expensive. The goal of an unlearning algorithm is therefore to produce, more efficiently, a model whose distribution is close to that of a suitable retraining procedure on the retain set. Formally, an unlearning algorithm U takes as input the trained model, the full dataset, and the forget set, and outputs an unlearned model fu = U A(D), D, Df
+
+.
+
+## 3.2 (ε, δ ) indistinguishability Dwork and Roth [2014] 
+
+Definition 3.1 ((ε, δ )-indistinguishability) . Let X and Y be random variables over a common domain Ω. We say that X and Y are (ε, δ )-indistinguishable, and write X ≈ε,δ Y , if for every measurable set S ⊆ Ω, Pr[ X ∈ S] ≤
+
+eε Pr[ Y ∈ S] + δ and Pr[ Y ∈ S] ≤ eε Pr[ X ∈ S] + δ.
+
+## 3.3 Certified unlearning 
+
+Definition 3.2 ((ε, δ )-certified unlearning, Guo et al., 2020, Koloskova et al., 2025) . We say that U is an (ε, δ )-certified unlearning algorithm for A if there exists a reference algorithm A such that for every forget set Df ⊆ D with retain set 
+
+Dr := D \ D f , the random variables U(A(D), D, Df ) and A(Dr ) are (ε, δ )-indistinguishable. Informally, an observer cannot distinguish the unlearned model from one produced using only the retain set, except up to (ε, δ ).
+
+## 3.4 Threat model 
+
+The general definition above leaves the adversary’s auxiliary information unspecified. To make the audit concrete, we fix the following threat model. We consider a black-box adversary that additionally observes (i) the initial model 
+
+xo at the start of training, and (ii) the shuffling order π of training data-points within each epoch; the adversary has no access to any other sources of randomness used during training or unlearning. These assumptions strengthen the adversary relative to the standard threat model, and crucially do not weaken the certified-unlearning guarantees of certified unlearning algorithms: both the model clipping algorithm (a.k.a. noisy fine-tuning) of Koloskova et al. [2025] and rewind-to-delete (R2D) Mu and Klabjan [2025] remain (ε, δ )-certified under this stronger adversary. 2
+
+Because the adversary observes xo and π, the indistinguishability requirement must hold conditional on them; the reference algorithm is allowed to depend on (xo, π ) as well. Let Axo,π (D) denote the learning algorithm started at xo
+
+with shuffling order π.
+
+Definition 3.3 ((ε, δ )-certified unlearning under our threat model) . We say that U is an (ε, δ )-certified unlearning algorithm for A if for every initial model xo and shuffling order π, there exists a reference algorithm Axo,π such that for every forget set Df ⊆ D , the random variables U(Axo,π (D), D, Df ) and Axo,π (Dr ) are (ε, δ )-indistinguishable. Our goal is to design an auditor (or adversary) that, given black-box access to A and U together with the initial model xo and shuffling order π from our threat model, produces a data-dependent lower bound εLB on the true unlearning parameter ε. We formalise the audit as a one-sided hypothesis test: for a confidence level ζ ∈ (0 , 1) , the auditor outputs εLB such that, under H0 : ε ≤ εLB , the test rejects with probability at most ζ. Whenever the test rejects, the true parameter exceeds εLB with confidence 1 − ζ, so a high εLB is direct evidence that the unlearning guarantee, if any, is weak. The main paper focuses on δ = 0 ; see Section 4.1. A discussion on extension of the test beyond δ = 0 is given in Section C. 
+
+> 2R2D is formally analysed only in the full-batch training setting, and our threat model is consistent with that regime.
+
+34 The algorithm 
+
+We now describe the meta-algorithm underlying our audit; pseudocode is given in Algorithm 1. The auditor has black-box query access to A and U, which lets it run training-and-unlearning repeatedly on inputs of its choosing. At a high level, each run samples a balanced sign vector S(ℓ), uses S(ℓ) to decide which candidate batches are placed in the forget set, runs training followed by unlearning, and asks the auditor to predict S(ℓ) from the resulting unlearned model. The construction extends the many-canary auditing paradigm used for differential privacy Steinke et al. [2023], Nasr et al. [2023], Pillutla et al. [2024] to the unlearning setting. 
+
+Setup. The training dataset is partitioned into n batches of size B. Let B denote the universe of batches; the candidate forget pool Df ⊆ B contains m batches and the retain set Dr contains the remaining n − m. We further partition Df
+
+into m candidate forget batches Df = Smj=1 Df,j . Throughout, we fix the initial model xo and the batch-shuffling order π (both observed by the auditor under our threat model), and suppress them from notation. We define the set of approximately balanced sign vectors 
+
+Sm := { s ∈ {± 1}m : 0 ≤ #{j : sj = −1} − #{j : sj = +1 } ≤ 1 },
+
+i.e., vectors with as many +1 s and −1s as possible (one extra −1 when m is odd, by convention). For S ∈ S m, let 
+
+Df (S) := S  
+
+> j:Sj=+1
+
+Df,j be the sampled forget set under S and D(S) := Dr ∪ D f (S) the corresponding training set. 
+
+Audit procedure. Fix an even guess budget r. In each of L independent runs, the auditor: 1. samples S(ℓ) ∼ Unif( Sm) and computes the unlearned model f (ℓ) 
+
+> u
+
+← U  A(D(S(ℓ))) , D(S(ℓ)), Df (S(ℓ))
+
+2. produces a guess bS(ℓ) ∈ {− 1, 0, +1 }m with exactly r/ 2 entries equal to +1 and r/ 2 equal to −1 (the remaining 
+
+m − r entries are 0, indicating abstentions); 3. records the overlap score V (ℓ) := Pmj=1 max {0, bS(ℓ) 
+
+> j
+
+S(ℓ) 
+
+> j
+
+}, which counts the number of correct nonzero guesses (out of r). The audit reports a summary statistic (mean or median) of {V (ℓ)}Lℓ=1 , which Theorem 4.2 converts into the lower bound 
+
+εLB .For analysis, Algorithm 1 induces a randomized mechanism M : Sm → {− 1, 0, +1 }m with M(S(ℓ)) := bS(ℓ).Although M may invoke A and U arbitrarily many times, the only quantities hidden from it are the sampled sign vector S(ℓ) and the internal randomness of A, U within each run (e.g. gradient noise) – the latter being precisely the randomness on which the algorithms’ (ε, δ )-certified guarantees rely. Both are accessed only through the unlearned model f (ℓ) 
+
+> u
+
+, so M’s output is post-processing of f (ℓ) 
+
+> u
+
+and the certified-unlearning guarantee passes through unchanged. Under strong unlearning, batches in and out of the forget set are nearly indistinguishable, so any overlap score reliably above the random-guessing baseline r/ 2 is evidence of weak unlearning; Theorem 4.2 converts the mean (or median) of {V (ℓ)}Lℓ=1 across independent runs into a precise lower bound on ε, with two instantiations of M given in Section 5. 
+
+## 4.1 Reduction to local differential privacy 
+
+We now show that the audit reduces to a standard local-differential-privacy (LDP) lower-bound problem, which lets us import existing tools for LDP auditing. Recall from the previous section that, conditional on the fixed dataset D, initial model xo, and shuffling order π, the auditor induces a randomized mechanism M : Sm → {− 1, 0, +1 }m that maps the sampled sign vector S to a prediction M(S) := bS. Concretely, for S ∈ S m, let Df (S) ⊆ D f denote the forget subset encoded by S, let 
+
+fu(S) := U A(Dr ∪ D f (S)) , Dr ∪ D f (S), Df (S),
+
+and let fr := A(Dr ) denote the retrained reference. The auditor’s prediction M(S) is computed from fu(S) alone (with possibly many queries to A and U, but no direct access to S or to the internal randomness of A, U). 
+
+Lemma 4.1. If (A, U) is (ε, 0) -certified unlearning under our threat model (Theorem 3.3), then M is (2 ε, 0) -locally differentially private Bebensee [2019]; that is, for all S, S ′ ∈ S m and every T ⊆ {− 1, 0, +1 }m, Pr[ M(S) ∈ T ] ≤
+
+e2ε Pr[ M(S′) ∈ T ].
+
+4Proof. Fix any S1, S 2 ∈ S m. Certified unlearning of (A, U) implies fu(S1) ≈ε, 0 fr and fu(S2) ≈ε, 0 fr . Using the triangle inequality, fu(S1) ≈2ε, 0 fu(S2). 3 Since M(S) depends on S only through fu(S), it is a post-processing of 
+
+fu(S), and post-processing preserves privacy. 
+
+## 4.2 Lower bound on ε from overlap score 
+
+Lemma 4.2. Let M : Sm → {− 1, 0, +1 }m be an (ε, 0) -locally differentially private mechanism. Let T ⊆{− 1, 0, +1 }m denote the subset of vectors with exactly r/ 2 entries equal to +1 and r/ 2 entries equal to −1. Set 
+
+M ′ =   m
+
+> ⌊m/ 2⌋
+
+ and K := |T | =   mr/ 2, r/ 2, m −r
+
+. Let {S(ℓ)}Lℓ=1 be independent random vectors drawn uni-formly from Sm. For each ℓ ∈ [L], let bS(ℓ) = M(S(ℓ)), assume bS(ℓ) ∈ T almost surely, and define V (ℓ) := 
+
+Pmj=1 max 0, bS(ℓ) 
+
+> j
+
+S(ℓ) 
+
+> j
+
+∈ { 0, 1, . . . , r }. For each u ∈ { 0, 1, . . . , r }, define the pointwise bound 
+
+πε(u) := X
+
+> α1,α 2∈{ 0,...,r/ 2}
+> α1+α2=u
+
+ m − r
+
+⌈(m − r)/2⌉ − (α1 − α2)
+
+ r/ 2
+
+α1
+
+ r/ 2
+
+α2
+
+
+
+· eε
+
+eε + M ′ − 1 .
+
+Define the upper tail Pε(v) := Pru=v πε(u). Then for every v ∈ R,
+
+Pr 
+
+"
+
+1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+V (ℓ) ≥ v
+
+#
+
+≤ inf  
+
+> λ≥0
+
+exp L log 
+
+ rX
+
+> u=0
+
+eλu πε(u)
+
+
+
+− λLv 
+
+!
+
+(1) 
+
+Pr 
+
+
+
+Median 
+
+
+
+{V (ℓ)}Lℓ=1 
+
+
+
+≥ v
+
+
+
+≤
+
+ L
+
+⌈L/ 2⌉
+
+
+
+Pε(v)⌈L/ 2⌉. (2) Given an observed statistic v (the empirical mean or median of {V (ℓ)}Lℓ=1 ), we set the right-hand side of the relevant bound from Theorem 4.2 to a target level ζ, fix δ = 0 , and solve for ε to obtain an LDP lower bound; dividing by 2 to undo the reduction of Theorem 4.1 yields the reported εLB . To reject H0 : ε ≤ εLB at level ζ, it suffices to evaluate the bound at ε = εLB , since both bounds are monotone non-decreasing in ε (Theorem B.2). 
+
+Remark 4.3 (Auditor design choices) . Two parameters jointly control the audit’s power: the number of candidate forget batches m (equivalently batch size B = |D f |/m ) and the support size r.
+
+Choice of m (or B). Larger m raises the maximum attainable bound, since identifying the correct sign vector among 
+
+|S m| exponentially many candidates is information-theoretically harder. But larger m also means smaller batches and weaker per-batch leakage, so the right operating point depends on the algorithm: heuristic methods (e.g. gradient ascent on forget, fine-tuning on retain) leak strongly per batch and prefer small B (large m), while certified methods cap per-batch influence through their (ε, δ ) budget and require larger B (smaller m) for the auditor to beat random guessing. 
+
+Choice of r. The support size r lets the auditor abstain on uncertain batches. The empirical lower bound traces an inverted-U in r: it rises with r as the maximum attainable bound grows and confident predictions are still available, then falls once the auditor is forced to commit to low-confidence batches whose errors dilute the overlap score. We study these trade-offs empirically in Section F. 
+
+# 5 Two instantiations of the auditor meta-algorithm 
+
+We now instantiate the abstract mechanism M from Algorithm 1 in two ways, and contrast both with a pairwise baseline adapted from DP auditing. Both instantiations use repeated runs of training and unlearning to calibrate a likelihood-based predictor, but differ in what they predict from the final unlearned model. Instantiation I scores each candidate forget batch independently and is suitable when m is too large to enumerate Sm; Instantiation II treats each balanced sign vector as a hypothesis and exploits cross-batch correlations, but is practical only when |S m| is enumerable.              
+
+> 3This reduction does not extend cleanly to δ > 0. In particular, if X≈ε,δ Yand Y≈ε,δ Z, then X≈2ε, (1+ eε)δZ; even for small δ, this additive slack can be too large for the resulting LDP reduction to be useful.
+
+5For a model f , write f (x)y for the probability assigned to label y on input x and ϕ(p) := log 
+
+ p
+
+> 1−p
+
+
+
+for the logit transform. We write N (s; μ, σ 2) := 1√2πσ 2 exp 
+
+
+
+− (s−μ)2
+
+> 2σ2
+
+
+
+for the Gaussian likelihood. Modelling scores as Gaussian is a choice for the attack only; Theorem 4.2 requires no such assumption. 
+
+Instantiation I: Batchwise inclusion/exclusion prediction. When m is large, enumerating Sm is infeasible, so we score each batch independently. For every forget example, we fit two Gaussians to the logit scores collected across Γ
+
+independent calibration runs U(A(D(S)) , D, Df (S)) with S ∼ Unif( Sm): an in -distribution conditioned on Sj = +1 
+
+and an out -distribution conditioned on Sj = −1, in the spirit of LiRA Carlini et al. [2022]. 4 At evaluation, for each batch we sum per-point log-likelihoods under the in- and out-distributions separately and take their difference to obtain a batch score Λj . We then predict +1 for the top r/ 2 batches by Λj , −1 for the bottom r/ 2, and 0 for the rest. Calibration runs and evaluation runs are drawn independently, which is required for the audit’s lower bound to be valid. See Algorithm 2 for pseudocode. 
+
+Instantiation II: Joint sign-vector prediction. When |S m| is enumerable, we treat each candidate sign vector as a hypothesis, capturing cross-batch correlations that batchwise scoring ignores. During calibration, for every candidate 
+
+eS ∈ S m and every forget example (x, y ), we fit a Gaussian to the logit scores collected from Γ independent runs of 
+
+U(A(D( eS)) , D, Df ( eS)) . At evaluation, we score each candidate by the cumulative log-likelihood of the observed scores under its fitted Gaussians and return the highest-scoring candidate. Since the auditor commits to a full sign vector, r = m here. See Algorithm 3 for pseudocode. 
+
+Pairwise auditor (baseline). As a baseline we adapt the pairwise distinguishability auditor of Nasr et al. [2021], which distinguishes two unlearned models trained on different forget sets and converts true/false positive rates into an ε
+
+lower bound via [Kairouz et al., 2015, Thm. 2.1] with Clopper–Pearson confidence intervals; the full description and exact formula are deferred to Section A.3. 
+
+# 6 Datasets and auditor setup 
+
+CIFAR-100 [Krizhevsky, 2009]. We train a TinyNetCIFAR100 model to ∼55% validation accuracy. The forget set Df contains 10% of training points ( 4,500 ); we use a uniform split (sampled at random) and an adversarial split (forget and retain drawn from largely disjoint label classes). Audit batch size is B = 1 for uncertified and B = 750 for certified algorithms; the rationale and full construction are in Sections D.1 and F.4. 
+
+Shakespeare [Shakespeare, 1997]. Following McMahan et al. [2017] we treat each role as a client, subsample 300 
+
+roles, and partition at the role level into 33 forget roles ( ∼10% of training characters) and 267 retain roles. The model is a 2-layer character-level LSTM reaching ∼0.53 accuracy; we evaluate only uncertified methods, using the batchwise inclusion/exclusion auditor with B = 400 . Full construction, score definition, and model details are in Section D.2. 
+
+# 7 Unlearning Algorithms Audited 
+
+For all runs below, εLB denotes the lower bound obtained from the mean aggregation of overlap scores in Theorem 4.2. 5
+
+For all experiments, the confidence parameter ζ is set to 0.05 .We organise the audited algorithms into two groups: certified algorithms with formal (ε, δ ) guarantees (Sec-tion 7.1), and heuristic algorithms without such guarantees (Section 7.2). Section 7.3 discusses them in detail, and full hyperparameters and per-method experimental details are deferred to Section G. 
+
+> 4See Section E.1 for a comparison of logit score versus cross-entropy loss; the two yield similar values on most datasets.
+> 5Mean and median aggregations show similar trends; a detailed comparison is given in Section E.2.
+
+6(a) Uncertified variant of model clipping   
+
+> (b) Comparison with pairwise auditor for uniform splitting (c) Rewind to delete for varying ε
+
+Figure 1: Rewind to delete and model clipping audits for CIFAR100 
+
+## 7.1 Certified unlearning algorithms 
+
+Model clipping. We audit the certified unlearning algorithm of Koloskova et al. [2025], which interleaves projected noisy gradient steps on an ℓ2-ball of radius C2 with a noiseless retain-set fine-tuning phase. The number of noisy steps is set by Theorem 4.2 of Koloskova et al. [2025] to achieve the target (ε, δ ) guarantee. Recalling the certified-method auditor configuration of Section 6—batch size B = 750 (m = 6 forget batches), joint sign-vector predictor (Algorithm 3) with Γ = 50 calibration rounds and L = 100 runs—we sweep ε, C2, and σ across target privacy levels spanning five orders of magnitude (up to ε = 10 5). At the prescribed stopping time of Theorem 4.2, the audit yields 
+
+εLB ≈ 0 across the entire grid, consistent with the certification holding. As a diagnostic, we additionally compute 
+
+εLB (t) at intermediate iterates—treating the algorithm as if it had terminated at step t—which remains near zero throughout the noisy phase, indicating that the audit gains no traction even between certification checkpoints. Full details are reported in Section G.1. 
+
+Uncertified variant of model clipping. For this uncertified variant, we set C2 = 5 and σ = 10 −4 and truncate the noisy phase to 10 epochs, after which the algorithm proceeds to its retain-set fine-tuning phase as in the certified setting. The ratio C2/σ is far larger than what Theorem 4.2 admits, so the algorithm is no longer certified; we report 
+
+εLB as a function of step index t with L = 500 runs to obtain tighter bounds (Figure 1a). Further details are given in Section G.1.3. We compare both uniform and adversarial splits. 
+
+Rewind-to-delete. Rewind-to-delete (R2D) provides certified unlearning in the full-batch setting by adding final-step Gaussian noise calibrated, per Theorem 3.1 of Mu and Klabjan [2025], to make the trained and unlearned models 
+
+(ε, δ )-indistinguishable. The noise scale, sensitivity, and other choices are detailed in Section G.2. We consider both uniform and adversarial splits, with plots in Figure 1c. 
+
+Observations. R2D attains tighter lower bounds than model clipping across the sweep, reflecting its single-shot full-batch noise calibration versus model clipping’s per-step noise budget over many iterations. Both methods exhibit the uniform-vs. adversarial split asymmetry discussed in Section 7.3. 
+
+## 7.2 Uncertified unlearning algorithms 
+
+We audit four heuristic unlearning algorithms on both CIFAR-100 and Shakespeare: Hessian-based unlearning, interleaved descent–ascent retraining, ascent on the forget set, and pure fine-tuning on the retain set. Base-training settings and per-method learning-rate schedules are deferred to Sections G.3, G.5 and G.6. We choose support size 
+
+r = 100 for the Shakespeare dataset (with m = 400 forget batches) and support size r = 3000 for CIFAR-100 (with 
+
+m = 4500 batches). The number of calibration rounds Γ is set to 50 and L = 10 evaluation runs. 
+
+Hessian-based unlearning. We audit the Hessian-based unlearning algorithm of Zhang et al. [2025], which performs a Newton-style update on the forget-set gradient followed by addition of Gaussian noise to every parameter. Zhang et al. [2025] prove certification under loss convexity; we test the algorithm in the nonconvex regime where this assumption 7is violated. The explicit update rule, the LiSSA approximation of the inverse-Hessian–vector product Agarwal et al. [2017], hyperparameter settings, and an ablation varying the final noise scale are deferred to Section G.4. 
+
+Interleaved descent–ascent (IDA) retraining. IDA alternates retain-set gradient descent with λ-weighted forget-gradient steps inserted after every q retain steps, for the first Ef epochs only; thereafter it reverts to plain retain descent. Update rule and per-dataset (λ, q, E f ) are in Section G.5. 
+
+Ascent on the forget set. In this setup the unlearning phase consists of plain gradient ascent on the forget set, run for a fixed number of epochs (2 epochs for both datasets) and then followed by retain-set fine-tuning (analogous to the second phase of Model clipping). Per-dataset learning rates, schedules, and the explicit update rule are given in Section G.6. 
+
+Pure fine-tuning on the retain set. The unlearning phase consists of pure fine-tuning on the retain set throughout. Equivalently, this is a special case of model clipping with clipping radius C2 = ∞ and noise scale σ = 0 . Learning-rate schedules match the retain-set fine-tuning phase of the corresponding base-training configuration (Section G.3). 
+
+## 7.3 Comparison of lower bounds across methods 
+
+Tables 1a and 1b report the lower bounds in detail across hyperparameter configurations. 
+
+The Hessian-based method’s certification does not transfer to the nonconvex regime. Zhang et al. [2025] prove that their Hessian-based update is (ε, δ )-certified when the training loss is convex, an assumption violated by the TinyNetCIFAR100 model used here. Empirically, the audit yields εLB = 142 .5 on CIFAR-100 under uniform splitting— larger than any bound we observe across heuristic methods, which carry no certification claim at all. We view this as the clearest demonstration of our auditor’s diagnostic value: a method whose advertised certification rests on a precondition that silently fails at deployment is sharply flagged by the hypothesis test, while methods whose certifications hold in the actual training regime (model clipping, R2D) pass the same audit cleanly. The split-dependent gap on CIFAR-100 (εLB = 142 .5 uniform vs. 10 adversarial) is consistent with the broader uniform-vs.-adversarial pattern discussed below. 
+
+Pairwise-auditor baseline. For the pairwise auditor (Section 5) with L = 10 , even FPR = FNR = 0 yields a zero lower bound, due to the loose Clopper–Pearson confidence intervals. 
+
+IDA hyperparameters. On CIFAR-100 under adversarial splitting, εLB for IDA increases monotonically with q
+
+(0 → 18 → 66 for q ∈ { 1, 2, 4}), indicating that unlearning quality degrades as the interleaving frequency drops. 6 On Shakespeare, the dependence on q is mild ( 13 .15 → 13 .78 → 14 .42 ), but εLB decreases as either λ or Ef increases, as one would expect: larger forget-gradient weight and a longer interleaving phase both translate to more aggressive forgetting and a looser auditor signal. 
+
+Forget ascent and retain fine-tuning. Ascent on the forget set is essentially undetectable on Shakespeare ( εLB =0.17 ) but readily audited on CIFAR-100 ( U = 79 .5, A = 86 ). Pure retain fine-tuning shows similarly large CIFAR-100 bounds in both splits ( U = 81 .5, A = 84 ). 
+
+Uniform vs. adversarial splits. Across both certified and uncertified methods, εLB under uniform splitting typically exceeds adversarial (with pure retain fine-tuning and forget ascent on CIFAR-100 as mild exceptions). Uniform splits share feature support between retain and forget, leaving residual memorisation Cheng et al. [2026] and exploitable semantic adjacency Ebrahimpour-Boroojeny et al. [2025]; adversarial splits do not. The pairwise-auditor baseline performs well when bounds are small but saturates quickly otherwise. 
+
+> 6Under uniform splitting we see a slight downward trend.
+
+8Setting Parameters εLB                                         
+
+> Varying q
+> (IDA)
+> q= 1 ,λ= 0 .5,Ef= 4 13.15
+> q= 4 ,λ= 0 .5,Ef= 4 13.78
+> q= 9 ,λ= 0 .5,Ef= 4 14.42 Varying
+> (λ, E f),
+> q= 1
+> λ= 0 .5,Ef= 4 13.15
+> λ= 0 .5,Ef= 7 10.38
+> λ= 1 .5,Ef= 4 9.97
+> λ= 1 .5,Ef= 7 0.17 Method comp. Retain fine-tune 16.06 Forget ascent 0.17 Hessian-based 4.18
+
+(a) Shakespeare. Nearly every setting has retain/forget accuracy averaged around 0.56 and test accuracy averaged around 0.53. Ascent, Finetune, and IDA all use total 8 unlearning epochs.                                 
+
+> εLB R/F/T accuracy Setting Params UAUAIDA
+> q= 1 , E f= 10 100.5 0.0 0.91/0.59/0.54 0.92/0.02/0.51
+> q= 2 , E f= 10 100 18 0.92/0.59/0.54 0.92/0.027/0.51
+> q= 4 , E f= 10 95.5 66 0.92/0.59/0.54 0.92/0.02/0.51 Method comp. Pure Retain FT 81.5 84 0.93/0.59/0.53 0.94/0.03/0.51 Forget ascent 79.5 86 0.92/0.59/0.54 0.94/0.025/0.51 Hessian 142.5 10 0.69/0.67/0.51 0.55/0.09/0.37
+
+(b) CIFAR-100. Ascent, Finetune, and IDA all use total of 50 unlearning epochs U = uniform split, A = adversarial split; R/F/T = retain/forget/test; FT = Finetuning 
+
+Table 1: ε lower bounds across Shakespeare and CIFAR-100.                            
+
+> εσε(p)
+> LB εLB
+> 0.1 0.6197 0.0 0.0 5.0 0.0370 0.2902 0.01406 50.0 0.0081 1.4727 0.4827 100.0 0.0054 2.3322 1.0504 200.0 0.0036 3.7350 2.1455 400.0 0.0025 6.2377 4.3663 600.0 0.0020 8.5237 6.7425 800.0 0.0017 10.1983 9.4159
+
+(a) Convex cubic loss (Perturbed Newton).                               
+
+> εσε(p)
+> LB εLB
+> 0.1 1.9084 0.0191 0.0 0.5 0.6294 0.2040 0.0027 1.0 0.3756 0.3901 0.0307 2.0 0.2233 0.7029 0.1120 5.0 0.1139 1.4534 0.4547 10.0 0.0700 2.4962 1.1518 20.0 0.0441 4.4305 2.6972 50.0 0.0249 9.5260 8.0904 100.0 0.0166 10.1983 11.1039
+
+(b) Output perturbation. 
+
+Table 2: Lower bounds for Perturbed Newton unlearning on the cubic loss (left) and for output perturbation on a linear-regression task (right). ε(p) 
+
+> LB
+
+and εLB denote the bounds from the pairwise auditor (Section 5) and the joint sign-vector predictor (with m = 2 , r = 2 ), respectively. 
+
+# 8 Unlearning on convex losses 
+
+The certified algorithms audited above yield very loose bounds ( εLB ≈ 0 for model clipping even at target ε = 10 5,and tighter but still weak for R2D), raising the question of how much of this gap reflects auditor slack versus genuine unlearning. To probe this, we turn to convex losses, where the mechanism is analytically tractable and a tighter correspondence between ε and εLB is expected. We adopt the stronger certified-unlearning notion of Sekhari et al. [2021] (Theorem H.1), which compares the unlearned output to the same mechanism invoked with an empty forget set; since this compares two outputs of the same procedure, no transitivity step is needed (unlike Section 4.1), so we audit at the same δ as the certified guarantee. We audit two mechanisms: the Perturbed Newton unlearning of Sekhari et al. [2021, Algorithm 1] on a bounded cubic loss in dimension d = 1 (and a logistic loss in the appendix), and a simple output perturbation mechanism that clips the trained model and adds Gaussian noise. The auditor adapts the pairwise baseline of Section 5 to fit Gaussians directly on model weights; we also report εLB from instantiating Algorithm 1 with m = 2 , r = 2 under δ = 0 . Full pipeline, losses, and hyperparameters are in Sections H and I. Table 2 reports the bounds. Both saturate near 10 .19 at 2L = 200 ,000 test points; the logistic loss yields a 0
+
+bound, discussed in Section H. As expected, the gap between εLB and the certified ε is much smaller here than for the nonconvex algorithms of Section 7.1, confirming that the convex setting admits a tighter audit. 
+
+# 9 Conclusion 
+
+We propose an auditor that lower-bounds the unlearning parameter ε via membership inference, demonstrating a sharp separation between certified and uncertified unlearning algorithms: certified methods yield very small εLB , whereas heuristic methods regularly yield εLB in the tens or higher. Our analysis is currently restricted to δ = 0 ; extending the audit to δ > 0, tightening the lower bounds via stronger membership-inference attacks, and designing certified 9unlearning algorithms whose nominal ε is provably close to εLB are natural directions for future work. 
+
+# References 
+
+Naman Agarwal, Brian Bullins, and Elad Hazan. Second-order stochastic optimization for machine learning in linear time. J. Mach. Learn. Res. , 18(1):4148–4187, January 2017. ISSN 1532-4435. Youssef Allouah, Jonathan Kazdan, Rachid Guerraoui, and Sanmi Koyejo. The utility and complexity of in- and out-of-distribution machine unlearning. In Proceedings of the International Conference on Learning Representations (ICLR) , 2025. Meenatchi Sundaram Muthu Selva Annamalai and Emiliano De Cristofaro. Nearly tight black-box auditing of differentially private machine learning. In Proceedings of the 38th International Conference on Neural Information Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. ISBN 9798331314385. Bj ¨orn Bebensee. Local differential privacy: a tutorial. arXiv preprint arXiv:1907.11908 , 2019. URL https: //arxiv.org/abs/1907.11908 .Mart ´ın Bertran, Shuai Tang, Michael Kearns, Jamie Morgenstern, Aaron Roth, and Zhiwei Steven Wu. Reconstruction attacks on machine unlearning: Simple models are vulnerable. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. Lucas Bourtoule, Varun Chandrasekaran, Christopher A. Choquette-Choo, Hengrui Jia, Adelin Travers, Baiwu Zhang, David Lie, and Nicolas Papernot. Machine unlearning. In IEEE Symposium on Security and Privacy (S&P) , 2021. Yinzhi Cao and Junfeng Yang. Towards making systems forget with machine unlearning. In IEEE Symposium on Security and Privacy (S&P) , pages 463–480, 2015. Nicholas Carlini, Steve Chien, Milad Nasr, Shuang Song, Andreas Terzis, and Florian Tramer. Membership inference attacks from first principles, 2022. URL https://arxiv.org/abs/2112.03570 .Min Chen, Zhikun Zhang, Tianhao Wang, Michael Backes, Mathias Humbert, and Yang Zhang. When machine unlearning jeopardizes privacy. In Proceedings of the 2021 ACM SIGSAC Conference on Computer and Communica-tions Security , CCS ’21, page 896–911, New York, NY, USA, 2021. Association for Computing Machinery. ISBN 9781450384544. doi: 10.1145/3460120.3484756. URL https://doi.org/10.1145/3460120.3484756 .Jingpu Cheng, Ping Liu, Qianxiao Li, and Chi Zhang. Machine unlearning under retain-forget entanglement, 2026. URL https://arxiv.org/abs/2603.26569 .Eli Chien, Haoyu Wang, Ziang Chen, and Pan Li. Langevin unlearning: a new perspective of noisy gradient descent for machine unlearning. In Proceedings of the 38th International Conference on Neural Information Processing Systems ,NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. ISBN 9798331314385. Rishav Chourasia and Neil Shah. Forget unlearning: towards true data-deletion in machine learning. In Proceedings of the 40th International Conference on Machine Learning , ICML’23. JMLR.org, 2023. Cynthia Dwork and Aaron Roth. The algorithmic foundations of differential privacy. Found. Trends Theor. Comput. Sci. , 9(3–4):211–407, aug 2014. ISSN 1551-305X. doi: 10.1561/0400000042. URL https://doi.org/10. 1561/0400000042 .Ali Ebrahimpour-Boroojeny, Yian Wang, and Hari Sundaram. On the necessity of output distribution reweighting for effective class unlearning, 2025. URL https://arxiv.org/abs/2506.20893 .Antonio A. Ginart, Melody Y. Guan, Gregory Valiant, and James Zou. Making AI forget you: data deletion in machine learning . Curran Associates Inc., Red Hook, NY, USA, 2019. Aditya Golatkar, Alessandro Achille, and Stefano Soatto. Eternal sunshine of the spotless net: Selective forgetting in deep networks. In IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2020. 10 Yuechun Gu, Jiajie He, and Keke Chen. Auditing approximate machine unlearning for differentially private models. In 
+
+IEEE International Conference on Data Mining (ICDM) , 2025. Chuan Guo, Tom Goldstein, Awni Hannun, and Laurens Van Der Maaten. Certified data removal from machine learning models. In Proceedings of the 37th International Conference on Machine Learning , ICML’20. JMLR.org, 2020. Matthew Jagielski, Jonathan Ullman, and Alina Oprea. Auditing differentially private machine learning: How private is private sgd? In Advances in Neural Information Processing Systems (NeurIPS) , 2020. Peter Kairouz, Sewoong Oh, and Pramod Viswanath. The composition theorem for differential privacy. In Proceedings of the 32nd International Conference on Machine Learning , pages 1376–1385. PMLR, 2015. Anastasia Koloskova, Youssef Allouah, Animesh Jha, Rachid Guerraoui, and Sanmi Koyejo. Certified unlearning for neural networks, 2025. URL https://arxiv.org/abs/2506.06985 .Alex Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. Meghdad Kurmanji, Peter Triantafillou, Jamie Hayes, and Eleni Triantafillou. Towards unbounded machine unlearning. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Saeed Mahloujifar, Luca Melis, and Kamalika Chaudhuri. Auditing f-differential privacy in one run. In Proceedings of the 42nd International Conference on Machine Learning , ICML’25. JMLR.org, 2025. H. Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Ag ¨uera y Arcas. Communication-efficient learning of deep networks from decentralized data. In Proceedings of the 20th International Conference on Artificial Intelligence and Statistics , pages 1273–1282. PMLR, 2017. Siqiao Mu and Diego Klabjan. Rewind-to-delete: Certified machine unlearning for nonconvex functions, 2025. URL 
+
+https://arxiv.org/abs/2409.09778 .Milad Nasr, Shuang Song, Abhradeep Thakurta, Nicolas Papernot, and Nicholas Carlini. Adversary instantiation: Lower bounds for differentially private machine learning, 2021. URL https://arxiv.org/abs/2101.04535 .Milad Nasr, Jamie Hayes, Thomas Steinke, Borja Balle, Florian Tram `er, Matthew Jagielski, Nicholas Carlini, and Andreas Terzis. Tight auditing of differentially private machine learning. In USENIX Security Symposium , pages 1631–1648, 2023. Seth Neel, Aaron Roth, and Saeed Sharifi-Malvajerdi. Descent-to-delete: Gradient-based methods for machine unlearning. In Algorithmic Learning Theory (ALT) , pages 931–962, 2021. Krishna Pillutla, Galen Andrew, Peter Kairouz, H. Brendan McMahan, Alina Oprea, and Sewoong Oh. Unleashing the power of randomization in auditing differentially private ML. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. Xinbao Qiao, Meng Zhang, Ming Tang, and Ermin Wei. Hessian-free online certified unlearning. In International Conference on Learning Representations (ICLR) , 2025. Ayush Sekhari, Jayadev Acharya, Gautam Kamath, and Ananda Theertha Suresh. Remember what you want to forget: algorithms for machine unlearning. In Proceedings of the 35th International Conference on Neural Information Processing Systems , NIPS ’21, Red Hook, NY, USA, 2021. Curran Associates Inc. ISBN 9781713845393. William Shakespeare. The Complete Works of William Shakespeare . Project Gutenberg, 1997. URL https: //www.gutenberg.org/ebooks/100 . Project Gutenberg edition. Reza Shokri, Marco Stronati, and Vitaly Shmatikov. Membership inference attacks against machine learning models. 
+
+CoRR , abs/1610.05820, 2016. URL http://arxiv.org/abs/1610.05820 .David Marco Sommer, Liwei Song, Sameer Wagh, and Prateek Mittal. Athena: Probabilistic verification of machine unlearning. Proceedings on Privacy Enhancing Technologies (PoPETs) , 2022(3):268–290, 2022. 11 Thomas Steinke, Milad Nasr, and Matthew Jagielski. Privacy auditing with one (1) training run, 2023. URL 
+
+https://arxiv.org/abs/2305.08846 .Eleni Triantafillou, Peter Kairouz, Fabian Pedregosa, Jamie Hayes, Meghdad Kurmanji, Kairan Zhao, Vincent Dumoulin, Julio Jacques Junior, Ioannis Mitliagkas, Jun Wan, Lisheng Sun Hosoya, Sergio Escalera, Gintare Karolina Dziugaite, Peter Triantafillou, and Isabelle Guyon. Are we making progress in unlearning? findings from the first NeurIPS unlearning competition. arXiv preprint arXiv:2406.09073 , 2024. Cheng-Long Wang, Qi Li, Zihang Xiang, Yinzhi Cao, and Di Wang. Towards lifecycle unlearning commitment management: Measuring sample-level unlearning completeness. In USENIX Security Symposium , 2025a. Weiqi Wang, Zhiyi Tian, Chenhan Zhang, and Shui Yu. TAPE: Tailored posterior difference for auditing of machine unlearning. In Proceedings of the ACM on Web Conference (WWW) , 2025b. Larry Wasserman and Shuheng Zhou. A statistical framework for differential privacy. Journal of the American Statistical Association , 105(489):375–389, 2010. doi: 10.1198/jasa.2009.tm08651. URL https://doi.org/ 10.1198/jasa.2009.tm08651 .Samuel Yeom, Irene Giacomelli, Matt Fredrikson, and Somesh Jha. Privacy risk in machine learning: Analyzing the connection to overfitting. In IEEE Computer Security Foundations Symposium (CSF) , pages 268–282, 2018. Sajjad Zarifzadeh, Philippe Liu, and Reza Shokri. Low-cost high-power membership inference attacks. In International Conference on Machine Learning (ICML) , pages 58244–58282, 2024. Binchi Zhang, Zihan Chen, Cong Shen, and Jundong Li. Verification of machine unlearning is fragile. In International Conference on Machine Learning (ICML) , 2024. Binchi Zhang, Yushun Dong, Tianhao Wang, and Jundong Li. Towards certified unlearning for deep neural networks, 2025. URL https://arxiv.org/abs/2408.00920 .12 A Auditor algorithms: pseudocode 
+
+This appendix gives pseudocode for the meta-algorithm of Section 4 and the two auditor instantiations ( batchwise inclusion/exclusion and joint sign vector prediction ) of Section 5; see Algorithms 1 to 3. 
+
+## A.1 Meta-algorithm 
+
+Algorithm 1 Meta-algorithm for auditor 
+
+Require: Batched dataset D ∈ B n partitioned as D = Dr ∪ D f with |D f | = m
+
+Require: Algorithms (A, U), reported support size r, and number of runs L 
+
+> 1:
+
+for ℓ = 1 , 2, . . . , L do  
+
+> 2:
+
+Sample S(ℓ) ∼ Unif( Sm) and unlearnt model f (ℓ) 
+
+> u
+
+← U  A(D(S(ℓ))) , D(S(ℓ)), Df (S(ℓ)). 
+
+> 3:
+
+Induced mechanism M(S(ℓ)): From f (ℓ) 
+
+> u
+
+, output bS(ℓ) ∈ {− 1, 0, +1 }m with exactly r/ 2 entries +1 and r/ 2
+
+entries −1. 
+
+> 4:
+
+Compute overlap score V (ℓ) := Pmj=1 max {0, bS(ℓ) 
+
+> j
+
+S(ℓ) 
+
+> j
+
+}. 
+
+> 5:
+
+end for  
+
+> 6:
+
+Return summary statistics of {V (ℓ)}Lℓ=1 (e.g., mean or median). 
+
+## A.2 Batchwise inclusion/exclusion prediction (Instantiation I) 
+
+Algorithm 2 Auditor Instantiation I: Batchwise inclusion/exclusion prediction 
+
+Require: Batched dataset D = Dr ∪ D f with |D f | = m; algorithms (A, U); calibration rounds Γ; support size r
+
+Ensure: Mechanism M : Sm → {− 1, 0, +1 }m 
+
+> 1:
+
+// C ALIBRATION PHASE (RUN ONCE , OFFLINE ) 
+
+> 2:
+
+for γ = 1 , . . . , Γ do  
+
+> 3:
+
+S(γ) ∼ Unif( Sm), D(γ) ← D r ∪ D f (S(γ)) 
+
+> 4:
+
+f (γ) ← U  A(D(γ)), D(γ), Df (S(γ)) 
+
+> 5:
+
+s(γ) 
+
+> x,y
+
+← ϕ f (γ)(x)y
+
+ for all (x, y ) ∈ D f 
+
+> 6:
+
+end for  
+
+> 7:
+
+For each j ∈ [m] and (x, y ) ∈ D f,j , fit Gaussians: 
+
+(μ± 
+
+> x,y
+
+, σ ± 
+
+> x,y
+
+) ← fit 
+
+s(γ) 
+
+> x,y
+
+: S(γ) 
+
+> j
+
+= ±1 Γ
+
+> γ=1
+
+ 
+
+> 8:
+
+// M ECHANISM M(S) (APPLIED AT EVALUATION ) 
+
+> 9:
+
+f ← U  A(D(S)) , D(S), Df (S), sx,y ← ϕ(f (x)y ) 
+
+> 10:
+
+For each batch j ∈ [m], compute 
+
+Λj ← X
+
+> (x,y )∈D f,j
+
+log N  sx,y ; μ+ 
+
+> x,y
+
+, σ +
+
+> x,y
+
+
+
+N  sx,y ; μ− 
+
+> x,y
+
+, σ −
+
+> x,y
+
+ 
+
+> 11:
+
+bSj ← +1 for top-r/ 2 values of Λj ; −1 for bottom-r/ 2; 0 otherwise  
+
+> 12:
+
+return bS ∈ {− 1, 0, +1 }m
+
+## A.3 Pairwise auditor (baseline) 
+
+Nasr et al. [2021] audit DP by having the adversary distinguish two models trained on neighbouring datasets. We adapt this baseline to unlearning by distinguishing the two unlearned models f (i) 
+
+> u
+
+:= U A(Dr ∪ D (i) 
+
+> f
+
+), Dr ∪ D (i) 
+
+> f
+
+, D(i)
+
+> f
+
+ for 
+
+i ∈ { 1, 2}, corresponding to two distinct forget sets D(1)  
+
+> f
+
+, D(2)  
+
+> f
+
+. Calibration and prediction are identical to Instantiation II 13 with m = 2 and Df,j = D(j) 
+
+> f
+
+; only the conversion to an ε lower bound differs. From the true and false positive rates, the lower bound is computed directly from the confusion matrix using [Kairouz et al., 2015, Theorem 2.1] with Clopper–Pearson confidence intervals, rather than via Theorem 4.2. For a given confidence level ζ and appropriate δ,the bound is 
+
+εLB = max 
+
+(
+
+log 1 − δ − FP high 
+
+FN high , log 1 − δ − FN high 
+
+FP high 
+
+)
+
+, (3) where FP high and FN high are the upper Clopper–Pearson bounds on the false-positive and false-negative rates. Table 2 compares this baseline with the bounds from Theorem 4.1. 
+
+## A.4 Joint sign-vector prediction (Instantiation II) 
+
+Algorithm 3 Auditor Instantiation II: Joint sign-vector prediction 
+
+Require: Batched dataset D = Dr ∪ D f with |D f | = m; algorithms (A, U); calibration rounds Γ
+
+Ensure: Mechanism M : Sm → S m 
+
+> 1:
+
+// C ALIBRATION PHASE (RUN ONCE , OFFLINE ) 
+
+> 2:
+
+for all eS ∈ S m do  
+
+> 3:
+
+for γ = 1 , . . . , Γ do  
+
+> 4:
+
+f (γ) ← U  A(D( eS)) , D( eS), Df ( eS) 
+
+> 5:
+
+s(γ) 
+
+> x,y
+
+( eS) ← ϕ f (γ)(x)y
+
+ for all (x, y ) ∈ D f 
+
+> 6:
+
+end for  
+
+> 7:
+
+For each (x, y ) ∈ D f , fit Gaussian: 
+
+(μx,y ( eS), σ x,y ( eS)) ← fit 
+
+s(γ) 
+
+> x,y
+
+( eS) Γ
+
+> γ=1
+
+ 
+
+> 8:
+
+end for  
+
+> 9:
+
+// M ECHANISM M(S) (APPLIED AT EVALUATION ) 
+
+> 10:
+
+f ← U  A(D(S)) , D(S), Df (S), sx,y ← ϕ(f (x)y ) 
+
+> 11:
+
+For each eS ∈ S m, compute 
+
+Λ( eS) ← X
+
+> (x,y )∈D f
+
+log N
+
+
+
+sx,y ; μx,y ( eS), σ x,y ( eS)
+
+ 
+
+> 12:
+
+return bS ← arg max eS∈S m Λ( eS)
+
+# B Proof of Theorem 4.2 
+
+We now restate Theorem 4.2 and prove it below. 
+
+Lemma (Restatement of Theorem 4.2) . Let M : Sm → {− 1, 0, +1 }m be an (ε, 0) -locally differentially private mechanism. Let T ⊆ {− 1, 0, +1 }m denote the subset of vectors with exactly r/ 2 entries equal to +1 and r/ 2 entries equal to −1. Set M ′ =   m
+
+> ⌊m/ 2⌋
+
+ and K := |T | =   mr/ 2, r/ 2, m −r
+
+. Let {S(ℓ)}Lℓ=1 be independent random vectors drawn uniformly from Sm. For each ℓ ∈ [L], let bS(ℓ) = M(S(ℓ)), assume bS(ℓ) ∈ T almost surely, and define 
+
+V (ℓ) := Pmj=1 max 0, bS(ℓ) 
+
+> j
+
+S(ℓ) 
+
+> j
+
+∈ { 0, 1, . . . , r }. For each u ∈ { 0, 1, . . . , r }, define the pointwise bound 
+
+πε(u) := X
+
+> α1,α 2∈{ 0,...,r/ 2}
+> α1+α2=u
+
+ m − r
+
+⌈(m − r)/2⌉ − (α1 − α2)
+
+ r/ 2
+
+α1
+
+ r/ 2
+
+α2
+
+
+
+· eε
+
+eε + M ′ − 1 .
+
+14 Define the upper tail Pε(v) := Pru=v πε(u). Then for every v ∈ R,
+
+Pr 
+
+"
+
+1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+V (ℓ) ≥ v
+
+#
+
+≤ inf  
+
+> λ≥0
+
+exp L log 
+
+ rX
+
+> u=0
+
+eλu πε(u)
+
+
+
+− λLv 
+
+!
+
+(4) 
+
+Pr 
+
+
+
+Median 
+
+
+
+{V (ℓ)}Lℓ=1 
+
+
+
+≥ v
+
+
+
+≤
+
+ L
+
+⌈L/ 2⌉
+
+
+
+Pε(v)⌈L/ 2⌉. (5) 
+
+Proof. We first establish the pointwise bound 
+
+Pr V (ℓ) = u ≤ πε(u) for every u ∈ { 0, 1, . . . , r }. (6) Fix ℓ and write S = S(ℓ), bS = bS(ℓ), V = V (ℓ).
+
+Posterior bound from ε-LDP. Fix any t ∈ T in the support of bS and any s ∈ S m. Pure ε-LDP gives Pr 
+
+h bS = t | S = s
+
+i
+
+≤
+
+eε Pr 
+
+h bS = t | S = s′
+
+i
+
+for every s′ ∈ S m, hence Pr 
+
+h bS = t | S = s′
+
+i
+
+≥ e−ε Pr 
+
+h bS = t | S = s
+
+i
+
+. Summing over 
+
+s′ ∈ S m and using the uniform prior on Sm,
+
+M ′ Pr 
+
+h bS = t
+
+i
+
+= X
+
+> s′∈S m
+
+Pr 
+
+h bS = t | S = s′i
+
+≥ Pr 
+
+h bS = t | S = s
+
+i 1 + ( M ′ − 1) e−ε.
+
+Bayes’ rule then yields the pointwise posterior bound 
+
+Pr 
+
+h
+
+S = s | bS = t
+
+i
+
+=Pr 
+
+h bS = t | S = s
+
+i
+
+M ′ Pr 
+
+h bS = t
+
+i ≤ 11 + ( M ′ − 1) e−ε = eε
+
+eε + M ′ − 1 . (7) 
+
+Counting argument. For (s, t ) ∈ S m × T , let α1 := |{ j : tj = +1 , s j = +1 }| and α2 := |{ j : tj = −1, s j = −1}| ,both in {0, . . . , r/ 2}. Since tj̸ = 0 on exactly r coordinates, 
+
+V (s, t ) = 
+
+> m
+
+X
+
+> j=1
+
+max {0, s j tj } = α1 + α2.
+
+For each fixed t ∈ T , the number of s ∈ S m with V (s, t ) = u is exactly Nu: pick the α1 agreement positions among the r/ 2 coordinates where tj = +1 ( r/ 2
+
+> α1
+
+ ways) and the α2 agreement positions among the r/ 2 coordinates where 
+
+tj = −1 ( r/ 2
+
+> α2
+
+ ways). The total +1 /−1 imbalance of s is then 2( α1 − α2) + 2 β − (m − r), where β is the number of 
+
++1 entries of s on the zero-block of t. The constraint s ∈ S m forces this imbalance into {0, 1}, whose unique integer solution in β is β = ⌈(m − r)/2⌉ − (α1 − α2), contributing the   m−r
+
+> ⌈(m−r)/2⌉− (α1−α2)
+
+ factor. 
+
+Assembling equation 6. Conditioning on bS = t and applying equation 7 to each of the Nu posterior summands, 
+
+Pr 
+
+h
+
+V = u | bS = t
+
+i
+
+= X  
+
+> s:V(s,t )= u
+
+Pr 
+
+h
+
+S = s | bS = t
+
+i
+
+≤ Nu · eε
+
+eε + M ′ − 1 = πε(u).
+
+Marginalizing over bS gives Pr[ V = u] ≤ πε(u), proving equation 6. Summing over u ≥ v,
+
+Pr[ V ≥ v] ≤ Pε(v). (8) 
+
+Median bound equation 2. The event Median( {V (ℓ)}Lℓ=1 ) ≥ v implies the existence of some J ⊆ [L] with 
+
+|J| = ⌈L/ 2⌉ such that V (ℓ) ≥ v for every ℓ ∈ J. By independence and a union bound over the   L
+
+> ⌊L/ 2⌋
+
+ such subsets, together with equation 8, 
+
+Pr 
+
+
+
+Median 
+
+
+
+{V (ℓ)}Lℓ=1 
+
+
+
+≥ v
+
+
+
+≤
+
+ L
+
+⌈L/ 2⌉
+
+
+
+Pε(v)⌈L/ 2⌉.
+
+15 Chernoff bound equation 1. Fix λ ≥ 0. By equation 6, 
+
+E
+
+h
+
+eλV (ℓ) i
+
+=
+
+> r
+
+X
+
+> u=0
+
+eλu Pr 
+
+h
+
+V (ℓ) = u
+
+i
+
+≤
+
+> r
+
+X
+
+> u=0
+
+eλu πε(u).
+
+By independence across ℓ and Markov’s inequality applied to eλ P  
+
+> ℓV(ℓ)
+
+,
+
+Pr 
+
+"
+
+1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+V (ℓ) ≥ v
+
+#
+
+≤ e−λLv 
+
+> r
+
+X
+
+> u=0
+
+eλu πε(u)
+
+!L
+
+= exp L log 
+
+ rX
+
+> u=0
+
+eλu πε(u)
+
+
+
+− λLv 
+
+!
+
+.
+
+Optimizing over λ ≥ 0 yields equation 1. We now state a corollary showing that the upper bounds for median and mean statistic proven above is monotonic in 
+
+ε and thus, to reject the hypothesis ε ≤ εLB , it is sufficient to evaluate the bound at ε = εLB for δ < M ′ 
+
+> K
+
+.
+
+Remark B.1 . For uncertified algorithms, we choose m = 4500 , r = 3000 and thus one can see that K < M ′ naturally holds true. 
+
+Corollary B.2 (Monotonicity of audit bounds) . For δ = 0 , the right-hand sides of Equation (1) and Equation (2) in Theorem 4.2 are monotone non-decreasing in ε.Proof. For δ = 0 , the pointwise bound factorises as πε(u) = C(u) · g(ε), where 
+
+C(u) := X
+
+> α1,α 2∈{ 0,...,r/ 2}
+> α1+α2=u
+
+ m − r
+
+⌈(m − r)/2⌉ − (α1 − α2)
+
+ r/ 2
+
+α1
+
+ r/ 2
+
+α2
+
+
+
+≥ 0
+
+is independent of ε, and 
+
+g(ε) := eε
+
+eε + M ′ − 1 = 11 + ( M ′ − 1) e−ε .
+
+Since M ′ ≥ 1, the function g is strictly increasing in ε, and hence πε(u) is monotone non-decreasing in ε for every fixed u ∈ { 0, 1, . . . , r }.
+
+Median bound (Equation (2)). The upper tail Pε(v) = Pru=⌈v⌉ πε(u) is a non-negative sum of monotone non-decreasing functions, and is therefore itself monotone non-decreasing in ε. Raising to the power ⌈L/ 2⌉ and multiplying by the positive constant   L
+
+> ⌊L/ 2⌋
+
+ both preserve monotonicity. 
+
+Mean bound (Equation (1)). Fix any λ ≥ 0. The moment generating function Pru=0 eλu πε(u) is a non-negative linear combination of {πε(u)}u, hence monotone non-decreasing in ε. Composing with log (monotone), multiplying by L > 0, subtracting the ε-independent term λLv , and exponentiating all preserve monotonicity. Therefore, for each fixed λ ≥ 0, the function inside the infimum is monotone non-decreasing in ε. A pointwise infimum of monotone non-decreasing functions is itself monotone non-decreasing: for ε1 ≤ ε2 and any λ, fλ(ε1) ≤ fλ(ε2), so taking the infimum over λ on both sides yields inf λ fλ(ε1) ≤ inf λ fλ(ε2). This completes the proof. 
+
+# C A discussion on setting δ > 0 in the auditing lower bound 
+
+We now state a version of this auditing lemma Theorem 4.2 under the case of δ > 0.
+
+Lemma C.1 (Auditing test with δ > 0). Let M : Sm → {− 1, 0, +1 }m be an (ε, δ )-locally differentially private mechanism. Let T ⊆ {− 1, 0, +1 }m denote the subset of vectors with exactly r/ 2 entries equal to +1 and r/ 2 entries equal to −1. Set M ′ =   m
+
+> ⌊m/ 2⌋
+
+ and K := |T | =   mr/ 2, r/ 2, m −r
+
+. Let {S(ℓ)}Lℓ=1 be independent random vectors drawn uniformly from Sm. For each ℓ ∈ [L], let bS(ℓ) = M(S(ℓ)), assume bS(ℓ) ∈ T almost surely, and define 
+
+V (ℓ) := Pmj=1 max 0, bS(ℓ) 
+
+> j
+
+S(ℓ) 
+
+> j
+
+∈ { 0, 1, . . . , r }. For each u ∈ { 0, 1, . . . , r }, define the pointwise bound 
+
+πε(u) := X
+
+> α1,α 2∈{ 0,...,r/ 2}
+> α1+α2=u
+
+ m − r
+
+⌈(m − r)/2⌉ − (α1 − α2)
+
+ r/ 2
+
+α1
+
+ r/ 2
+
+α2
+
+
+
+· eε + M ′−1  
+
+> M′
+
+K δ eε + M ′ − 1 .
+
+16 Define the upper tail Pε(v) := Pru=v πε(u). Then for every v ∈ R,
+
+Pr 
+
+"
+
+1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+V (ℓ) ≥ v
+
+#
+
+≤ inf  
+
+> λ≥0
+
+exp L log 
+
+ rX
+
+> u=0
+
+eλu πε(u)
+
+
+
+− λLv 
+
+!
+
+(9) 
+
+Pr 
+
+
+
+Median 
+
+
+
+{V (ℓ)}Lℓ=1 
+
+
+
+≥ v
+
+
+
+≤
+
+ L
+
+⌊L/ 2⌋
+
+
+
+Pε(v)⌈L/ 2⌉. (10) Additionally, for the test to be meaningful, we need to ensure that the upper bound is monotonically non-decreasing in ε (discussed in Section 4.1) which holds when δ < M ′/K . A discussion on the same is done below. 
+
+Remark C.2 (Practical implications for δ > 0). For the audit’s hypothesis test to remain meaningful when δ > 0, two distinct practical issues arise. 
+
+Vacuity from the δ-slack. The pointwise bound πε(u) contains an additive contribution proportional to (M ′−1) K δ M ′ .Since M ′ ≥ 1, this factor is essentially Kδ , and K =   mr/ 2, r/ 2, m −r
+
+ grows rapidly with m and r: for m = 4500 and 
+
+r ∈ { 2000 , 3000 }, Stirling gives ln K ≈ 4475 , so even δ = 10 −10 leaves Kδ orders of magnitude larger than any realistic εLB . The audit becomes vacuous in this regime regardless of the monotonicity condition below. 
+
+Monotonicity for a valid hypothesis test. For the test H0 : ε ≤ εLB to control Type-I error uniformly over the null, the upper bound must be monotone non-decreasing in ε – otherwise rejection at ε = εLB does not imply rejection for all ε ≤ εLB . By Theorem C.3 this requires δ < M ′/K . Asymptotically, M ′ ≥ K iff H2(α) + α ≤ 1 for α = r/m ,giving a threshold α∗ ≈ 0.227 . For m = 4500 this means any r ≲ 1020 gives M ′ ≥ K, in which case δ < 1 trivially suffices; e.g. r = 1000 is comfortably inside this regime. The audit is therefore well-posed across the operating points used in our experiments. 
+
+Proof of Theorem C.1. We first establish the pointwise bound 
+
+Pr V (ℓ) = u ≤ πε(u) for every u ∈ { 0, 1, . . . , r }. (11) Fix ℓ and write S = S(ℓ), bS = bS(ℓ), V = V (ℓ).
+
+Marginal joint bound from LDP. Fix s ∈ S and t ∈ T . By (ε, δ )-LDP, Pr 
+
+h bS = t | S = s
+
+i
+
+≤ eε Pr 
+
+h bS = t | S = s′
+
+i
+
++
+
+δ for every s′ ∈ S . Averaging this inequality over s′ ∈ S \ { s} and using P 
+
+> s′∈S
+
+Pr 
+
+h bS = t | S = s′
+
+i
+
+= M ′ Pr 
+
+h bS = t
+
+i
+
+(uniform prior on S), 
+
+Pr 
+
+h bS = t | S = s
+
+i 
+
+1 + eε 
+
+> M′−1
+
+
+
+≤ eεM ′  
+
+> M′−1
+
+Pr 
+
+h bS = t
+
+i
+
++ δ, 
+
+which rearranges to 
+
+Pr 
+
+h bS = t | S = s
+
+i
+
+≤
+
+eεM ′ Pr 
+
+h bS = t
+
+i
+
++ ( M ′ − 1) δeε + M ′ − 1 .
+
+Multiplying by the prior 1/M ′ gives the joint bound 
+
+Pr 
+
+h
+
+S = s, bS = t
+
+i
+
+≤
+
+eε Pr 
+
+h bS = t
+
+i
+
++ M ′−1  
+
+> M′
+
+δeε + M ′ − 1 . (12) 
+
+Counting argument. For (s, t ) ∈ S m × T , let α1 := |{ j : tj = +1 , s j = +1 }| and α2 := |{ j : tj = −1, s j = −1}| ,both in {0, . . . , r/ 2}. Then V (s, t ) = P 
+
+> j
+
+max {0, s j tj } = α1 + α2. For each fixed t ∈ T , the number of s ∈ S m with 
+
+V (s, t ) = u is exactly 
+
+Nu = X
+
+> α1,α 2∈{ 0,...,r/ 2}
+> α1+α2=u
+
+ m − r
+
+⌈(m − r)/2⌉ − (α1 − α2)
+
+ r/ 2
+
+α1
+
+ r/ 2
+
+α2
+
+
+
+.
+
+17 Indeed: pick the α1 agreement positions among the r/ 2 coordinates where tj = +1 ( r/ 2
+
+> α1
+
+ ways) and the α2
+
+agreement positions among the r/ 2 coordinates where tj = −1 ( r/ 2
+
+> α2
+
+ ways). The total +1 /−1 imbalance of s is then 
+
+2( α1 − α2) + 2 β − (m − r), where β is the number of +1 entries of s on the zero block of t. The constraint s ∈ S m
+
+requires this imbalance to lie in {0, 1}, which forces β = ⌈(m − r)/2⌉ − (α1 − α2) (and is the unique integer solution in either parity of m − r), giving the   m−r
+
+> ⌈(m−r)/2⌉− (α1−α2)
+
+ factor. By the symmetry of V under coordinate permutations, 
+
+Nu(t) = Nu does not depend on t, hence |{ (s, t ) : V (s, t ) = u}| = K N u.
+
+Assembling equation 11. Summing equation 12 over the pairs (s, t ) ∈ S × T with V (s, t ) = u,
+
+Pr[ V = u] ≤
+
+eε P  
+
+> (s,t ): V=u
+
+Pr 
+
+h bS = t
+
+i
+
++ M ′−1  
+
+> M′
+
+δ · {(s, t ) : V = u}
+
+eε + M ′ − 1 .
+
+The first sum equals P 
+
+> t∈T
+
+Pr 
+
+h bS = t
+
+i
+
+Nu = Nu (using Nu(t) = Nu and P 
+
+> t∈T
+
+Pr 
+
+h bS = t
+
+i
+
+= 1 ); the second count equals KN u. Hence 
+
+Pr[ V = u] ≤ Nu · eε + M ′−1  
+
+> M′
+
+Kδ eε + M ′ − 1 = πε(u),
+
+proving equation 11. Summing over u ≥ v gives the marginal upper tail 
+
+Pr[ V ≥ v] ≤ Pε(v). (13) 
+
+Median bound equation 10. The event Median( {V (ℓ)}Lℓ=1 ) ≥ v implies the existence of some J ⊆ [L] with 
+
+|J| = ⌈L/ 2⌉ such that V (ℓ) ≥ v for every ℓ ∈ J. By independence and a union bound over the   L
+
+> ⌈L/ 2⌉
+
+ such subsets, together with equation 13, 
+
+Pr 
+
+
+
+Median 
+
+
+
+{V (ℓ)}Lℓ=1 
+
+
+
+≥ v
+
+
+
+≤
+
+ L
+
+⌈L/ 2⌉
+
+
+
+Pε(v)⌈L/ 2⌉.
+
+Chernoff bound equation 9. Fix λ ≥ 0. By equation 6, 
+
+E
+
+h
+
+eλV (ℓ) i
+
+=
+
+> r
+
+X
+
+> u=0
+
+eλu Pr 
+
+h
+
+V (ℓ) = u
+
+i
+
+≤
+
+> r
+
+X
+
+> u=0
+
+eλu πε(u).
+
+By independence across ℓ and Markov’s inequality applied to eλ P  
+
+> ℓV(ℓ)
+
+,
+
+Pr 
+
+"
+
+1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+V (ℓ) ≥ v
+
+#
+
+≤ e−λLv 
+
+> r
+
+X
+
+> u=0
+
+eλu πε(u)
+
+!L
+
+= exp L log 
+
+ rX
+
+> u=0
+
+eλu πε(u)
+
+
+
+− λLv 
+
+!
+
+.
+
+Optimizing over λ ≥ 0 yields equation 1. We now state a corollary showing that the upper bounds for median and mean statistic proven above is monotonic in 
+
+ε and thus, to reject the hypothesis ε ≤ εLB , it is sufficient to evaluate the bound at ε = εLB for δ < M ′ 
+
+> K
+
+.
+
+Corollary C.3 (Monotonicity of audit bounds) . Fix any δ ∈ [0 , M ′/K ). Then the right-hand sides of Equation (1) and Equation (2) in Theorem 4.2 are monotone non-decreasing in ε.Proof. Fix δ ∈ [0 , M ′/K ). The pointwise bound factorises as πε(u) = C(u) · g(ε), where 
+
+C(u) := X
+
+> α1,α 2∈{ 0,...,r/ 2}
+> α1+α2=u
+
+ m − r
+
+⌈(m − r)/2⌉ − (α1 − α2)
+
+ r/ 2
+
+α1
+
+ r/ 2
+
+α2
+
+
+
+≥ 0
+
+is independent of ε, and 
+
+g(ε) := eε + aeε + b , a := M ′ − 1
+
+M ′ Kδ, b := M ′ − 1.
+
+18 Differentiating gives g′(ε) = eε(b − a)(eε + b)2 . The condition δ < M ′/K is equivalent to 
+
+M ′ − 1
+
+M ′ Kδ < M ′ − 1, i.e., a < b, 
+
+so g′(ε) > 0 for all ε ≥ 0. Hence g is strictly increasing, and πε(u) = C(u) · g(ε) is monotone non-decreasing in ε for every fixed u ∈ { 0, 1, . . . , r }.
+
+Median bound (Equation (10)). The upper tail Pε(v) = Pru=⌈v⌉ πε(u) is a non-negative sum of monotone non-decreasing functions, and is therefore itself monotone non-decreasing in ε. Raising to the power ⌈L/ 2⌉ and multiplying by the positive constant   L
+
+> ⌊L/ 2⌋
+
+ both preserve monotonicity. 
+
+Mean bound (Equation (9)). Fix any λ ≥ 0. The moment generating function Pru=0 eλu πε(u) is a non-negative linear combination of {πε(u)}u, hence monotone non-decreasing in ε. Composing with log (monotone), multiplying by L > 0, subtracting the ε-independent term λLv , and exponentiating all preserve monotonicity. Therefore, for each fixed λ ≥ 0, the function inside the infimum is monotone non-decreasing in ε. A pointwise infimum of monotone non-decreasing functions is itself monotone non-decreasing: for ε1 ≤ ε2 and any λ, fλ(ε1) ≤ fλ(ε2), so taking the infimum over λ on both sides yields inf λ fλ(ε1) ≤ inf λ fλ(ε2). This completes the proof. 
+
+# D Datasets, models, and auditor batching 
+
+This appendix gives the full data-construction and model details for the two datasets described in Section 6. 
+
+## D.1 CIFAR-100 
+
+Forget/retain construction. For CIFAR-100 [Krizhevsky, 2009], we first split the original training set into a training portion (90%) and a validation portion (10%). From the training portion, we designate 10% of the points as the forget set Df (4,500 points), and use the remaining 40 ,500 points as the retain set Dr . We consider two types of splits. In the 
+
+uniform split, the forget and retain sets are formed by sampling points uniformly at random. In the adversarial split, the forget and retain sets are chosen from largely disjoint CIFAR-100 label classes, with overlap allowed in at most one label class. We then independently shuffle the retain and forget sets, and partition both Dr and Df into batches of size 
+
+B.
+
+Auditor batching. For uncertified unlearning algorithms we use B = 1 , while for certified unlearning algorithms we use B = 750 . Accordingly, we use the batchwise inclusion/exclusion auditor (Algorithm 2) for uncertified methods and the joint sign-vector auditor (Algorithm 3) for certified methods. A discussion of why this split between auditor instantiations is appropriate is given in Section F.4, with a more detailed study in Section F. 
+
+Model. We use a TinyNetCIFAR100 model, a lightweight CNN that attains around 55% accuracy on the CIFAR-100 test set after 400 epochs of training. The architecture consists of two convolutional blocks, each containing two 3×3
+
+convolutional layers (with 64 and 128 filters respectively) with Group Normalization (8 groups) and ReLU activations, followed by 2 × 2 max pooling. After the two blocks, global average pooling collapses the spatial dimensions, and a single linear layer maps to the 100-class output. All weights are Kaiming-initialized. The model contains no dropout or batch normalization; Group Normalization is used throughout for training stability. We use a cosine or one-cycle learning-rate scheduler with stochastic gradient descent optimizer. 
+
+## D.2 Shakespeare 
+
+Forget/retain construction. Following McMahan et al. [2017], we treat each speaking role in each play as a separate client, parsing speaker labels from the text to extract per-role dialogue. Roles with fewer than 2 dialogue blocks are discarded, and for our experiments we randomly subsample 300 roles. Each role’s dialogue blocks are split chronologically into train (80%), validation (10%), and test (10%); validation and test sets are formed by aggregating across all 300 roles. The training data is then partitioned into a retain set Dr and a forget set Df at the role level — each role is assigned entirely to one set, ensuring zero character overlap between Dr and Df . Roles are randomly shuffled 19 Method                                                                                                           
+
+> r200 1000 2000 3000 4000 Logit Loss Logit Loss Logit Loss Logit Loss Logit Loss uni. (pure ascent) 29.5805 18.503 80.693 62.7975 90.1105 76.913 79.835 69.6605 66.631 61.5315 adv. (pure ascent) 25.359 23.89 76.2265 75.746 91.813 90.557 86.2075 86.5575 71.913 72.077 uni. (IDA, q= 1 )34.298 17.965 98.717 79.331 111.161 98.892 100.6055 92.2955 82.4575 79.0315 adv. (IDA, q= 1 )0.1545 0.0885 0.4075 1.22 0.1195 1.4075 0.0 1.442 0.0 1.1425 uni. (IDA, q= 2 )31.6765 18.776 95.925 78.1045 111.8135 96.469 100.2645 90.7795 82.575 78.9165 adv. (IDA, q= 2 )7.659 6.7045 15.7665 15.4605 15.8635 16.0625 15.064 15.482 12.9405 12.9865 uni. (IDA, q= 4 )28.122 17.502 91.4265 76.8295 106.118 91.0045 95.5885 87.33 80.271 72.159 adv. (IDA, q= 4 )17.7655 17.2405 60.144 59.1525 69.435 69.087 66.1155 66.207 56.3515 56.9075
+
+Table 3: Lower bounds from logit score versus cross-entropy loss, across pure ascent and interleaved ascent–descent (IDA) at varying q, for both uniform (uni.) and adversarial (adv.) splits. and greedily assigned to Df until approximately 10% of training characters are accumulated, yielding 33 forget roles (Df , 135 ,300 characters, ∼10 .0% of train) and 267 retain roles ( Dr , 1,221 ,363 characters, ∼90 .0% of train). For unlearning experiments, the forget set Df is further partitioned into B = 400 equal batches: the dialogue blocks from all forget roles are shuffled at the block level (preserving within-block coherence) and split into 400 contiguous chunks Df, 1, . . . , Df, 400 . For each run, 200 forget chunks are sampled uniformly at random from the 400 . Each chunk and the retain set are independently converted to sliding-window samples of length 80 characters, where x is the input sequence and y is the target sequence shifted by one character. The retain samples and sampled forget samples are then pooled and shuffled to form the training dataset. The retain and forget datasets used during evaluation are constructed by the same sliding-window procedure applied to the retain and sampled forget text respectively. 
+
+Auditor batching. On Shakespeare we evaluate only uncertified unlearning methods (gradient ascent, interleaved ascent–descent, fine-tuning on retain, and Hessian-based unlearning of Zhang et al. [2025]); we therefore use the 
+
+batchwise inclusion/exclusion auditor (Algorithm 2) throughout, as on CIFAR-100. 
+
+Model. The model is a 2-layer stacked character-level LSTM following McMahan et al. [2017]. Each input character is embedded into an 8-dimensional space, processed through two LSTM layers each with 256 hidden units, and projected to a softmax output layer over the vocabulary of |V| = 100 characters. The full model has 825 ,220 parameters and is trained with an unroll length of L = 80 characters. For the Shakespeare dataset, the score ϕ(f (x)y ) for a sample 
+
+(x, y ) is the mean per-character cross-entropy loss − 1
+
+> T
+
+PTt=1 log pθ (yt | x≤t) assigned by the model f , where T = 80 
+
+is the sequence length. 
+
+# E Robustness of the auditor: alternative score and aggregation 
+
+In this appendix we sanity-check two design choices of our auditor. First, we replace the logit score ϕ(f (x)y ) used throughout the paper with the per-example cross-entropy loss and recompute the lower bounds (Section E.1). Second, we replace the mean aggregation of overlap scores with the median (Section E.2). In both cases the directional trends with respect to the support size r are preserved, indicating that our reported bounds are not artefacts of a particular score function or aggregation rule. 
+
+## E.1 Logit score versus cross-entropy score 
+
+Table 3 compares the lower bounds obtained when the auditor’s per-example score is the cross-entropy loss versus the logit score, for pure ascent and interleaved ascent–descent (IDA) at q ∈ { 1, 2, 4} on both the uniform and adversarial splits. The two scores yield similar directional trends in r, with the logit score giving slightly tighter bounds in most settings. 20 Method                                                                                                           
+
+> r200 1000 2000 3000 4000 Mean Median Mean Median Mean Median Mean Median Mean Median uni. (pure ascent) 29.5805 30.043 80.693 77.6435 90.1105 92.2745 79.835 80.6945 66.631 67.9155 adv. (pure ascent) 25.359 25.6695 76.2265 79.4695 91.813 95.4495 86.2075 90.0365 71.913 75.5195 uni. (IDA, q= 1 )34.298 33.917 98.717 101.2995 111.161 111.233 100.6055 99.551 82.4575 81.4985 adv. (IDA, q= 1 )0.1545 0.115 0.4075 0.3685 0.1195 0.1425 0.0 0.0 0.0 0.0 uni. (IDA, q= 2 )31.6765 30.9785 95.925 96.3925 111.8135 113.2385 100.2645 101.8195 82.575 82.957 adv. (IDA, q= 2 )7.659 7.2605 15.7665 16.5665 15.8635 17.5945 15.064 16.7695 12.9405 15.2445 uni. (IDA, q= 4 )28.122 30.043 91.4265 90.307 106.118 105.3365 95.5885 96.569 80.271 80.053 adv. (IDA, q= 4 )17.7655 21.0215 60.144 62.3215 69.435 76.0615 66.1155 73.8025 56.3515 63.249
+
+Table 4: Lower bounds from mean versus median aggregation of overlap scores, across pure ascent and interleaved ascent–descent (IDA) at varying q, for both uniform (uni.) and adversarial (adv.) splits. 
+
+## E.2 Mean versus median aggregation 
+
+Table 4 compares the lower bounds obtained from the mean and median aggregations of the overlap scores. The two aggregations agree to within a few percent in nearly all settings, and both reproduce the inverted-U dependence on r
+
+noted in Section F — the lower bound first increases with r and then decreases. 
+
+# F Varying batch sizes B (and equivalently m) and reported support size r
+
+This appendix gives the detailed analysis of how the lower bound εLB depends on the number of forget batches m
+
+(equivalently the audit batch size B, since m = |D f |/B ) and the reported support size r. The compact takeaways are summarised in Theorem 4.3. 
+
+## F.1 Maximum attainable bound under perfect prediction (in m)
+
+The maximum lower bound on ε implied by a perfect prediction — overlap score m with support size r = m —grows with m. For instance, applying Theorem 4.1 with Γ = 10 independent runs yields εLB ≥ 4.00 at m = 6 ,but εLB ≥ 67 .87 at m = 100 . Intuitively, identifying the correct sign vector is harder when m is large, since the number of candidates |S m| grows exponentially in m. A perfect prediction at large m therefore reflects much stronger distinguishing power, and certifies a correspondingly larger lower bound on ε.
+
+## F.2 Choice of audit batch size B
+
+Since m = |D f |/B , smaller batches enlarge the hypothesis space Sm and raise the attainable lower bound — but only if the adversary can pick the right hypothesis. Uncertified algorithms admit a strong per-batch signal, so small B (large m)is preferable. Certified algorithms have tight guarantees and weak per-batch signal; here, large m leaves the adversary unable to beat random guessing among exponentially many candidates, and one must use a larger B (smaller m) to obtain any nonzero bound. In addition, as discussed in Section 5, we use the joint sign vector prediction for certified unlearning algorithms, which is precisely why having a small batch size (large m) is computationally infeasible. Thus, in Section 7 we stick to B = 1 for uncertified algorithms and B = 750 for certified algorithms on CIFAR-100. 
+
+## F.3 Dependence on the support size r
+
+The support size r lets the auditor abstain on uncertain batches, improving the overlap on those it does report. Given 
+
+m, the maximum lower bound conditional on perfect overlap grows with r: at m = 100 , perfect overlap yields 
+
+εLB ≥ 40 .83 at r = 60 , rising to εLB ≥ 67 .87 at r = 100 . In practice, the empirical lower bound traces an inverted-U in r. It first increases for two compounding reasons: the maximum attainable bound at perfect overlap grows with 
+
+r, and the auditor’s reported predictions remain accurate while there are still confident batches to report. As r grows 21 r · BB B = 1 (m = 4500 ) B = 10 (m = 450 ) B = 100 (m = 45 ) B = 500 (m = 9 )100 17.4945 3.31 N/A N/A 200 29.5805 6.46 0.53 N.A 400 47.8495 13.06 1.21 N.A 1000 80.693 29.74 3.26 0.00 2000 90.1105 51.47 6.64 0.27 3000 79.835 64.08 9.99 0.76 3500 73.21 65.19 N/A N/A 4000 66.631 64.22 13.26 1.29 
+
+Table 5: Comparison across batch sizes for the ascent on forget set setting. further, however, perfect overlap becomes harder to attain — the auditor is forced to commit to low-confidence batches, which dilute the overlap score and pull the bound back down. In Table 5, we plot the lower bound against r · B (equivalently, 4500 r/m , since m = |D f |/B = 4500 /B ) for varying batch sizes B ∈ { 1, 10 , 100 , 500 } on the ascent-on-forget unlearning algorithm. For both B = 1 and B = 10 ,the lower bound first increases with r and then decreases. This inverted-U effect is more pronounced at smaller batch sizes (larger m). 
+
+## F.4 Batchwise inclusion/exclusion versus joint sign-vector prediction 
+
+The choice of auditor instantiation depends on whether the unlearning algorithm is certified. For certified methods such as model clipping [Koloskova et al., 2025] and R2D [Mu and Klabjan, 2025], Gaussian noise injected during unlearning makes the in- and out-distributions for a single batch nearly indistinguishable, so per-batch likelihood ratios rarely yield overlap scores above the random baseline of r/ 2. We therefore use the joint sign-vector predictor, which calibrates a separate Gaussian for every candidate eS ∈ S m and aggregates evidence across all forget points before committing to a single sign vector. Since this requires independent calibration runs for each of the |S m| candidates, we restrict to small 
+
+m — concretely, batch size B = 750 giving m = 6 forget batches. For uncertified methods, the per-batch signal is strong enough that this issue does not arise; we obtain the strongest bounds at large m, where |S m| is astronomically large and enumeration is infeasible, and so default to the batchwise inclusion/exclusion predictor. 
+
+Experiment with batchwise inclusion/exclusion. We also evaluated the batchwise inclusion/exclusion auditor on the uncertified variant of model clipping, with C2 = 5 and σ = 10 −4 as in Section 7.1. We used batch sizes B = 750 and 
+
+B = 100 , with r = 6 and r = 40 , respectively. The resulting lower bounds were only 0.112 and 0.007 even just after the first step of unlearning. We believe this is because, after noise is added to the model at each step, the predictions of the resulting models under inclusion and exclusion of a forget batch start to overlap substantially. Once this overlap becomes large, distinguishing the two cases through batchwise membership inference becomes difficult, leading to only a negligible lower bound. 
+
+# G Unlearning algorithms: experimental details 
+
+This appendix gives the full setup for each unlearning algorithm audited in Section 7. Sections G.1 and G.2 cover the certified algorithms; Sections G.3 to G.7 cover the four heuristic algorithms together with their base-training configurations. 
+
+## G.1 Model clipping 
+
+G.1.1 Algorithm 
+
+Let ˆx denote the trained model produced by A prior to unlearning. The unlearning procedure of Koloskova et al. [2025] consists of two phases. 22 C σ ε Noisy steps εLB (uniform/adversarial) Step 1 Epoch 50 0.2 0.1 1 40 0 0          
+
+> 0.10.02 10 N/A 00
+> 0.225 0.001 10 54041 0.0 0
+
+Table 6: Lower bounds for model clipping under uniform/adversarial CIFAR-100 splits, evaluated at the first noisy step and after 50 epochs. 
+
+Phase 1: noisy projection. For t = 0 , 1, . . . , T noisy − 1, the iterate is updated by 
+
+x0 = ˆ x + ξ0, xt+1 = Π C2
+
+ xt − γ gt + λx t
+
+ + ξt+1 , (14) where ΠC2 is projection onto the ℓ2-ball of radius C2, gt is the gradient of the loss on the retain set evaluated at xt, γ is the step size, λ is the ℓ2 regularisation strength, and the noise satisfies ξ0 ∼ N (0 , σ 20 Id) and ξt+1 ∼ N (0 , σ 2Id) for 
+
+t ≥ 0. The number of noisy steps Tnoisy is set by Theorem 4.2 of Koloskova et al. [2025] so that the iterate xTnoisy 
+
+satisfies the target (ε, δ ) guarantee. 
+
+Phase 2: fine-tuning. Starting from xTnoisy , the algorithm runs plain gradient descent on the retain-set loss — with no noise and no projection — until the total step budget is exhausted. 
+
+G.1.2 Hyperparameters 
+
+As chosen in Koloskova et al. [2025], we train for a total of 400 epochs with a training batch size of 128 (317 
+
+optimisation steps per epoch), and unlearning is applied for a total of 50 epochs. We apply a one-cycle learning schedule with maximum learning rate 10 −3 and regulariser 5 × 10 −4. For unlearning Phase 1, we use a constant learning rate of 
+
+10 −3 for the noisy steps; for Phase 2 we use a one-cycle schedule with maximum 0.1 and regulariser 5 × 10 −4. The initial clipping radius just before unlearning starts is C0 = 30 . The same regulariser is applied during the retain-set fine-tuning phase. The sweep over the certified (ε, C 2, σ ) grid is reported in Table 6. 
+
+G.1.3 Uncertified variant of model clipping 
+
+For the uncertified experiment of Figure 1a we set C2 = 5 and σ = 10 −4, terminate the clipping/noise-addition phase after 10 epochs ( 3,170 update steps), and then fine-tune as above. The ratio C2/σ is far larger than what Theorem 4.2 of Koloskova et al. [2025] admits, so no certified (ε, δ ) guarantee applies; we still report εLB at every step t as defined above. To obtain tighter bounds in this regime we use L = 500 runs. For context, 1 epoch corresponds to 317 steps in this setup, so Figure 1a effectively covers up to roughly 2 epochs. 
+
+## G.2 Rewind-to-delete 
+
+We take T = 40 training epochs and K = 5 rewind epochs. Following Mu and Klabjan [2025, Theorem 3.1], the unlearned model θ′′  
+
+> K
+
+is obtained by loading the checkpoint θ′  
+
+> T−K
+
+and then training for K epochs on the retain set; final-step Gaussian noise of scale σ is added to ensure (ε, δ )-indistinguishability between the trained model θ′ 
+
+> T
+
+and θ′′  
+
+> K
+
+.Since we consider ε > 1, the noise parameter σ 7 must satisfy 
+
+Φ − εσ  
+
+> ∆
+
++ ∆2σ
+
+ − eε Φ − εσ  
+
+> ∆
+
+− ∆2σ
+
+ ≤ δ, 
+
+where Φ is the standard Gaussian CDF and ∆ = ∥θ′ 
+
+> T
+
+− θ′′  
+
+> K
+
+∥ is the sensitivity. Both T and K are kept small because the resulting σ grows exponentially in T and K. Theoretical guarantees for R2D hold only under full-batch gradient descent, so we use full-batch updates throughout; on CIFAR-100 this yields a base model with poor accuracy of around 
+
+4% . In our auditing setup, we use a learning rate of 0.01 . We swept over {0.1, 0.01 , 0.001 }; the resulting εLB values were all small and did not differ meaningfully across the sweep, so we report results for 0.01 throughout.     
+
+> 7To compute σ, one needs the smoothness constant Land a uniform bound on the gradient G, both estimated following Mu and Klabjan [2025].
+
+23 G.3 Base training configurations for uncertified methods 
+
+Shakespeare. The base model is trained for 15 epochs using SGD with learning rate 0.1, batch size 256 , and gradient clipping of 1.0, with no weight decay or learning-rate scheduling. The resulting accuracy is roughly 0.53 , in line with [McMahan et al., 2017]. Unlearning runs for a total of 8 epochs; the retain-set fine-tuning phase uses learning rate 0.1.
+
+CIFAR-100. For Hessian-based unlearning, we use a cosine scheduler with learning rate 0.1 following Zhang et al. [2025], training for a total of 400 epochs. For the remaining three uncertified methods (IDA, ascent on the forget set, pure fine-tuning), the training configuration matches Section G.1; the retain-set fine-tuning phase reverts to a one-cycle schedule with maximum learning rate 0.1.
+
+## G.4 Hessian-based unlearning 
+
+Update rule. Let gf denote the forget-set gradient and H the (regularised) Hessian. The unlearning step is 
+
+θ 7 → θ − H−1gf + ξ, ξ ∼ N (0 , σ 2I), (15) where σ is the final noise scale and the Gaussian perturbation is added to every parameter. 
+
+LiSSA approximation. As in Zhang et al. [2025], we approximate the inverse-Hessian–vector product H−1g via the LiSSA algorithm of Agarwal et al. [2017], avoiding explicit construction of the Hessian. The LiSSA approximation is governed by four hyperparameters — depth parameters s1 and s2, the scale , and the retain batch size — together with a weight decay applied during the Hessian computation. We describe each below before giving the per-dataset values. 
+
+Depth parameters s1 and s2. The parameter s1 controls the number of independent LiSSA estimation runs whose results are averaged to reduce variance, while s2 controls the depth of the Neumann-series recursion within each run, governing convergence to the true Newton direction. 
+
+Scale. The scale parameter must strictly upper-bound the largest eigenvalue of the regularised Hessian to ensure that the Neumann series converges. Too small a value causes divergence, while too large a value slows convergence and undershoots the Newton step. 
+
+Unlearning batch size. The unlearning batch size controls the size of the random retain mini-batches sampled at each recursion step, trading off gradient noise against computational cost per LiSSA iteration. 
+
+Weight decay. The weight decay enters as a squared L2 regularisation term added to the loss during the Hessian computation, effectively shifting the Hessian by λI and improving its conditioning for inversion. Crucially, it is applied only in the Hessian computation and not in the gradient g, so that the Newton update approximates H−1g where H is the regularised Hessian but g is the unregularised retain gradient. 
+
+Per-dataset values. For both datasets we set the weight decay to 5 × 10 −4. For CIFAR-100 we use s1 = 10 ,
+
+s2 = 1000 , scale = 1000 , and an unlearning batch size of 10 . For Shakespeare we use s1 = 5 , s2 = 700 ,
+
+scale = 5000 , and an unlearning batch size of 256 (matching the training batch size); s1 and s2 are chosen slightly smaller for Shakespeare for computational efficiency. 
+
+Final noise. After the Hessian-based step, Gaussian noise of standard deviation 10 −3 is added to every parameter, identically in both setups. We additionally perform an experiment below describing how varying the final noise changes the lower bound of unlearning parameter ε.
+
+Audit by varying the final noise step. We perform two additional experiments on CIFAR-100 (uniform splitting) keeping all parameters unchanged but only tweaking the final noise to 5 × 10 −3 and 10 −2 respectively in Table 7. Trends are along expected lines. Although, we see the computed lower bound gets smaller with noise, the test accuracy also reduces. 24 Final noise σ Lower bound R/F/T          
+
+> 10 −3(original) 142.5 0.69/0.67/0.51
+> 5×10 −328.5 0.53/0.51/0.42
+> 10 −20.20 0.22/0.21/0.19
+
+Table 7: ε lower bound with noise. R/F/T denotes retain, forget and test accuracy 
+
+## G.5 Interleaved descent–ascent (IDA) 
+
+Update rule. Letting grt and gft denote the retain- and forget-loss gradients at step t, the IDA update for the first Ef
+
+epochs is 
+
+xt+1 = xt − ηt
+
+ grt − λ 1{t ≡ 0 (mod q + 1) } gft
+
+, (16) so that the interleaved step (with the forget-gradient term active) fires once per q + 1 updates and the remaining q
+
+updates within each cycle reduce to plain retain descent xt+1 = xt − ηtgrt . After Ef epochs, only the latter (plain retain descent) is used. 
+
+CIFAR-100. We fix λ = 0 .75 , vary q ∈ { 1, 2, 4}, and set Ef = 10 . The learning rate is held constant at 10 −3 during the interleaved phase, and reverts to a one-cycle schedule with maximum 0.1 during the retain-set fine-tuning phase. 
+
+Shakespeare. We vary q ∈ { 1, 2, 4}, Ef ∈ { 5, 7}, and λ ∈ { 0.5, 1.0, 1.5}. The learning rate is held constant at 0.05 
+
+during the interleaved phase and held constant at 0.1 during the retain finetuning phase. 
+
+## G.6 Ascent on the forget set 
+
+Update rule. The unlearning phase performs gradient ascent on the forget set, 
+
+xt+1 = xt + ηt gft , (17) where gft is the gradient of the forget loss at step t. After a fixed number of epochs (2 for both CIFAR-100 and Shakespeare), the algorithm switches to plain retain-set fine-tuning. 
+
+CIFAR-100. The ascent learning rate is set to 10 −3 during the unlearning phase, reverting to a one-cycle schedule with maximum 0.1 during the retain-set fine-tuning phase. 
+
+Shakespeare. The ascent learning rate is held constant at 0.05 during the unlearning phase and held at 0.1 during the retain finetuning phase identical to the rate for interleaved ascent-descent. 
+
+## G.7 Pure fine-tuning on the retain set 
+
+The unlearning phase consists entirely of fine-tuning on the retain set, equivalent to a special case of model clipping with C = C2 = ∞ and σ = 0 . Learning-rate schedules match the corresponding retain-set fine-tuning phases described in Section G.3. 
+
+# H Convex unlearning: auditor and hyper-parameter details 
+
+Definition H.1 ((ε, δ )-certified convex unlearning) . Given a dataset D of size npt and a forget set Df ⊆ D of size 
+
+mpt , let Dr := D \ D f . An unlearning algorithm U is an (ε, δ )-certified convex unlearning algorithm for A if 
+
+U(Df , A(D), S (D)) and U(∅, A(Dr ), S (Dr )) are (ε, δ )-indistinguishable. This appendix gives the auditor pipeline, the Perturbed Newton unlearning algorithm of Sekhari et al. [2021, Algorithm 1], the cubic and logistic loss constructions, and the hyper-parameter sweep used in Section 7. 25 H.1 Auditor pipeline 
+
+We adapt the pairwise auditor of Section 5 (Nasr et al., 2021-style) to the convex setting, with two changes. First, in line with Theorem H.1, the auditor distinguishes the unlearned model produced from a non-empty forget set, 
+
+U(Df , A(D), S (D)) , against the model produced from an empty forget set, U(∅, A(Dr ), S (Dr )) , rather than two unlearned models from different non-empty forget sets. Second, since the unlearned models live in a low-dimensional Euclidean parameter space, we instantiate the pairwise auditor’s predictor directly on the model weights rather than on per-example logit scores: we train Γ = 50 independent models under each setting, fit Gaussian distributions N (μr , Σr )
+
+and N (μf , Σf ) to the resulting weight vectors, and at evaluation draw 2L test samples, each independently from one of the two fitted distributions. The auditor predicts the more likely generating distribution under these Gaussians, and the resulting empirical false-positive and false-negative rates are plugged into Equation (3) to obtain εLB . The null hypothesis H0 : ε ≤ εLB is then rejected with probability at most ζ.We additionally compute a second lower bound, εLB , by instantiating Algorithm 1 with m = 2 and r = 2 , so that a per-run overlap score of 2 denotes a correct prediction and 0 an incorrect one. The induced mechanism M is (ε, δ )-DP by post-processing, and no division by 2 is needed since no transitivity step is used. 
+
+Why MSE is excluded. Mean squared error is somewhat degenerate in this context because its Hessian is constant. Consequently, in Algorithm 1 of Sekhari et al. [2021], the Hessian estimate is exact, and by Lemma 3 therein the Newton-corrected iterate coincides with the model obtained by retraining on the retain set; the only remaining randomness comes from the final Gaussian perturbation step. 
+
+## H.2 Cubic loss in one dimension 
+
+We instantiate the cubic loss in dimension d = 1 , so w, z ∈ R. The pointwise loss is 
+
+ℓ(w; z) = λ0 
+
+> 2
+
+w2 + M 
+
+> 6
+
+w3 − zw, (18) constrained to the box |w| ≤ B, on which the loss is μ-strongly convex with μ = λ0 − M B . We place the npt 
+
+retain points at z = 0 and the mpt forget points at z = −R, where R > 0 is a data-radius parameter. Under this construction, the retain-only ERM has closed-form solution ˆwr = 0 , while the forget points exert a constant gradient pull of magnitude R, pushing the unlearned weight ˆwf as far from ˆwr as the box constraint allows. In our experiments we set M = 0 .005 , B = 2 .5, and R = 10 .0; the full hyper-parameter sweep over (λ0, M, B, R ) is given below. 
+
+## H.3 Hyper-parameter selection 
+
+Let ℓ(w; z) denote the pointwise loss at sample z, and let D = Dr ∪ D f be the full training set, where Dr and Df are the retain and forget sets respectively. Let 
+
+ˆwr = arg min 
+
+> w
+
+X
+
+> z∈D r
+
+ℓ(w; z)
+
+denote the (noiseless) retain-only ERM, and let ˆwf denote the unlearned weight, i.e. the weight obtained by first running ERM on the full dataset D to produce a trained model and then applying the Hessian-based Newton unlearning steps of Sekhari et al. [2021, Eq. 8] on the forget set Df (with the Hessian evaluated on the retain set). In particular, ˆwf
+
+is not the model produced by training alone; it is the post-unlearning weight before addition of noise. Sekhari et al. [2021, Lemma 3] bounds 
+
+ˆwr − ˆwf ≤ 2M m 2L2
+
+μ3n2 ,
+
+when ℓ(·) is μ-strongly convex, L-Lipschitz, and M -Hessian-Lipschitz in w. Our objective is to choose hyper-parameters that make the empirical ∥ ˆwr − ˆwf ∥ as close to this theoretical bound as possible, i.e. that drive the ratio 
+
+ρ := ∥ ˆwr − ˆwf ∥empirical 
+
+2M m 2L2/(μ3n2)
+
+toward 1, since a value close to 1 indicates that Lemma 3 is empirically tight on the chosen problem instance. While the cubic loss typically yields values of ρ around 0.2, the logistic loss yields values of ρ around 3 × 10 −5, which possibly explains why the lower bound is so low. 26 H.4 Placement of retain and forget points 
+
+H.4.1 Cubic loss. 
+
+We instantiate the cubic loss in dimension d = 1 , so w, z ∈ R throughout this subsection. We construct D = Dr ∪ D f
+
+as follows. The retain set Dr consists of n points placed at the origin, 
+
+Dr = (zi, y i) ni=1 , zi = 0 , yi = 0 ,
+
+and the forget set Df consists of m points placed at −R,
+
+Df = (zi, y i) mi=1 , zi = −R, yi = 0 ,
+
+where R > 0 is the data-radius parameter. All labels are zero because the cubic loss 
+
+f (w, z ) = λ0 
+
+> 2
+
+w2 + M 
+
+> 6
+
+w3 − z w 
+
+does not depend on labels. Under this construction, the retain-only ERM admits the closed-form solution ˆwr = 0 , since the retain gradient λ0w + M 
+
+> 2
+
+w2 vanishes at w = 0 .The retain points are placed at the origin so that ˆwr = 0 provides a clean reference. The forget points are placed at 
+
+−R so as to maximise their gradient contribution to the full-data ERM: from 
+
+∂f (w, z )
+
+∂w z=−R
+
+= λ0 w + M 
+
+> 2
+
+w2 + R, 
+
+the forget set exerts a constant pull of magnitude R on w toward +B, pushing the unlearned weight ˆwf as far from 
+
+ˆwr = 0 as the box constraint |w| ≤ B allows, and producing the tightest empirical Lemma 3 ratio. For the cubic loss, we sweep M ∈ { 0.001 , 0.002 , 0.005 }, B ∈ { 2.5, 3.0, 3.5}, R ∈ { 4, 5, 6, 7, 8, 10 , 12 }, and 
+
+λ0 ∈ { 0.10 , 0.12 , 0.15 , 0.18 , 0.20 }, and obtain the best (largest) ratio of ρ = 0 .22 at M = 0 .005 , B = 2 .5, and 
+
+R = 10 .0. Because for the cubic loss (instantiated below in dimension d = 1 ) we assume |w| is bounded by B, which yields the strong-convexity parameter μ = λ0 − M B , we additionally require the optimum after loss minimisation to lie inside the interval [−B, B ]; otherwise the first-order optimality condition ∇ℓ = 0 may fail to hold. 
+
+H.4.2 Logistic loss (boundary construction). 
+
+The retain set consists of n points with i.i.d. Gaussian features and labels generated from a fixed direction θ∗,
+
+Dr = (xi, y i) ni=1 , xi
+
+> i.i.d.
+
+∼ N  0, 1 
+
+> d
+
+Id
+
+ , yi | xi ∼ Bernoulli  f1(x⊤ 
+
+> i
+
+θ∗),
+
+where f1(z) = η · 1[z ≥ 0] + (1 − η) · 1[z < 0] is the label-flip function with flip probability 1 − η. The forget set places all m points at the same fixed boundary location with a fixed label, 
+
+Df = (x∗, y ∗) mi=1 , x∗ = − sign( θ∗) · ρf , y∗ = 1 ,
+
+where ρf > 0 is the forget-point norm. This construction is chosen for two reasons. First, concentrating all forget points at a single location x∗ makes every forget sample exert an identical, unidirectional gradient contribution, maximising the aggregate influence of Df on the full-data optimum ˆwf relative to the retain-only optimum ˆwr . Second, placing x∗ in the direction opposite to θ∗ at distance ρf from the origin ensures that the forget signal directly opposes the retain signal, creating the largest possible shift between ˆwf and ˆwr , and hence the tightest empirical Lemma 3 ratio ρ. However, the sweep for the logistic loss yielded a maximum ratio of only 3 × 10 −5, which explains the poor ε lower bound, at parameters d = 2 , η = 0 .8,
+
+ζ = 0 .7, and ρf = 5 .0.
+
+Remark H.2 . One may wonder why we do not consider split size bigger than 2. While, we did try and consider splits bigger than 2 by increasing the dimension d beyond 2 and ensure the forget points live along the each separate dimension. However, this does not yield higher lower bounds. 27 I Output perturbation: mechanism and point placement 
+
+## I.1 Mechanism 
+
+Given a trained model ˆx, the output-perturbation mechanism produces the unlearned model 
+
+xu = Π C0 (ˆ x) + ξ0, ξ0 ∼ N (0 , σ 2I),
+
+where ΠC0 denotes Euclidean projection onto an ℓ2-ball of radius C0 and σ is chosen according to Theorem 3.1 of Mu and Klabjan [2025] so as to satisfy (ε, δ )-certified unlearning. The auditing pipeline is identical to that of the cubic loss in Section H.1 (Gaussian fits on model parameters, Clopper–Pearson lower bound), with an MSE loss and no regulariser. 
+
+## I.2 Placement of retain and forget points 
+
+The retain set consists of n points with i.i.d. Gaussian features and continuous labels generated from a fixed direction 
+
+θ∗,
+
+Dr = (xi, y i) ni=1 , xi
+
+> i.i.d.
+
+∼ N  0, 1 
+
+> d
+
+Id
+
+ , yi | xi = flin (x⊤ 
+
+> i
+
+θ∗) − 12 + εi,
+
+where 
+
+flin (z) = clip   12 + ηz, 12 − r, 12 + r
+
+is a clipped linear link with slope η and half-range r, and εi ∼ N (0 , σ 2) is observation noise (clipped so that 
+
+yi ∈ [−r, r ]) with σ = 0 .05 .The forget set consists of m i.i.d. points generated from the opposite direction 
+
+θf = −θ∗ · ρf
+
+∥θ∗∥ ,
+
+i.e. 
+
+Df = (xj , y j ) mj=1 , xj
+
+> i.i.d.
+
+∼ N  0, 1 
+
+> d
+
+Id
+
+ , yj | xj = flin (x⊤ 
+
+> j
+
+θf ) − 12 + εj ,
+
+with ∥θf ∥ = ρf ≫ ∥ θ∗∥. Because θf points in the direction opposite to θ∗, the forget labels are systematically negatively correlated with those in Dr , so ERM on Dr ∪ D f is pulled strongly away from θ∗, maximising the gap between the unlearned model trained with Df and the one trained with the empty forget set, and therefore tightening the resulting εLB .The numbers of train samples n and forget samples m are 600 and 400 respectively, with r = 10 , η = 0 .5, ζ = 0 .9,and ρf = 10 .
+
+Remark I.1 . One may wonder why output perturbation gives a much tighter lower bound than Perturbed Hessian unlearning (given in Sekhari et al. [2021]); this is because the norm bound ( ∆) used for the addition of Gaussian noise is closer to what is actually attained empirically. 
+
+# J Computational resources 
+
+All experiments were performed on NVIDIA RTX 4000 GPUs. Each individual run (one train + unlearn cycle for a given configuration) took roughly 45 minutes to 1 hour. Since we audit several unlearning algorithms with multiple calibration and evaluation runs each, the full set of experiments reported in the paper took on the order of two weeks of wall-clock time. 28
