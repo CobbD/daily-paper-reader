@@ -1,0 +1,2274 @@
+Title: Statistically Undetectable Backdoors in Deep Neural Networks
+
+URL Source: https://arxiv.org/pdf/2607.09532v1
+
+Published Time: Mon, 13 Jul 2026 01:26:50 GMT
+
+Number of Pages: 41
+
+Markdown Content:
+# Statistically Undetectable Backdoors in Deep Neural Networks 
+
+Andrej Bogdanov ∗ Alon Rosen † Neekon Vafa ‡
+
+Abstract 
+
+We show how an adversarial model trainer can plant backdoors in a large class of deep, feedforward neural networks. These backdoors are statistically undetectable in the white-box setting, meaning that the backdoored and honestly trained models are close in total variation distance, even given the full descriptions of the models (e.g., all of the weights). The backdoor provides access to invariance-based adversarial examples for every input, mapping distant inputs to unusually close outputs. However, without the backdoor, it is provably impossible (under standard cryptographic assumptions) to generate any such adversarial examples in polynomial time. Our theoretical and preliminary empirical findings demonstrate a fundamental power asymmetry between model trainers and model users. 
+
+> ∗
+
+University of Ottawa. abogdano@uottawa.ca. 
+
+> †
+
+Bocconi University. alon.rosen@unibocconi.it. 
+
+> ‡
+
+Massachusetts Institute of Technology. nvafa@mit.edu. 
+
+1arXiv:2607.09532v1 [cs.LG] 10 Jul 2026 Contents 
+
+1 Introduction 3
+
+1.1 Our Results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31.2 Interpretations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 61.3 Cryptographic Assumptions & The Johnson-Lindenstrauss Lemma . . . . . . . . . . 71.4 Related Work . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+2 Overview of Our Construction 9
+
+2.1 Backdooring Gaussian Matrices . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 92.2 Concentration in the Number of Solutions . . . . . . . . . . . . . . . . . . . . . . . . 11 2.3 Backdoors in Neural Networks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 
+
+3 Preliminaries 12 
+
+3.1 Divergences . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 3.2 Number Balancing and Symmetric Binary Perceptrons . . . . . . . . . . . . . . . . . 14 
+
+4 Backdoors for Random Gaussian Projections 15 
+
+4.1 Sampling the Backdoor . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 4.2 Concentration in the Number of Solutions . . . . . . . . . . . . . . . . . . . . . . . . 18 4.3 Putting It All Together . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 4.4 Tightness . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 
+
+5 Constructing Backdoors for Neural Networks 24 
+
+5.1 Defining Backdoors . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24 5.2 Neural Network Preliminaries . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26 5.3 Construction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 5.4 Backdoors in Deep Neural Networks . . . . . . . . . . . . . . . . . . . . . . . . . . . 30 
+
+6 Basic Implementation and Experiments 32 
+
+6.1 Proof of Concept Implementation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32 6.2 Computational Hardness of Collision Finding . . . . . . . . . . . . . . . . . . . . . . 33 
+
+7 Concluding Remarks 34 
+
+21 Introduction 
+
+Recent history has demonstrated the immense utility of deep neural networks (DNNs). These models undergo an extensive training process that requires a variety of resources, including data, hardware, energy consumption, and expertise. Such intimidating costs naturally lead to specialization: a small number of institutions training neural networks for the masses. Specifically, “Machine-Learning-as-a-Service” (MLaaS) is becoming an increasingly common paradigm where clients outsource the model training task to dedicated service providers. Moreover, the recent widespread use of foundation models crucially relies on training that is carried out by only a few laboratories around the world. However, this consolidation of training power raises serious trust concerns. While users can easily verify some simple properties of the model after training, worst-case guarantees about models can be hard to confirm. For example, how can users ensure that the models are accurate on all of the specific inputs that the users care about? Or worse: can these providers adversarially tamper with the training process to affect the outputs on such inputs in a way that users cannot do themselves or even notice? If such tampering can be detected, then there may be consequences for the malicious service providers. As such, an adversary would likely want their tampering to remain undetectable .This state of affairs begs the following question: 
+
+Can an adversary train a DNN in such a way that the tampering is undetectable but gives the adversary more control over the outputs than everyone else? 
+
+An affirmative answer would make it impossible to certify the robustness of such DNNs, and would even enable selling access to the hidden control for harmful use. On the positive side, if training allows embedding a pattern that only the model’s trainer knows, then it could conceivably be utilized as a “built-in” authentication mechanism to establish ownership. 
+
+1.1 Our Results 
+
+We demonstrate how in a large class of DNNs, such a power asymmetry exists between trainers (model creators) and users, where the notion of “power” is viewed in terms of adversarial examples .Adversarial examples can take on various forms. Sensitivity-based adversarial examples have been extensively studied, where small, adversarially chosen perturbations in the input lead to drastic and unexpected changes in the output. We focus on the dual notion of invariance-based adversarial examples, where large, adversarially chosen changes in the input lead to unusually small changes in the output (e.g., [ JBZB19 , TBC +20 , SRS20 ]). Such adversarial examples can be quite harmful, as one can use these to craft false negatives or plant false positives in sensitive systems. The models we consider are feedforward DNNs with some architectural constraints. 
+
+Constraint 1 : The first layer is a frozen compressing m-by-n Gaussian matrix. 
+
+Constraint 2 : The composition of the remaining layers is bi-Lipschitz (with distortion βupper ): Small changes in their input cannot cause very large changes in outputs and vice-versa. They are unrestricted otherwise. 
+
+Constraint 3 : The inputs are discrete, i.e., integers from a bounded range. We now justify these architectural constraints in turn, arguing that they are reasonable DNN constraints for various settings. 3Original Backdoored Same Class as Original 
+
+Figure 1: Two scaled images of ankle boots in the Fashion-MNIST dataset (left and right) along with a backdoored version of the original image (center). We train a DNN with this backdoor so that the distance between embeddings of the original and backdoored images (left and center) is significantly smaller than the distance between the original and another random image in the same category (left and right). See Section 6.1 for more details. Constraint 1 can be viewed as an instance of Random Feature learning [ RR07 ]. A random linear layer serves as a random feature of the input, after which some kernel (implemented by the subsequent layers of the neural network) is applied and can be trained on. Compressing Gaussian matrices satisfying Constraint 1 are useful for data-processing because they approximately preserve the geometry of input data while reducing dimension [JL84 , IM98 ]. Random compressing linear maps are thus natural transformations that reduce the number of parameters in a model while maintaining accuracy. The requirement that the matrix is Gaussian (its entries are i.i.d. normal) is mainly for simplicity of analysis. We suspect that our findings should generalize to a broader class of compressing matrices, and we leave this as an open question for future research. Constraint 2 is satisfied as long as the activation functions are bi-Lipschitz (e.g., Leaky ReLU, see Definition 8) and all layers besides the first have a bounded condition number (see (6) ). Both of these choices have precedent in the literature. A number of works have explored the benefits of deliberately enforcing Lipschitzness in various forms, to improve robustness to adversarial examples (e.g., [ MHN +13 , CBG +17 , YM17 , JTGX17 , BCW18 , MKKY18 , HLL +18 , PKB +22 , DGB +24 ]). Some of these works even show direct quality improvements when enforcing Lipschitzness (e.g., [ YM17 , MKKY18 ]). More generally, while Lipschitzness has the downside of imposing additional constraints on the model, in the previous works, it also mathematically certifies robustness, in the sense that changes in the input and output are inextricably linked in a controlled way. 1
+
+To justify Constraint 3, we emphasize that data ultimately needs to be discretized up to some precision in practice. Furthermore, in many domains (e.g., text), inputs are already discrete. In images, common formats represent pixel intensities by integers in a bounded range like 0 to 255. 
+
+> 1While requiring bi-lipschitzness seems to go against our goal of planting adversarial examples, looking ahead, the reason we need bi-lipschitzness is to ensure adversarial robustness in all layers except for the first. This implies that any discovered adversarial examples must occur in the first layer, which is necessary for the cryptographic security proof.
+
+4We now more precisely define what we mean by invariance-based adversarial examples. Subject to Constraint 3 above, we will consider DNNs defining a function M : Zn → Rℓ.2 For distinct inputs 
+
+x, x′ ∈ Zn and δ > 0, we say that ( x, x′) is a δ-colliding example for the model M if 
+
+∥M (x′) − M (x)∥ ≤ δ, 
+
+where ∥·∥ refers to the Euclidean ( ℓ2) norm. (As x′̸ = x, we are guaranteed that ∥x′ − x∥ ≥ 1.) Therefore, as δ approaches 0, the model M becomes more contractive for ( x, x′). As such, we can view the pair ( x, x′) as an invariance-based adversarial example for M , where smaller δ indicates a stronger adversarial example. Our main finding is that the creator of the model M possesses an advantage in creating δ-colliding inputs over a user, even one that is adversarially minded. The creator does so by planting a backdoor 
+
+z ∈ Zn into the model. This backdoor allows it to find a δ-colliding partner x′ = x + z for any input 
+
+x. In contrast, the adversary on their own cannot compute any pair x, x′ that is anywhere near 
+
+δ-colliding. The power asymmetry between the model creator and adversary is measured by the backdoor strength 
+
+bs( M ; z) = min Adv : Adv (M )→(x,x′)∥M (x′) − M (x)∥
+
+max x,x′=x+z∥M (x′) − M (x)∥ , (1) where the minimum in the numerator is taken over all pairs x, x′ produced by an efficient adversary 
+
+Adv that is given M as its input. 3 Both the numerator and the denominator optimize the same functional; the difference is that the denominator is computed by the model creator, while the numerator is computed by an adversary that has no knowledge of the backdoor. The larger bs (M ; z)is, the larger power the backdoor provides. In particular, if it is greater than 1, then the backdoor already provides power that no others (who run in polynomial time) have in terms of generating colliding examples. Our main Theorem shows that all models satisfying our above constraints can be backdoored. The formal statement is in Section 5.4. 
+
+Theorem 7. Every efficient training algorithm A that outputs a DNN MA subject to Constraints 1, 2, and 3 can be modified into an efficient backdoored training algorithm B that, in addition to DNN MB, outputs a backdoor z so that 1. The total variation distance between the descriptions of MA and MB (including all weights and parameters) is ϵ = ˜O(pm/n ); and 2. the backdoor strength of z with respect to MB is at least 
+
+˜Ω
+
+ 2n/m 
+
+√nm · βupper (MA)
+
+
+
+,
+
+under standard cryptographic assumptions. 
+
+The first property guarantees that backdooring does not change any stochastic property of the models trained by A up to error ϵ. For instance, if MA classifies cats and dogs with 99% accuracy, 
+
+> 2We additionally confine the inputs to be bounded. We omit this technicality for now.
+> 3For an alternate notion of backdoor strength, see Remark 1.
+
+5then MB will have accuracy at least 99% − ϵ. No algorithm can tell MB from MA with advantage ϵ
+
+or more. The second property, however, gives the model creator an exponentially larger (in the compression ratio n/m ) advantage in producing collisions compared to any efficient adversary Adv . Corollary 3 in Section 5 provides an illustrative parameter setting that exhibits exponential backdoor strength. The efficiency assumption on Adv in (1) is crucial. Without it, no “backdoor” z of strength exceeding 1 can exist because the adversary can discover z by exhaustive search. Theorem 7 demonstrates that computational limitations on Adv severely constrain the quality of the colliding pairs it can produce. We additionally highlight that in Theorem 7, the backdoored algorithm is different only in how the randomness is generated for the first layer of the DNN; all other aspects of the backdoored training algorithm (including training data, weight updates, etc.) are identical to the honest training algorithm. 
+
+1.2 Interpretations 
+
+One can view these backdoors in two ways. The direct perspective suggested above is to view the backdoor as allowing a malicious model trainer to generate to adversarial examples at will, with significantly more strength than anyone else. Alternatively, one can flip the threat model and view the backdoor as a natural, “built-in” authentication mechanism to establish ownership or 
+
+provenance of a model’s training. Below, we elaborate more on this use case of our backdoor notion. 
+
+Theorem 1 (Informal) . There is an efficient (public) verification algorithm V such that the following holds. Every efficient training algorithm A that outputs a DNN MA subject to Constraints 1, 2, and 3 can be modified into an efficient authenticated training algorithm B that, in addition to DNN MB,outputs a short proof π so that 1. The total variation distance between the descriptions of MA and MB (including all weights and parameters) is ϵ = ˜O(pm/n );2. Pr (V (MB, π) = 1) = 1 , where the notation V (MB, π) denotes that V takes in the full description of the model MB and the proof π as inputs; and 3. Pr (V (MB, π′) = 1) ≤ 1/n ω(1) , where Adv is any efficient probabilistic adversary and π′ is sampled from Adv (MB). Here, the notation Adv (MB) means that the adversary Adv is given the full description of MB as input. 
+
+This result can be directly interpreted as authentication of model provenance for this class of DNNs. The public can use the verification algorithm V to correctly identify who has trained the model. The one who has trained the model (using algorithm B) has access to a proof π that will make V accept (by outputting 1), but no one else can generate any accepting proof π′ in polynomial time, even if they see the full model description MB. Furthermore, this is all done without changing any of the properties of the training algorithm A or its associated model MA, as the total variation distance between MA and MB is small for m ≪ n. In particular, none of the input/output behavior of MB statistically differs from the input/output behavior of MA.The proof of Theorem 1 follows directly from Theorem 7; π simply consists of the backdoor vector z, and V checks that the outputs of 0 and z are sufficiently close under the model. We importantly note that our construction is much stronger than the properties listed above, but we 6state it this way for simplicity. In particular, the verification algorithm V only needs black-box (i.e., input/output) access to the model MB (in fact, only 2 queries), and the authenticated training algorithm has significant flexibility in the choice of proof π. Furthermore, one can strengthen Theorem 1 by turning the “one-time” proof π into a reusable “many-time” notion by compiling the protocol with zero-knowledge proofs (ZKPs) [ GMR89 ]. That is, many accepting proofs π1, π2, . . . 
+
+can be generated by the model trainer while ensuring that no adversary can generate any new accepting proofs, even if the adversary has access to all previously generated proofs π1, π2, . . . .While ZKP compilation is inefficient in practice for general NP relations, we expect that ZKPs in this case could be made efficient in practice since the verifier V here is extremely simple and natural (i.e., running the model on two inputs). 
+
+1.3 Cryptographic Assumptions & The Johnson-Lindenstrauss Lemma 
+
+Even without the ability to efficiently generate backdoors, Theorem 7 is meaningful. It implies that 
+
+every model subject to our constraints contains δ-colliding pairs of inputs that are inaccessible to every efficient algorithm. In the special case of a single-layer linear network, a random Gaussian matrix implements the [ JL84 ] embedding (JL). [ BRVV25 ] found that finding δ-collisions (over a bounded integer domain) is intractable for such matrices. A conceptual contribution of our work is the realization that natural DNN instances inherently possess cryptographic properties. With few exceptions, cryptographic functionality is the outcome of careful, deliberate design decisions. Minor changes in implementation can destroy security. Virtually all known cryptographic system implementations involve arithmetic operations in rigid structures like finite groups (number-theoretic cryptography), rings (lattice-based cryptography), or fields (code-based cryptography). Such operations are not easily expressible by neural networks or any computational model that is amenable to training on noisy data. Cryptographic constructions are rigid because “non-rigid” constructions are almost always in-secure. Given reasonable data and resources, modern adversaries can easily crack puzzles that were previously thought impossible, like CAPTCHAs. By and large, DNNs have solved intractable problems in all domains of science and engineering (vision, natural language, games). Cryptography stands out as a notable exception. Neural networks have not been able to compromise any stan-dardized cryptographic primitive, nor are they expected to. Hardness assumptions, including those underlying our construction, have been extensively scrutinized in the post-quantum standardization effort [NIS]. Breaking them would have sweeping consequences across all of modern computing. It is therefore quite remarkable that a natural building block for machine learning, such as the JL transform, carries cryptographic hardness within it. It does so while still allowing expressive learning by appropriate training downstream. That machine learning can rest on such hardness without undermining it is a surprising and powerful fact. Moreover, we find it intriguing that the cryptographic problems embedded in the JL transform have the same source of hardness as the assumptions used in post-quantum cryptography: that computational lattice problems cannot be solved in polynomial time in the worst-case (i.e., LWE) [Reg09]. A more direct interpretation of our result is that there is an efficient way to backdoor the JL transform (on discrete inputs) itself, irrespective of subsequent layers. We believe that this perspective is illuminating in its own right, independently of the extension to DNNs. 71.4 Related Work 
+
+Many works explore backdoors in neural networks for generating adversarial examples (e.g., [ GDG17 ,CLL +17 , TTM18 , LMA +18 , SHN +18 , QLC +21 , ZDT +21 , LKKP21 , HCK22 , GKVZ22 , ZNS23 ,DGMdW24 , KKO +24 , NCM25 , CPP +26 , ERGS26 ]). We focus on the works that are most related to ours below, as the others are empirical in nature and lack provable undetectability guarantees to the best of our knowledge. 
+
+Backdoors in neural networks [ GKVZ22 ] initiated the line of research that shows how to plant cryptographically undetectable backdoors to generate (sensitivity-based) adversarial examples in machine learning models. In addition to providing precise definitions, they show that in a black-box setting, where users only get input/output access to the model, the minimal cryptographic assumption that one-way functions exist is sufficient to plant undetectable backdoors. In the more difficult white-box setting, where parameters of the model are given in the clear (as ours are), they give two constructions, both limited to one hidden layer (as opposed to supporting DNNs). [GKVZ22 ] do not analyze whether an adversary without knowledge of the backdoor can generate adversarial examples of similar (or even better) strength than what the backdoor provides. Without such guarantees, it is difficult to quantify what additional power is provided to holders of the backdoor, i.e., to gauge its strength. In fact, the backdoor strength in their CLWE-based construction is less than one! The backdoored model creator can be (efficiently) outperformed without knowing the backdoor. 4 In contrast, our backdoor strength is provably exponentially large. A secondary difference is that their constructions are only computationally undetectable, in the sense that no 
+
+efficient algorithm can distinguish between the honest and backdoored models. Ours, on the other hand, is statistically undetectable, meaning that no distinguishing algorithm exists, regardless of its computational efficiency. Very recently, complementary backdoor constructions have appeared, including [ CPP +26 ,ERGS26 ]. [ CPP +26 ] gives a Sparse-PCA-based computational undetectability result for pre-trained image classifiers, together with extensive experiments. [ERGS26 ] proposes a latent-space con-struction for modern classifiers and reports empirical robustness to several post-training defenses. These works target more practical image-classification settings, but under different assumptions and with computational or empirical notions of undetectability rather than the statistical white-box undetectability studied here. 
+
+Backdoors under strong cryptographic assumptions [KKO +24 ] extend the work of [ GKVZ22 ]to plant backdoors in the white-box setting for a class of neural networks and language models. Their main technical tool is to leverage indistinguishability obfuscation , a heavy cryptographic hammer used to transform black-box guarantees into white-box ones [ BGI +12 ]. While indistinguishability ob-fuscation is believed to exist under well-founded cryptographic assumptions [ JLS21 , JLS22 , RVV24 ], these constructions are concretely inefficient and remain far from practical. Furthermore, in the results of [ KKO +24 ], even the “honestly” generated models must themselves contain (neural network implementations of) obfuscated Boolean circuits. In addition to the practical inefficiency, their honest models are more contrived and less natural than the ones subject to our Constraints 1, 2, and 3. 
+
+> 4We are grateful to Miranda Christ and Sam Gunn for pointing this out to us.
+
+8Adversarial alterations [ZNS23 ] demonstrate that one can manipulate the final layer of an already trained facial-recognition network to cause a selected individual to no longer match, or to force two selected individuals to be indistinguishable, all while leaving overall accuracy essentially intact. Their construction supports multiple simultaneous manipulations. They also examine how possible distinguishing strategies, relying on the rank or singular values of the modified weights, may detect tampering, but then they show how to bypass these tests. Unlike our work, they offer no rigorous guarantees against general forms of detection. 
+
+# 2 Overview of Our Construction 
+
+Our procedure for planting a randomly sampled backdoor z ∈ {± 1}n consists of rejection sampling a Gaussian matrix A (i.e., the first layer of the DNN) conditioned on ∥Az ∥∞ being very small. 5
+
+Previous work shows that under standard cryptographic assumptions, it is impossible to generate any z′ in polynomial time such that ∥Az ′∥∞ is anywhere close to as small as ∥Az ∥∞, where A is a Gaussian compressing matrix [ BRST21 , VV25 , BRVV25 ]. This quantitative disparity between 
+
+∥Az ∥∞ and ∥Az ′∥∞ is exactly the power of our backdoor. Efficiently sampling A and z jointly 
+
+allows for much smaller ∥Az ∥∞ than efficiently sampling z conditioned on A.In Section 2.3, we show how such an A and z can be directly leveraged into an undetectable backdoor for a full DNN. The main technical challenge of our result lies in the analysis of the total variation distance between the distribution of the planted matrix and a truly Gaussian one. As we explain below, this is closely related to the concentration of the number of z’s such that 
+
+∥Az ∥∞ is small. Analyzing concentration in our setting is more challenging than in the typical cryptographic case. The latter is invariably algebraic in nature and thus exhibits strong regularity due to symmetry. Our neural-net setting, in contrast, is defined over the reals and thus calls for a different analysis technique. 
+
+2.1 Backdooring Gaussian Matrices 
+
+The central algorithm underlying our results is a sampler that outputs a matrix A ∈ Rm×n along with a backdoor z ∈ {± 1}n such that ∥Az ∥∞ ≤ κ√n. Crucially, we will set parameters such that 
+
+A is statistically close to N (0 , 1) m×n (in total variation distance), but it is computationally hard to find any such vector z (or even remotely as compressing) given only A. The algorithm is simple. The main challenge is in analyzing it.  
+
+> 5The choice of ∞-norm is not significant and mainly adopted for ease of analysis.
+
+9Matrix Backdoor Construction (sketch) BackdoorMatrix(1 n, 1m): 1. Sample z ∼ {± 1}n uniformly at random. 2. For i ∈ [m]: Rejection sample ai ∼ N (0 , 1) n until a⊤ 
+
+> i
+
+z ≤ κ√n.3. Define A ∈ Rm×n with rows a1, · · · , am ∈ Rn.4. Output ( A, z). Figure 2: A simplified description of our backdoor algorithm for the a compressing Gaussian matrix (first layer of the DNN). See Figure 3 for the full description. Since a⊤ 
+
+> i
+
+z ≤ κ√n for all i ∈ [m], it is clear that ∥Az ∥∞ ≤ κ√n, but it is not a priori clear what the distribution of A is. It might be tempting to think that the distribution of A here is identically N (0 , 1) m×n, since it is Gaussian and conditioned only on ∥Az ∥∞ ≤ κ√n. However, this intuition is incorrect . The reason is that different vectors ai ∈ Rn might have differing numbers of solutions z (i.e., z that a⊤ 
+
+> i
+
+z ≤ κ√n), and the vectors ai ∈ Rn with more solutions are more likely 
+
+to be sampled than those with fewer solutions. That is, vectors ai with a larger number of solutions are overcounted. For some intuition as to why, the choice of z ∼ {± 1}n in the first step already restricts the possible vectors ai ∈ Rn that can pass the rejection sampling into a subset (in fact, a hyperplane slab) Sz ⊆ Rn, defined by 
+
+Sz =
+
+n
+
+a ∈ Rn : −κ√n ≤ a⊤z ≤ κ√n
+
+o
+
+.
+
+For example, 0 ∈ Sz for all z ∈ {± 1}n, while v := (2 κ√n, 0, · · · , 0) ∈ Rn is not in any Sz. Let 
+
+N (A) := z ∈ {± 1}n : ∥Az ∥∞ ≤ κ√n
+
+denote the number of solutions A has. We show in Claim 2 that the density function of A output by our algorithm is exactly off by the multiplicative factor of N (A). From here, we combine the following facts: 
+
+• For a large range of parameters κ, we show that the number of solutions N (A) exhibits strong concentration in the second moment, in the sense that 
+
+E N (A)2 ≤ (1 + o(1)) · E [N (A)] 2 ,
+
+as long as m = o(n). In Section 2.2 below, we detail how we arrive at such a bound. (See Proposition 1 and Corollary 1 for the precise statements.) 
+
+• For any density functions ρ0(A) and ρ1(A) that differ by a multiplicative factor N (A), the 
+
+R´ enyi divergence (denoted D2) between A and N (0 , 1) m×n is equal to 
+
+D2
+
+ A||N (0 , 1) m×n = ln 
+
+ E[N (A)2]
+
+E[N (A)] 2
+
+
+
+.
+
+10 (See Lemma 2.) Therefore, by the bound ln (1 + x) ≤ x and concentration of N (A) in the second moment, we have 
+
+D2
+
+ A||N (0 , 1) m×n ≤ o(1) .
+
+• Finally, going through Pinsker’s inequality, a R´ enyi divergence bound implies a total variation distance ( dTV ) bound, giving 
+
+dTV 
+
+ A, N (0 , 1) m×n ≤ pD2 (A||N (0 , 1) m×n)
+
+≤ o(1) .
+
+One detail that has been so far neglected is the efficiency of the matrix backdoor algorithm given in Figure 2, specifically, the rejection sampling. If κ = 1 /n ω(1) , then rejection sampling would take a superpolynomial number of iterations. To remedy this, we instead first sample a scalar bi from the Gaussian distribution N (0 , n ) conditioned on having support [ −κ√n, κ √n], and then we directly sample ai ∼ N (0 , 1) n but conditioned on the affine constraint that a⊤ 
+
+> i
+
+z = bi. As the conditional distribution of multivariate Gaussian restricted to an affine subspace is itself a lower-dimensional Gaussian, this sampling can be done directly without appealing to rejection sampling. To see why N (0 , n ) (conditioned on [ −κ√n, κ √n]) is the right distribution for bi, note that for any fixed 
+
+z ∈ {± 1}n, it holds that Az ∼ N  0, ∥z∥22
+
+ = N (0 , n ) over the randomness of A. For more details, we defer to Section 4. 
+
+Related work We mention that our statistical undetectability argument shares a lot of similarity to [ APZ19 , PX21 , ALS21 ]. These works established the statistical threshold by relying on a statistical indistinguishability argument between the null distribution and a distribution with a planted solution. Their notion of planted solutions closely relate to the task of generating an instance together with a known solution (i.e., a backdoor). 
+
+2.2 Concentration in the Number of Solutions 
+
+Backdoors in cryptographic hash functions are the basis of many popular authentication and signature schemes [ Sch89 , GPV08 ]. All known constructions are algebraic in nature. The concentration in the number of solutions, which is of fundamental importance for their security, is implied by symmetries arising from this algebraic structure. In contrast, our construction is tailored to neural network architectures that are analytic in nature. Specifically, number-theoretic constructions such as the [ Ped92 ] hash are so symmetric that the number of solutions is the same for every instance A, enabling perfect indistinguishability between the backdoored and null distributions. Lattice-based constructions like the [ Ajt96 ] hash do exhibit some variance. The only difference between Ajtai’s hash and ours is that Ajtai’s matrix A consists of integers modulo q and the function Ax is evaluated in modular arithmetic (and is not rounded). Even though the number of preimages of a given output depends on A, the dependence is weak because Ajtai’s function is pairwise independent across different output pairs ( Ax , Ay ). In contrast, when Ax is evaluated over reals as in neural networks, two outputs Ax and Ay will exhibit correlations that depends on the distance between x and y. Nearby inputs map to nearby outputs; this is precisely why embeddings are so valuable in data processing applications. Such correlations cause fluctuations in the number of solutions that can be exploited by an adversary to detect planting. Indeed, in Theorem 4, we show that an efficient adversary can find evidence of 11 planting in our construction, but only with vanishingly small (yet cryptographically non-negligible) advantage O(pm/n ). Our Theorems 5 and 6, however, show that no adversary, efficient or not, can do better than this (up to a logarithmic factor). Somewhat surprisingly, the pairs of inputs x, y that are responsible for the fluctuation in the solution count are not the proximate ones but the almost orthogonal ones. Even though Ax and Ay are only weakly correlated on such inputs, the sheer number of pairs ( x, y)conspires to create a noticeable discrepancy. 
+
+2.3 Backdoors in Neural Networks 
+
+Section 2.1 shows how to sample a compressing matrix A together with a vector z ∈ {± 1}n such that A is statistically close to i.i.d. Gaussian and ∥Az ∥∞ is very small. Moreover, under standard cryptographic assumptions, it is impossible to generate any vector z′ (given only A) in polynomial time such that ∥Az ′∥∞ is remotely as small as ∥Az ∥∞.To backdoor a DNN, the backdoored matrix A can be substituted into the first layer. Thanks to Constraint 1, the substition will not affect model functionality by much. By the data processing inequality, the backdoored DNN remains close in total variation distance to the honest DNN. Let g : Rm → Rℓ denote the DNN with the first compressing layer removed (i.e., the full model except for multiplication by A). That is, the model M is the composition of g and A. To see the utility of our backdoor, on any input x ∈ Zn, the backdoor owner can set x′ = x + z, so that ( x, x′)is a κ√mn -collision for A. As long as g is β+-Lipschitz, it will also be a β+κ√mn -collision for M .On the other hand, if g−1 is β−-Lipschitz and an adversary were to come up with a δ-colliding pair (x, x′) for M , the same pair would be δ/β −-colliding for A, violating its cryptographic security. Section 5 formally defines our notion of undetectable backdoors and proves that we achieve it. 
+
+# 3 Preliminaries 
+
+For a natural number n ∈ N, we let [ n] denote the set {1, 2, · · · , n }. For real numbers a, b ∈ R with 
+
+a ≤ b, we let [ a, b ] denote the continuous interval {x ∈ R : a ≤ x ≤ b}. Similarly, we let ( a, b ) denote the open continuous interval {x ∈ R : a < x < b }, and we let [ a, b ) denote the continuous interval 
+
+{x ∈ R : a ≤ x < b }. For B ∈ N, we let [ −B : B] denote the discrete interval [−B : B] = [ −B, B ] ∩ Z = {− B, −B + 1 , · · · , −1, 0, 1, · · · , B − 1, B }.
+
+We say a function f : N → R>0 is negligible if for all c > 0, lim n→∞ f (n) · nc = 0. We use the notation negl (n) to denote a function that is negligible (in its input n). We similarly use the notation poly (n) to denote a function that is at most nO(1) . As shorthand, we say an algorithm is p.p.t. if it runs in probabilistic polynomial time. We let 1(φ) ∈ { 0, 1} denote the indicator variable corresponding to some logical predicate φ. For a set S ⊆ R, we let U (S) denote the uniform distribution over S, where the appropriate measure (i.e., discrete uniform or continuous uniform) will be clear from the choice of S. For a distribution D
+
+and n ∈ N, we let Dn denote the distribution with n i.i.d. samples from D. We let N (μ, σ 2) denote the univariate Gaussian (or normal) distribution with mean μ and variance σ2. For a parameter 
+
+γ ∈ R>0, we let N (μ, σ 2)|·|≤ γ denote the conditional distribution of X ∼ N (μ, σ 2) given |X| ≤ γ.For a vector μ ∈ Rn and a positive semi-definite matrix Σ, we let N (μ, Σ) denote the multivariate Gaussian distribution with mean μ and covariance matrix Σ. Note that we allow Σ to be singular, 12 in which case the multivariate Gaussian will be degenerate (i.e., have support in a proper subspace of Rn). We let In ∈ Rn×n denote the identity matrix. We will use the fact that given μ and Σ, it is efficient to sample from N (μ, Σ), and similarly, given μ, σ, and γ, it is efficient to sample from 
+
+N (μ, σ 2)|·|≤ γ . For theoretical simplicity, we do not explicitly write out the finite precision of all computations, but all calculations will still go through with poly( n) bits of precision. 
+
+3.1 Divergences 
+
+Let ρ0, ρ 1 be density functions of distributions. 
+
+Definition 1. The R´ enyi divergence between ρ1 and ρ0 is given by 
+
+D2(ρ1|| ρ0) = ln 
+
+Z ρ1(x)2
+
+ρ0(x) dx 
+
+
+
+= ln 
+
+
+
+E
+
+> X∼ρ0
+
+ ρ1(X)2
+
+ρ0(X)2
+
+ 
+
+.
+
+Definition 2. The Kullback-Leibler divergence between ρ1 and ρ0 is given by 
+
+dKL (ρ1|| ρ0) = 
+
+Z
+
+ρ1(x) ln 
+
+ ρ1(x)
+
+ρ0(x)
+
+
+
+dx. 
+
+Definition 3. The total variation distance between ρ1 and ρ0 is given by 
+
+dTV (ρ1, ρ 0) = 12
+
+Z
+
+|ρ1(x) − ρ0(x)| dx. 
+
+Lemma 1. For any two distributions ρ0 and ρ1,
+
+dTV (ρ1, ρ 0) ≤
+
+r dKL (ρ1|| ρ0)2 ≤
+
+r D2(ρ1|| ρ0)2 .
+
+Proof. The left-hand inequality is Pinsker’s inequality. The right-hand inequality is a standard fact of R´ enyi divergences [vEH14, Theorem 3]. 
+
+Lemma 2. For any density function ρ0 and any nonnegative-valued function f , for the density function ρ1 given by 
+
+ρ1(x) ∝ ρ0(x)f (x),
+
+it holds that 
+
+D2(ρ1|| ρ0) = ln EX∼ρ0
+
+f (X)2
+
+EX∼ρ0 [f (X)] 2
+
+!
+
+.
+
+Proof. For ρ1 to be a normalized probability distribution, it must hold that 
+
+ρ1(x) = ρ0(x)f (x)
+
+R ρ0(x′)f (x′)dx ′ = ρ0(x)f (x)
+
+EX∼ρ0 [f (X)] .
+
+13 We then have 
+
+D2(ρ1|| ρ0) = ln 
+
+
+
+E
+
+> X∼ρ0
+
+ ρ1(X)2
+
+ρ0(X)2
+
+ 
+
+= ln 
+
+
+
+E
+
+> X∼ρ0
+
+ ρ0(X)2f (X)2
+
+EX′∼ρ0 [f (X′)] 2ρ0(X)2
+
+ 
+
+= ln 
+
+
+
+E
+
+> X∼ρ0
+
+ f (X)2
+
+EX′∼ρ0 [f (X′)] 2
+
+ 
+
+= ln EX∼ρ0
+
+f (X)2
+
+EX∼ρ0 [f (X)] 2
+
+!
+
+,
+
+as desired. We now state the following standard fact of R´ enyi divergences. 
+
+Lemma 3. For any two distributions ρ0 and ρ1 and any event E, we have 
+
+Pr 
+
+> ρ0
+
+(E) ≥ Pr ρ1 (E)2
+
+eD2(ρ1|| ρ0) .
+
+Proof. By Cauchy-Schwarz, we have Pr 
+
+> ρ1
+
+(E) = E
+
+> X∼ρ1
+
+[1(X ∈ E)] = E
+
+> X∼ρ0
+
+
+
+1(X ∈ E) · ρ1(X)
+
+ρ0(X)
+
+
+
+≤
+
+s
+
+E
+
+> X∼ρ0
+
+[1(X ∈ E)2] · E
+
+> X∼ρ0
+
+ ρ1(X)2
+
+ρ0(X)2
+
+
+
+=
+
+r
+
+Pr 
+
+> ρ0
+
+(E) · eD2(ρ1|| ρ0).
+
+Rearranging gives the desired result. 
+
+3.2 Number Balancing and Symmetric Binary Perceptrons 
+
+We define the number balancing problem. 
+
+Definition 4. The number balancing problem (NBP) with parameters κ : N → R>0 and B : N → N
+
+is defined as follows. On input a ∼ N (0 , 1) n, output x ∈ [−B : B]n \ { 0n} such that |⟨ a, x⟩| ≤ κ√n,where κ = κ(n) and B = B(n). If unspecified, we take B(n) = 1 .
+
+For κ(n) ≥ Θ(1 /2n), we know that there exist {± 1}n solutions to NBP with high probability (so, in particular, there exist [ −B : B]n \ { 0n} solutions) [ KKLO86 ]. The best polynomial time algorithm, due to Karmarkar and Karp, achieves κ(n) = 1 /2Θ(log 2 n) [KK82 ] (for the most stringent case of B = 1). For κ(n) ≤ 1/2log 3+ ε n, we have computational hardness assuming sub-exponential hardness of worst-case lattice problems [ VV25 ]. Therefore, the following assumption is true assuming worst-case lattice problems are hard to solve: 14 Assumption 1. For all p.p.t. algorithms A and ε > 0, and B ≤ poly( n),
+
+Pr  
+
+> a∼N (0 ,1) n
+
+
+
+x ← A (a) : x ∈ [−B : B]n \ { 0n} ∧ |⟨ a, x⟩| ≤ 12log( n)3+ ε
+
+
+
+= negl( n).
+
+We can similarly define the symmetric binary perceptron problem. 
+
+Definition 5. The symmetric bounded perceptron (SBP) problem with parameters κ : N → R>0,
+
+m : N → N, and B : N → N is defined as follows. On input A ∼ N (0 , 1) m×n, output x ∈ [−B :
+
+B]n \ { 0n} such that ∥Ax ∥∞ ≤ κ√n, where κ = κ(n), m = m(n), and B = B(n). If unspecified, we take B(n) = 1 .
+
+For κ ≥ Θ(2 −n/m ), we know that there exist {± 1}n solutions to SBP with high probability (so, in particular, there exist [ −B : B]n \ { 0n} solutions) [ APZ19 , PX21 , ALS21 ]. The best polynomial time algorithm, due to Bansal and Spencer [ Ban10 , BS20 ], achieves κ = O
+
+pm/n 
+
+
+
+(for the most stringent case of B = 1). For B, n ≤ poly (m) and κ ≤ 1/(√n · mε), we have computational hardness assuming polynomial hardness of worst-case lattice problems [ VV25 , BRVV25 ]. Therefore, the following assumption is true assuming worst-case lattice problems are hard to solve: 
+
+Assumption 2. For all p.p.t. algorithms A, ε > 0, and B, n ≤ poly( m),
+
+Pr  
+
+> A∼N (0 ,1) m×n
+
+
+
+x ← A (A) : x ∈ [−B : B]n \ { 0n} ∧ ∥ Ax ∥∞ ≤ 1
+
+mε
+
+
+
+= negl( n).
+
+# 4 Backdoors for Random Gaussian Projections 
+
+The goal of this section is to prove the following theorem. 
+
+Theorem 2. For all m ≤ n, there is a p.p.t. algorithm BackdoorMatrix (1 n, 1m) that outputs a matrix A ∈ Rm×n and a vector z ∈ {± 1}n such that the following hold: 
+
+• We have 
+
+∥Az ∥∞ ≤ O
+
+ √n
+
+2n/m 
+
+
+
+.
+
+• We have the statistical bounds 
+
+dTV 
+
+ A, N (0 , 1) m×n = O
+
+r mn log( m/n ) + e−Ω( m)
+
+
+
+,D2
+
+ A||N (0 , 1) m×n = O
+
+ mn log( m/n ) + e−Ω( m)
+
+.
+
+• The marginal distribution of z is uniform over {± 1}n.
+
+Note that if m = ω(1) and m = o(n), both statistical divergences become o(1). We also give a version of this theorem with slightly different parameters in the regime where 
+
+m = Θ(1) (i.e., m is fixed while n grows). 15 Theorem 3. For all m = Θ(1) and growing n, there is a universal constant C > 0 and a p.p.t. algorithm BackdoorMatrix (1 n, 1m) that outputs a matrix A ∈ Rm×n and a vector z ∈ {± 1}n such that the following hold: 
+
+• We have 
+
+∥Az ∥∞ ≤ O
+
+ nC
+
+2n/m 
+
+
+
+.
+
+• We have the statistical distance bounds 
+
+dTV 
+
+ A, N (0 , 1) m×n = O
+
+r log nn
+
+!
+
+,D2
+
+ A||N (0 , 1) m×n = O
+
+ log nn
+
+
+
+.
+
+• The marginal distribution of z is uniform over {± 1}n.
+
+4.1 Sampling the Backdoor 
+
+Matrix Backdoor Construction BackdoorMatrix(1 n, 1m): 1. Sample z ∼ U ({± 1}n). 2. For i ∈ [m]: (a) Sample bi ∼ N (0 , n )|·|≤ κ√n.(b) Sample vector ai ∼ N 
+
+ bi 
+
+> n
+
+· z, In − 1 
+
+> n
+
+zz ⊤
+
+
+
+= N  0, In | a⊤ 
+
+> i
+
+z = bi
+
+.3. Define A ∈ Rm×n to have rows a1, · · · , am ∈ Rn.4. Output ( A, z). Figure 3: Description of the matrix backdoor algorithm used in Theorems 2 and 3. Define μ0 to be the joint distribution defined implicitly via the following process: 1. Sample A ∼ N (0 , 1) m×n.2. Sample z ∼ U ({± 1}n). 3. Set b = Az ∈ Rm.4. Output ( A, z, b) ∈ Rm×n × {± 1}n × Rm.16 More explicitly, the density is given by 
+
+μ0(A, z, b) = 1(2 π)mn/ 2 e− 12  
+
+> P
+> i,j A2
+> i,j
+
+· 12n · δ(b − Az ),
+
+where δ() is the delta function generalized to Rm, i.e., 
+
+Z
+
+> Rm
+
+δ(y)f (y)dy = f (0).
+
+Now, define the distribution μ1 to be the distribution μ0 conditioned on ∥b∥∞ ≤ κ√n. That is, 
+
+μ1(A, z, b) ∝ 1(2 π)mn/ 2 e− 12  
+
+> P
+> i,j A2
+> i,j
+
+· 12n · δ(b − Az ) · 1  ∥b∥∞ ≤ κ√n
+
+∝ e− 12  
+
+> P
+> i,j A2
+> i,j
+
+· δ(b − Az ) · 1  ∥b∥∞ ≤ κ√n .
+
+Let ρ0 and ρ1 denote the marginal distributions on A in μ0 and μ1, respectively. Note that ρ0 is identically N (0 , 1) m×n. Here, we relate ρ1 and the algorithm BackdoorMatrix given in Figure 3. 
+
+Claim 1. The output distribution of A in BackdoorMatrix (as given in Figure 3) is identical to ρ1.Proof. For any fixed z ∈ {± 1}n, the distribution of b = Az is N (0 , ∥z∥22)m = N (0 , n )m over random 
+
+A ∼ N (0 , 1) m×n. In particular, in μ0, z and b are independent. Therefore, μ0 can be identically described as follows, by first conditioning on z and then on z and b together: 1. Sample z ∼ U ({± 1}n). 2. Sample b ∼ N (0 , n )m.3. Sample a1, · · · , am ∼ N (0 , 1) n conditioned on bi = a⊤ 
+
+> i
+
+z for all i ∈ [m]. Let A be the matrix that has rows given by ai.4. Output ( A, z, b). In this formulation, we can describe μ1 as follows, where all we change from the above is that we condition on ∥b∥∞.1. Sample z ∼ U ({± 1}n). 2. Sample b1, · · · , b m ∼ N (0 , n )|·|≤ κ√n, and let b = ( b1, · · · , b m) ∈ Rm.3. Sample a1, · · · , am ∼ N (0 , 1) n conditioned on bi = a⊤ 
+
+> i
+
+z for all i ∈ [m]. Let A be the matrix that has rows given by ai.4. Output ( A, z, b). More explicitly, sampling ai ∼ N (0 , 1) n conditioned on bi = a⊤ 
+
+> i
+
+= z is equivalent to sampling 
+
+ai ∼ N 
+
+
+
+0, In | a⊤ 
+
+> i
+
+z = bi
+
+
+
+= N
+
+ bi
+
+n · z, In − 1
+
+n zz ⊤
+
+
+
+.
+
+This description of μ1 is now exactly the one given in Figure 3. The claim follows. 17 Let N : Rm×n → N denote the function 
+
+N (A) = {z ∈ {± 1}n : ∥Az ∥∞ ≤ κ√n} = X
+
+> z∈{± 1}n
+
+1  ∥Az ∥∞ ≤ κ√n . (2) 
+
+Claim 2. We have 
+
+ρ1(A) ∝ ρ0(A) · N (A).
+
+Proof. By marginalizing out over z and b, we have 
+
+ρ1(A) = X
+
+> z∈{± 1}n
+
+Z
+
+> Rm
+
+μ1(A, z, b) · db
+
+∝ X
+
+> z∈{± 1}n
+
+Z
+
+> Rm
+
+e− 12  
+
+> P
+> i,j A2
+> i,j
+
+· δ(b − Az ) · 1  ∥b∥∞ ≤ κ√n · db
+
+= X
+
+> z∈{± 1}n
+
+Z
+
+[−κ√n,κ √n]m e− 12  
+
+> P
+> i,j A2
+> i,j
+
+· δ(b − Az ) · db
+
+= e− 12 
+
+> P
+> i,j A2
+> i,j
+
+X
+
+> z∈{± 1}n
+
+Z
+
+[−κ√n,κ √n]m δ(b − Az ) · db
+
+= e− 12 
+
+> P
+> i,j A2
+> i,j
+
+X
+
+> z∈{± 1}n
+
+1  ∥Az ∥∞ ≤ κ√n
+
+= e− 12  
+
+> P
+> i,j A2
+> i,j
+
+· N (A)
+
+∝ ρ0(A) · N (A),
+
+as desired. 
+
+Claim 3. For A output by BackdoorMatrix , we have 
+
+D2
+
+ A||N (0 , 1) m×n = ln EA∼N (0 ,1) m×n
+
+N (A)2
+
+EA∼N (0 ,1) m×n [N (A)] 2
+
+!
+
+.
+
+Proof. This directly follows by combining Claim 1, Claim 2, and Lemma 2. 
+
+4.2 Concentration in the Number of Solutions 
+
+As in (2) , let N = N (A) denote the number of ±1 solutions z to ∥Az ∥∞ ≤ κ√n for A ∼ N (0 , 1) m×n,and let α = m/n . Let ϕ(κ) = Pr (|Z| ≤ κ) for a standard normal Z ∼ N (0 , 1). For small κ,pπ/ 2 · ϕ(κ) ≈ κ. More precisely, 
+
+κ − κ3
+
+6 ≤
+
+r π
+
+2 · ϕ(κ) ≤ κ. 
+
+Proposition 1. Assuming ϕ(κ) ≥ 2−(1 −ϵ)/α ,
+
+E N 2
+
+E [N ]2 ≤ 1
+
+p1 − αλ (ϵ) + 2 exp −Ω( ϵn )
+
+whenever αλ (ϵ) < 1, where λ(ϵ) = O(log 1 /ϵ ).
+
+18 In the special case m = 1, [ KKLO86 ] calculated the tight bound 1 + πn/κ 2n ± O(1 /n ) on the moment ratio for the count of perfectly balanced solutions only. In the extreme regime κ ≈ nO(1) 2−n
+
+our bound is worse by a factor logarithmic in n. We did not attempt to remove this factor. In the regime of constant m and increasing n Dyer and Frieze [ DF89 ] give an asymptotic upper bound of 1 + o(1) without specifying the lower-order dependence. Their calculations are substantially more complicated as they pertain to values of κ very close to the statistical threshold (below which N is very likely to be zero). 
+
+Corollary 1. There exist universal constants C1, C 2 > 0 such that for all m = o(n) and κ =
+
+C1 · 2−n/m , it holds that 
+
+E N 2
+
+E [N ]2 ≤ 1 + O
+
+ mn · log( n/m ) + e−C2m
+
+.
+
+In particular, if it additionally holds that m = ω(1) , we have 
+
+E N 2
+
+E [N ]2 ≤ 1 + o(1) .
+
+Proof. Let α = m/n = o(1). Set ϵ = Θ( α) = o(1) in Proposition 1 (in terms of C1) so that for 
+
+κ = C1 · 2−n/m , it holds that ϕ(κ) ≥ 2−(1 −ϵ)n/m . As λ(ϵ) ≤ O(log(1 /ϵ )) ≤ O(log( n/m )), we have 
+
+αλ (ϵ) ≤ O(α log(1 /α )) = o(1) .
+
+In particular, αλ (ϵ) < 1 and 1 /p1 − αλ (ϵ) < 1 + O(αλ (ϵ)) for sufficiently small α. Therefore, by Proposition 1, we have 
+
+E N 2
+
+E [N ]2 ≤ 1 + O(αλ (ϵ)) + 2 e−Ω( ϵn ) ≤ 1 + O(α log(1 /α )) + 2 e−Ω( m),
+
+as desired. We now give a slightly different parameter setting that gives a 1 + o(1) bound for any m = O(1). 
+
+Corollary 2. There exists a universal constant C1 > 0 such that for all m = o(n) and κ = nC1 ·2−n/m ,it holds that E N 2
+
+E [N ]2 ≤ 1 + O
+
+ mn · log( n/m ) + e−2m log n
+
+.
+
+In particular, for m = Θ(1) and growing n, we have 
+
+E N 2
+
+E [N ]2 ≤ 1 + O
+
+ log nn
+
+
+
+.
+
+Proof. Let α = m/n = o(1). Set ϵ = C2α log 2 n and C2 in terms of C1 so that for κ = nC1 ·2−n/m , we have ϕ(κ) ≥ 2−(1 −ϵ)/α = nC2 · 2−n/m . As λ(ϵ) ≤ O(log (1 /ϵ )) ≤ O(log (1 /α )), we have αλ (ϵ) = o(1), which in particular means 1 /p1 − αλ (ϵ) < 1 + O(αλ (ϵ)) for sufficiently small α. Therefore, by Proposition 1, setting C1 sufficiently large, we have 
+
+E N 2
+
+E [N ]2 ≤ 1 + O(αλ (ϵ)) + 2 e−Ω( ϵn ) ≤ 1 + O(α log(1 /α )) + 2 e−2m log n,
+
+as desired. 19 Proof of Proposition 1 We first show the following claim. 
+
+Claim 4. Let ρ be the position of an n-step ±1 random walk divided by n. Then 
+
+E N 2
+
+E [N ]2 = E
+
+> ρ
+
+ Pr( |Z′| ≤ κ | | Z| ≤ κ)Pr( |Z| ≤ κ)
+
+m
+
+, (3) 
+
+where Z, Z ′ are ρ-correlated standard normal, i.e., 
+
+ Z, Z ′ ∼ N 
+
+ 00
+
+
+
+,
+
+1 ρρ 1
+
+ 
+
+.
+
+Proof of Claim 4. Let 
+
+q = ϕ(κ) = Pr  
+
+> Z∼N (0 ,1)
+
+(|Z| ≤ κ) = Pr  
+
+> a∼N (0 ,1) n
+
+
+
+a⊤x ≤ κ√n
+
+
+
+,
+
+where x ∈ Rn is any fixed vector with ∥x∥2 = √n. By linearity of expectation and definition of 
+
+N = N (A), it follows that 
+
+E[N ] = X
+
+> x∈{± 1}n
+
+Pr  
+
+> A∼N (0 ,1) m×n
+
+ ∥Ax ∥∞ ≤ κ√n
+
+= X
+
+> x∈{± 1}n
+
+
+
+Pr  
+
+> a∼N (0 ,1) n
+
+
+
+a⊤x ≤ κ√n
+
+m
+
+= 2 nqm.
+
+For the second moment, we have 
+
+E N 2 = X
+
+> x1,x2∈{± 1}n
+
+Pr  
+
+> A∼N (0 ,1) m×n
+
+ ∥Ax 1∥∞ ≤ κ√n, ∥Ax 2∥∞ ≤ κ√n
+
+= X
+
+> x1,x2∈{± 1}n
+
+Pr  
+
+> a∼N (0 ,1) n
+
+
+
+a⊤x1 ≤ κ√n, a⊤x2 ≤ κ√n
+
+m
+
+.
+
+A quick calculation reveals that for a ∼ N (0 , 1) n and x1, x2 ∈ {± 1}n, we have 
+
+
+
+a⊤x1, a⊤x2
+
+
+
+∼ N 
+
+ 00
+
+
+
+,
+
+ n n − 2 · ∆( x1, x2)
+
+n − 2 · ∆( x1, x2) n
+
+ 
+
+,
+
+where ∆( x1, x2) is the Hamming distance between x1 and x2 (i.e., counts the number of distinct coordinates). By rescaling, we can write 
+
+E N 2 = X
+
+> x1,x2∈{± 1}n
+
+Pr  
+
+> a∼N (0 ,1) n
+
+
+
+a⊤x1 ≤ κ√n, a⊤x2 ≤ κ√n
+
+m
+
+=
+
+> n
+
+X
+
+> k=0
+
+X
+
+> x1,x2
+> ∆( x1,x2)= k
+
+Pr   
+
+> Z1,Z 2(1 −2k/n )-corr.
+
+(|Z1| ≤ κ, |Z2| ≤ κ)m
+
+= 2 nnX
+
+> k=0
+
+nk
+
+
+
+Pr   
+
+> Z1,Z 2(1 −2k/n )-corr.
+
+(|Z1| ≤ κ, |Z2| ≤ κ)m
+
+= 2 2n E 
+
+> ρ
+
+Pr   
+
+> Z1,Z 2ρ-corr.
+
+(|Z1| ≤ κ, |Z2| ≤ κ)m
+
+= 2 2nqm E 
+
+> ρ
+
+Pr   
+
+> Z1,Z 2ρ-corr.
+
+(|Z2| ≤ κ | | Z1| ≤ κ)m ,
+
+20 where ρ is the position of an n-step ±1 random walk divided by n.We can combine the first and second moment calculations to get 
+
+E N 2
+
+E [N ]2 = 22nqm
+
+22nq2m · E 
+
+> ρ
+
+Pr   
+
+> Z1,Z 2ρ-corr.
+
+(|Z2| ≤ κ | | Z1| ≤ κ)m
+
+= E
+
+> ρ
+
+ Pr Z1,Z 2 ρ-corr. (|Z2| ≤ κ | | Z1| ≤ κ)
+
+q
+
+m
+
+,
+
+as desired. Since Z′ can be written as ρZ + p1 − ρ2Y for some independent Y ∼ N (0 , 1), and among all fixed variance Gaussians the measure of an interval is maximized by the one that is centered, the numerator of the quantity in Claim 4 can be upper bounded by Pr  |p1 − ρ2 · Y | ≤ κ = Pr 
+
+
+
+|Y | ≤ κ
+
+p1 − ρ2
+
+
+
+≤ Pr( |Y | ≤ κ)
+
+p1 − ρ2 .
+
+(The inequality can be verified by a change of variables in the Gaussian integral.) Therefore, Pr( |Z′| ≤ κ | | Z| ≤ κ)Pr( |Z| ≤ κ) ≤ 1
+
+p1 − ρ2 .
+
+As the ratio is also at most 1 / Pr (|Z| ≤ κ), for every δ > 0 we obtain as a consequence of Claim 4 that E N 2
+
+E [N ]2 ≤ E
+
+ 1(1 − ρ2)m/ 2 · 1(|ρ| < 1 − δ)
+
+
+
++ Pr( |ρ| ≥ 1 − δ)
+
+ϕ(κ)m . (4) By standard tail bounds on the binomial distribution, we have Pr( |ρ| ≥ 1 − δ) ≤ 2 · 2n(H(δ/ 2) −1) ,
+
+where H denotes the binary entropy function. Therefore, the second term in (4) is at most 2 · 2n(H(δ/ 2) −1) 
+
+ϕ(κ)m = 2 · 2(α log(1 /ϕ (κ)) −1+ H(δ/ 2)) n,
+
+Choosing δ < 1 so that H(δ/ 2) = ϵ/ 2 makes this at most 2 exp (−Ω( ϵn )) under our assumption on κ.For the first term in (4), we use the next bound which follows from the convexity of exp. 
+
+Fact 1. For |ρ| < 1 − δ, we have 1 − ρ2 > exp( −λρ 2), where λ = − ln(2 δ − δ2)/(1 − δ)2.
+
+Therefore, 
+
+E
+
+ 1(1 − ρ2)m/ 2 · 1(|ρ| < 1 − δ)
+
+
+
+≤ E exp  λρ 2m/ 2 · 1(|ρ| < 1 − δ)
+
+≤ E exp  λρ 2m/ 2 .
+
+Claim 5. E exp  tρ 2n ≤ E exp  tZ 2 where t ≥ 0 and Z is a standard normal. 
+
+21 Proof. It suffices to show that the even moments of ρ√n are dominated by those of Z. Both ρ√n
+
+and Z have the form ( X1 + · · · + Xn)/√n, where the Xi are i.i.d. Rademacher and standard normal, respectively. As the Rademacher moments are dominated by the standard normal ones, the same must be true for ρ√n and Z.The squared normal moment generating function E exp  tZ 2 evaluates to 1 /√1 − 2t when 
+
+t < 1/2 (and is unbounded otherwise) so, by plugging in t = λα/ 2 = λm/ (2 n), 
+
+E
+
+ 1(1 − ρ2)m/ 2 · 1(|ρ| < 1 − δ)
+
+
+
+≤ E exp  λρ 2m/ 2 ≤ E exp  λαZ 2/2 = 1
+
+√1 − λα ,
+
+provided λ < 1/α . For small ϵ, by using standard bounds on the binary entropy function H, we have 
+
+λ = O(log( O(1 /δ ))) = O(log( O(1 /H −1(ϵ/ 2)))) = O(log(1 /ϵ )) ,
+
+as desired. 
+
+4.3 Putting It All Together 
+
+Proof of Theorem 2. Consider the algorithm BackdoorMatrix (1 n, 1m) given in Figure 3 where κ =
+
+O(2 −n/m ). By construction, for all i ∈ [m], 
+
+a⊤ 
+
+> i
+
+z = |bi| ≤ κ√n, 
+
+so we have 
+
+∥Az ∥∞ = max  
+
+> i∈[m]
+
+a⊤ 
+
+> i
+
+z ≤ κ√n ≤ O
+
+√n · 2−n/m 
+
+.
+
+By Claim 3, we have 
+
+D2
+
+ A||N (0 , 1) m×n = ln EA∼N (0 ,1) m×n
+
+N (A)2
+
+EA∼N (0 ,1) m×n [N (A)] 2
+
+!
+
+.
+
+By Corollary 1 and choosing the constant in κ = O(2 −n/m ) appropriately, we have 
+
+EA∼N (0 ,1) m×n
+
+N (A)2
+
+EA∼N (0 ,1) m×n [N (A)] 2 ≤ 1 + O
+
+ mn · log( n/m ) + e−Ω( m)
+
+.
+
+Therefore, by Lemma 1 and the inequality ln(1 + x) ≤ x,
+
+dTV 
+
+ A, N (0 , 1) m×n ≤ O
+
+p D2 (A||N (0 , 1) m×n)
+
+
+
+= O
+
+vuutln EA∼N (0 ,1) m×n [N (A)2]
+
+EA∼N (0 ,1) m×n [N (A)] 2
+
+!
+
+≤ O
+
+r 
+
+ln 
+
+
+
+1 + O
+
+ mn · log( n/m ) + e−Ω( m)
+
+ 
+
+≤ O
+
+r mn · log( n/m ) + e−Ω( m)
+
+
+
+,
+
+22 as desired. Finally, it is clear from inspection of BackdoorMatrix in Figure 3 that the marginal distribution on z is uniform over {± 1}n.
+
+Proof of Theorem 3. The proof is exactly like that of Theorem 2, with the only difference being the bound for the concentration in the number of solutions. For κ = nC 2−n/m for appropriately chosen constant C, by Corollary 2, we have 
+
+EA∼N (0 ,1) m×n
+
+N (A)2
+
+EA∼N (0 ,1) m×n [N (A)] 2 ≤ 1 + O
+
+ log nn
+
+
+
+.
+
+Therefore, by Lemma 1 and the inequality ln(1 + x) ≤ x,
+
+dTV 
+
+ A, N (0 , 1) m×n ≤ O
+
+p D2 (A||N (0 , 1) m×n)
+
+
+
+= O
+
+vuutln EA∼N (0 ,1) m×n [N (A)2]
+
+EA∼N (0 ,1) m×n [N (A)] 2
+
+!
+
+≤ O
+
+s
+
+ln 
+
+
+
+1 + O
+
+ log nn
+
+ !
+
+≤ O
+
+r log nn
+
+!
+
+,
+
+as desired. 
+
+4.4 Tightness 
+
+We show that the bounds in Theorem 2 and Theorem 3 are tight up to the log factors: The distance between the null and backdoored distributions is Ω( pm/n ), which is non-negligible. Moreover, the distinguisher that attains this advantage is efficient. 
+
+Theorem 4. Assuming κ2 ≤ 1/2,
+
+Pr  ∥A∥2 
+
+> F
+
+≤ mn − m/ 2 − Pr  ∥N (0 , 1) m×n∥2 
+
+> F
+
+≤ mn − m/ 2 = Ω( pm/n ).
+
+The random variable ∥N (0 , 1) m×n∥2 
+
+> F
+
+is of type χ2(mn ), namely chi squared with mn degrees of freedom. Conditioned on Ax = y, ∥A∥2 
+
+> F
+
+is of type χ2(m(n − 1)) + ∥y∥2/n . In particular, ∥A∥2 
+
+> F
+
+is dominated by a random variable of type χ2(mn − m) + κ2m.The reason is that an n-dimensional random normal vector a (representing a row of A), when conditioned on a linear constraint a⊤x = y, projects to a standard normal in the ( n − 1)-dimensional subspace orthogonal to x and has fixed length y/ ∥x∥ = y/ √n in the direction of x.Thus ∥A∥2 
+
+> F
+
+has mean at most mn − (1 − κ2)m, while ∥N (0 , 1) m×n∥2 
+
+> F
+
+has mean mn . The variance of both is (at most) 2 mn . Assuming they were sufficiently well-approximated by normals of the same mean and variance, their statistical distance would be on the order of (1 − κ2)m/ √2mn = Ω( pm/n )as desired. 23 To complete the proof we argue that the error introduced by the normal approximation does not affect this estimate. The Berry-Esseen theorem gives an error term on the order of 1 /√mn . This completes the proof under the additional assumption that m is at least some absolute constant. To handle all values of m including m = 1 we apply Cram´ er’s first-order correction to the normal approximation of the chi squared CDF [Ess45, Pin23]: Pr 
+
+ χ2(k) − k
+
+√2k ≤ z
+
+
+
+= Pr( N (0 , 1) ≤ z) + ψ(z)
+
+√k ± O(1 /k ), (5) where ψ(z) = e−z2/2 · (1 − z2)/3√π.
+
+Proof. The backdoored probability is at least Pr  ∥A∥2 
+
+> F
+
+≤ mn − m/ 2 ≥ Pr  χ2(mn − m) + κ2m ≤ mn − m/ 2 by domination 
+
+≥ Pr 
+
+ χ2(mn − m) − (mn − m)
+
+p2( mn − m) ≤ 0
+
+
+
+as κ2 ≤ 1/2= 12 + ψ(0) 
+
+pm(n − 1) − O(1 /mn ). by (5) while the null probability is at most Pr  ∥N (0 , 1) m×n∥2 
+
+> F
+
+≤ mn − m/ 2 = Pr 
+
+ χ2(mn ) − mn 
+
+√2mn ≤ − 
+
+pm/n 
+
+3√2
+
+
+
+≤ Pr 
+
+
+
+N (0 , 1) ≤ − 
+
+pm/n 
+
+3√2
+
+
+
++ ψ(0) 
+
+√mn + O(1 /mn ) by (5) = 12 − Ω( pm/n ) + ψ(0) 
+
+√mn + O(1 /mn )as ψ is maximized at zero. Thus the difference in probabilities is at least Ω( pm/n ) − ψ(0) 
+
+ 1
+
+pm(n − 1) − 1
+
+√mn 
+
+
+
+− O(1 /mn ) = Ω( pm/n ) − O(1 /mn + 1 /m 1/2n3/2).
+
+The leading term Ω( pm/n ) dominates for all values of m.
+
+# 5 Constructing Backdoors for Neural Networks 
+
+5.1 Defining Backdoors 
+
+Imagine that there is some learning procedure ModelGen () that generates some model F (e.g., a neural network trained via stochastic gradient descent). To define the notion of an undetectable backdoor, we want the following properties to hold simultaneously: 
+
+• There is a way to generate a “backdoored” version of the model F , which gives anyone with 
+
+F ’s backdoor significant additional power over anyone without the backdoor. 
+
+• The “backdoored” model looks statistically close to an honest execution of ModelGen (), in the sense that there is provably no distinguisher that works with high probability. 24 While the latter item is direct to formally define, the former requirement is vague. One possible way to specify such a requirement is via collision generation: it is hard to find collisions in an honest model F , but given a backdoor for F , one can easily compute collisions. By collisions, we mean distinct input vectors x1, x2 ∈ Zn such that F (x1) ≈ F (x2). Our formal definition is below. 
+
+Definition 6. A statistically undetectable backdoor with parameters B, δ0, and δ1 consists of p.p.t. algorithms (ModelGen , BackdoorGen , Activate) with the following syntax: 
+
+• ModelGen(1 n, 1m). This algorithm is randomized and outputs some model F .
+
+• BackdoorGen (1 n, 1m). This algorithm is randomized and outputs the tuple 
+
+ bF , bk 
+
+
+
+, where bF
+
+is a backdoored model and bk is the corresponding backdoor key. 
+
+• Activate( bk , x ∈ Zn). This algorithm is deterministic and outputs a vector x′ ∈ Zn.Moreover, we require the following three properties: 1. (White-Box) Statistical Undetectability : For F ← ModelGen (1 n, 1m) and 
+
+ bF , bk 
+
+
+
+←
+
+BackdoorGen(1 n, 1m),
+
+dTV 
+
+
+
+F, bF
+
+
+
+= o(1) .
+
+We emphasize that this total variation distance bound refers to the white-box descriptions of the models F , bF .2. Backdoor Collision Generation : For all x ∈ Zn, it holds that 
+
+Pr ( bF , bk )←BackdoorGen(1 n,1m)
+
+x′ ← Activate ( bk , x) : x′ ∈ Zn, ∥x′∥∞ ≤ ∥ x∥∞ + 1 ,
+
+x̸ = x′, bF (x′) − bF (x) 2 ≤ δ0
+
+!
+
+= 1 .
+
+3. Approximate Collision Resistance : For all p.p.t. algorithms A,
+
+Pr ( bF , bk )←BackdoorGen(1 n,1m)
+
+(x1, x2) ← A 
+
+ bF
+
+
+
+: x1, x2 ∈ [−B : B]n,
+
+x1̸ = x2, bF (x2) − bF (x1) 2 ≤ δ1
+
+!
+
+= negl( n),
+
+where the probability is also taken over the internal randomness of A. We emphasize that A
+
+has white-box access to the model bF (e.g., its weights). We define the strength of the backdoor be the quantity δ1/δ 0, and we consider the backdoor meaningful only if δ1/δ 0 > 1.
+
+This definition gives those with the backdoor additional power over others in two ways: 
+
+• Item 2 allows anyone with the backdoor to generate collisions for all inputs x, while Item 3 stipulates hardness of finding even one collision. 
+
+• For δ0 < δ 1 (as it is in our constructions), the backdoor generates collisions that are stronger than the impossibility bound for those without the backdoor. The larger the ratio δ1/δ 0 is, the stronger this backdoor is, quantitatively. We call δ1/δ 0 the strength of the backdoor for this reason. 25 While the condition in Item 2 that ∥x′∥∞ ≤ ∥ x∥∞ + 1 is somewhat arbitrary, the point is that the size of x′ is similar to that of x. One could formalize such a requirement in a few different ways, but we choose this one because it is the simplest to state for our construction. 
+
+Remark 1. In Definition 6, instead of imposing that bF (x′) − bF (x) 2 and bF (x2) − bF (x1) 2 be small in an absolute sense, one could instead impose a relative notion, where 
+
+bF (x′) − bF (x) 2
+
+∥x′ − x∥2
+
+and 
+
+bF (x2) − bF (x1) 2
+
+∥x2 − x1∥2
+
+are small. This would change the corresponding notion of strength by at most a factor of O(B√n),which is a lower order term for most settings of our parameters. 
+
+5.2 Neural Network Preliminaries 
+
+Let A ∈ Rm2×m1 . We let σmax (A) denote the maximum singular value of A, and we let σmin (A)denote the minimum singular value of A. More explicitly, 
+
+σmax (A) = sup  
+
+> x∈Rm1\{ 0}
+
+∥Ax ∥2
+
+∥x∥2
+
+,σmin (A) = inf  
+
+> x∈Rm1\{ 0}
+
+∥Ax ∥2
+
+∥x∥2
+
+.
+
+Note that if m1 > m 2, then σmin (A) = 0, as A has a nontrivial kernel. Whenever σmin (A) > 0, we can let cond( A) denote the condition number of A, defined as cond( A) = σmax (A)
+
+σmin (A) ≥ 1. (6) 
+
+Definition 7 (Bi-Lipschitz Functions) . For m1, m 2 ∈ N and 0 ≤ α ≤ β, we say a function 
+
+f : Rm1 → Rm2 is (α, β )-bilipschitz if for all x, y ∈ Rm1 ,
+
+α∥x − y∥2 ≤ ∥ f (x) − f (y)∥2 ≤ β∥x − y∥2.
+
+Moreover, for ξ ≥ 1, we say f has distortion at most ξ if there exist β ≥ α ≥ 0 such that f is 
+
+(α, β )-bilipschitz and ξ = β/α .
+
+Fact 2. Suppose f1 : Rm1 → Rm2 and f2 : Rm2 → Rm3 are (α1, β 1)-bilipschitz and (α2, β 2)-bilipschitz, respectively. Then f2 ◦ f1 : Rm1 → Rm3 is (α1α2, β 1β2)-bilipschitz. 
+
+Fact 3. For a matrix A ∈ Rm2×m1 , the linear map given by A, mapping Rm1 to Rm2 , is 
+
+(σmin (A), σ max (A)) -bilipschitz. 
+
+Definition 8. For α ∈ (0 , 1) , the leaky rectified linear unit (leaky ReLU) with parameter α is the function LeakyReLU α : R → R defined by 
+
+LeakyReLU α(x) = 
+
+(
+
+x x > 0,αx x ≤ 0.
+
+To slightly abuse notation, it naturally generalizes to a function LeakyReLU α : Rm → Rm where (the scalar version of ) LeakyReLU α is applied coordinate-wise. 
+
+26 Fact 4. For all α ∈ (0 , 1) and for all m ∈ N, LeakyReLU α : Rm → Rm is (α, 1) -bilipschitz. 
+
+For depth d ∈ N, a feedforward neural network is defined in terms of weight matrices A(0) , · · · , A(d−1) ,bias vectors b(0) , · · · , b(d−1) , and an activation function σ : R → R. The mapping takes in a vector 
+
+x = x(0) , iteratively evaluates 
+
+x(i+1) := σ
+
+
+
+A(i)x(i) + b(i)
+
+,
+
+and outputs x(d), where σ is applied pointwise. The matrices A(i) can be rectangular (instead of square) with the constraint that the input vector x, bias vectors b(i), and weight matrices A(i) all have dimensions that syntactically align. 
+
+Lemma 4. For α ∈ (0 , 1) , a feedforward neural network of depth d with weight matrices A(0) , · · · , A(d−1) ,bias vectors b(0) , · · · , b(d−1) , and activation function LeakyReLU α is (α′, β ′)-bilipschitz, where 
+
+α′ = αdd−1Y
+
+> i=0
+
+σmin 
+
+
+
+A(i)
+
+,β′ =
+
+> d−1
+
+Y
+
+> i=0
+
+σmax 
+
+
+
+A(i)
+
+.
+
+Moreover, if one skips the first layer matrix A(0) and directly applies the activation function to the input vector x (and then A(1) and so on), the resulting function is (α′, β ′)-bilipschitz, where 
+
+α′ = αdd−1Y
+
+> i=1
+
+σmin 
+
+
+
+A(i)
+
+,β′ =
+
+> d−1
+
+Y
+
+> i=1
+
+σmax 
+
+
+
+A(i)
+
+.
+
+Proof. This follows by directly combining Fact 3, Fact 4, and Fact 2 and layer-by-layer induction, as addition by any bias vector b(i) is a (1 , 1)-bilipschitz operation. 
+
+5.3 Construction 
+
+The most general template for our backdoor construction will be as follows. Let A ∼ N (0 , 1) m×n,and let T be any (randomized) training operator that takes in A ∈ Rm×n and outputs an ( α, β )-bilipschitz function g ← T (A). We will construct backdoors for the model class given by 
+
+F (x) := g(Ax ).
+
+The backdoor construction is direct: generate 
+
+ bA, z
+
+
+
+← BackdoorMatrix (1 n, 1m), and to activate any x, output x′ = x + z. By linearity, Ax ′ = A(x + z) = Ax + Az ≈ Ax , and by lipschitzness of g,
+
+F (x′) = g(Ax ′) ≈ g(Ax ) = F (x).
+
+Conversely, if a p.p.t. algorithm computes x1̸ = x2 ∈ [−B : B]n such that F (x1) ≈ F (x2), then by bilipschitzness of g, it follows that Ax 1 ≈ Ax 2, and therefore A(x1 − x2) ≈ 0, violating Assumption 2. We give the formal statement in Theorem 5. 27 Generic Backdoor Construction 
+
+• ModelGen(1 n, 1m): Sample A ∼ N (0 , 1) m×n, sample g ← T (A), define the model 
+
+F (x) = g(Ax ),
+
+and output the description of the model F .
+
+• BackdoorGen (1 n, 1m): Sample 
+
+ bA, z
+
+
+
+← BackdoorMatrix (1 n, 1m), sample bg ← T 
+
+ bA
+
+
+
+,define the model bF (x) = bg
+
+ bAx 
+
+
+
+,
+
+and output 
+
+ bF , bk = z
+
+
+
+.
+
+• Activate( bk , x): Parsing z = bk , output x + z.Figure 4: The generic construction of backdoors for linear models with bilipschitz postprocessing, as used in Theorems 5 and 6. 
+
+Theorem 5. For all m = nΩ(1) and m = o(n), consider ModelGen (1 n, 1m) to output models of the form 
+
+F (x) = g(Ax ),
+
+where A ∼ N (0 , 1) m×n and g ← T (A), where T is a p.p.t. training operator supported only on 
+
+(α, β )-bilipschitz functions. Then, for all B ≤ poly (n), under Assumption 2, Figure 4 gives a statistically undetectable backdoor for ModelGen with parameters B and 
+
+δ0 = O
+
+ β√m
+
+2n/m 
+
+
+
+, δ1 = Ω 
+
+ αmε√n
+
+
+
+,
+
+for all ε > 0. In particular, the strength of the backdoor is 
+
+δ1
+
+δ0
+
+= Ω α · 2n/m 
+
+β√n · m1/2+ ε
+
+!
+
+.
+
+We also state a version where m = 1. 
+
+Theorem 6. For m = 1 , consider ModelGen(1 n) to output models of the form 
+
+F (x) = g
+
+
+
+a⊤x
+
+
+
+,
+
+where a ∼ N (0 , 1) n and g ← T (A), where T is a p.p.t. training operator supported only on (α, β )-bilipschitz functions. Then, there exists a universal constant C > 0 such that for all B ≤ poly (n)
+
+and ε > 0, under Assumption 1, Figure 4 gives a statistically undetectable backdoor for ModelGen 
+
+with parameters B and 
+
+δ0 = O
+
+ β · nC
+
+2n
+
+
+
+, δ1 = α
+
+2O(log 3+ ε(n)) .
+
+28 In particular, the strength of the backdoor is 
+
+δ1
+
+δ0
+
+= α · 2n
+
+β · 2O(log 3+ ε n) ,
+
+for all ε > 0.Proof of Theorem 5. The construction is given in Figure 4. We prove each of the properties in turn. To see statistical indistinguishability, note that 
+
+dTV 
+
+ bA, N (0 , 1) m×n
+
+= o(1) by Theorem 2. Since ModelGen and BackdoorGen are random processes that differ only in how the matrices are sampled, the data processing inequality implies 
+
+dTV 
+
+
+
+F, bF
+
+
+
+= o(1) ,
+
+as desired. To see backdoor collision generation, recall that 
+
+bAz ∞ ≤ O
+
+ n
+
+2n/m 
+
+
+
+by Theorem 2. Clearly x′ = Activate (bk , x) = x + z ∈ Zn, x′̸ = x, and ∥x′∥∞ ≤ ∥ x∥∞ + 1, so it suffices to show that bF (x′) − bF (x) 2 ≤ δ0.
+
+We have 
+
+bF (x′) − bF (x) 2 = bg
+
+ bAx ′
+
+− bg
+
+ bAx 
+
+ 
+
+> 2
+
+= bg
+
+ bAx + bAz 
+
+
+
+− bg
+
+ bAx 
+
+
+
+> 2
+
+≤ β · bAz 2
+
+≤ β√m · bAz ∞
+
+≤ O
+
+ β√m
+
+2n/m 
+
+
+
+.
+
+Therefore, we can set δ0 = O(β√m · 2−n/m ). Finally, to see approximate collision resistance, suppose for contradiction that there exists a p.p.t. algorithm A and a constant C > 0 such that Pr ( bF , bk )←BackdoorGen(1 n,1m)
+
+(x1, x2) ← A 
+
+ bF
+
+
+
+: x1, x2 ∈ [−B : B]n,
+
+x1̸ = x2, bF (x2) − bF (x1) 2 ≤ δ1
+
+!
+
+≥ 1
+
+nC ,
+
+for infinitely many values of n. Consider an algorithm A′ (using A) defined as follows: On input a matrix A ∈ Rm×n, sample g ← T (A), define F (x) = g(Ax ), and receive ( x1, x2) ← A (F ). The 29 algorithm A′ then outputs x1 − x2 ∈ [−2B : 2 B]n \ { 0n}. The claim is that the p.p.t. algorithm A′
+
+violates Assumption 2. To see this, note that 
+
+bF (x2) − bF (x1) 2 ≤ δ1 ⇐⇒ bg
+
+ bAx 2
+
+
+
+− bg
+
+ bAx 1
+
+ 
+
+> 2
+
+≤ δ1
+
+=⇒ bAx 2 − bAx 1 2 ≤ δ1
+
+α
+
+=⇒ bAx 2 − bAx 1 ∞ ≤ δ1
+
+α
+
+Therefore, we have the following: Pr ( bA,z)←BackdoorMatrix(1 n,1m)
+
+x ← A ′  bA
+
+
+
+: x ∈ [−2B : 2 B]n \ { 0},
+
+bAx ∞ ≤ δ1/α 
+
+!
+
+≥ 1
+
+nC ,
+
+for infinitely many values of n. Let E = E(A) denote the above event (as a function of matrix A), so that Pr ( bA,·)←BackdoorMatrix(1 n,1m)
+
+
+
+E
+
+ bA
+
+ 
+
+≥ 1
+
+nC
+
+infinitely often. By Lemma 3 and R´ enyi closeness of bA and A ∼ N (0 , 1) m×n (as guaranteed by Theorem 2) we have Pr   
+
+> A∼N (0 ,1) m×n
+
+(E (A)) ≥
+
+Pr ( bA,·)←BackdoorMatrix(1 n,1m)
+
+
+
+E
+
+ bA
+
+ 2
+
+eD2( bA|| A)
+
+≥ 1/n 2C
+
+eo(1) = Ω 
+
+ 1
+
+n2C
+
+
+
+infinitely often. That is, Pr  
+
+> A∼N (0 ,1) m×n
+
+
+
+x ← A ′ (A) : x ∈ [−2B : 2 B]n \ { 0},
+
+∥Ax ∥∞ ≤ δ1/α 
+
+
+
+= Pr   
+
+> A∼N (0 ,1) m×n
+
+(E (A)) = Ω 
+
+ 1
+
+n2C
+
+
+
+,
+
+for infinitely many values of n. By the parameters of Assumption 2, we can set δ1 = α/ (mε√n) for any ε > 0 to arrive at the contradiction. 
+
+Proof of Theorem 6. The proof is exactly that of Theorem 5, with the difference being that we apply Theorem 3 instead of Theorem 2 and Assumption 1 instead of Assumption 2. This changes the bound of δ0 to δ0 = O(β · 2−n · nC ), and similarly, δ1 = α/ 2Θ(log 3+ ε(n)) .
+
+5.4 Backdoors in Deep Neural Networks 
+
+Here, we combine Sections 5.2 and 5.3 to show how to insert backdoors in certain architectures of deep feedforward neural networks. 
+
+• The first linear layer needs to be a random compressing Gaussian matrix A ∼ N (0 , 1) m×n
+
+(where n ≫ m). This is a common paradigm in random feature learning [RR07]. 
+
+• The activation function needs to be bilipschitz. 30 • The linear maps in the second layer and onward need to be well-conditioned, in the sense that cond( A) = σmax (A)
+
+σmin (A) ≈ 1,
+
+with flexibility on the distance from 1. Note that such linear maps can either be dimension-preserving or expanding. More precisely, let NN n,d,m,α,γ denote the following class of depth-d feedforward neural networks: 
+
+• The first linear layer A(0) ∼ N (0 , 1) m×n is a random m × n Gaussian matrix that is unchanged throughout training, where m and n are parameters. 
+
+• The linear maps A(1) , A(2) , · · · , A(d−1) are arbitrary but well-conditioned, in the sense that for all i ∈ { 1, 2, · · · , d − 1},cond 
+
+
+
+A(i)
+
+≤ γ
+
+where γ ≥ 1 is a parameter. In particular, A(1) , · · · , A(d−1) can all be updated throughout training, as long as they end up not being too ill-conditioned. 
+
+• All activation functions σ : R → R are LeakyReLU α, where α ∈ (0 , 1) is a parameter. 
+
+Theorem 7. For m = nΩ(1) and m = o(n), and for any parameters d ∈ N, α ∈ (0 , 1) , γ ≥ 1
+
+let ModelGen (1 n, 1m) output neural networks that are in NN n,d,m,α,γ . For all B ≤ poly (n), under Assumption 2, there exists a statistically undetectable backdoor for ModelGen with strength 
+
+δ1
+
+δ0
+
+= Ω αd · 2n/m 
+
+√n · m1/2+ ε · γd−1
+
+!
+
+,
+
+for all ε > 0.Proof of Theorem 7. We directly apply Theorem 5, where T neural networks as described in NN 
+
+except skipping the first layer A(0) . By Lemma 4, we know that T is supported on ( α′, β ′)-bilipschitz functions, where 
+
+α′ = αdd−1Y
+
+> i=1
+
+σmin 
+
+
+
+A(i)
+
+,β′ =
+
+> d−1
+
+Y
+
+> i=1
+
+σmax 
+
+
+
+A(i)
+
+.
+
+Plugging this into Theorem 5, the strength of the backdoor is 
+
+δ1
+
+δ0
+
+= Ω α′ · 2n/m 
+
+β′√n · m1/2+ ε
+
+!
+
+= Ω αd · 2n/m Qd−1 
+
+> i=1
+
+σmin 
+
+ A(i)
+
+√n · m1/2+ ε Qd−1 
+
+> i=1
+
+σmax 
+
+ A(i)!
+
+= Ω αd · 2n/m 
+
+√n · m1/2+ ε Qd−1 
+
+> i=1
+
+cond  A(i)!
+
+= Ω αd · 2n/m 
+
+√n · m1/2+ ε · γd−1
+
+!
+
+,
+
+for all ε > 0, as desired. 31 We now instantiate Theorem 7 with slightly more concrete parameter choices. The reason for setting α ≥ 1/100 for the LeakyReLU is that α = 1 /100 is a commonly used default value, e.g., in PyTorch [PGM +19]. 
+
+Corollary 3. For m = n1/2, d = n1/4, any α ∈ [1 /100 , 1) , and any γ ∈
+
+h
+
+1, 2n1/5 i
+
+, under Assumption 2, for all B ≤ poly (n), there exists a statistically undetectable backdoor for NN n,d,m,α,γ 
+
+with strength δ1
+
+δ0
+
+= 2 Ω( m).
+
+Proof. We directly plug these parameters into Theorem 7 (and ε = 1 /2) to get strength 
+
+δ1
+
+δ0
+
+= Ω αd · 2n/m 
+
+√n · m1/2+ ε · γd−1
+
+!
+
+= Ω 2√n
+
+100 n1/4 · n1/2 · (2 n1/5 )n1/4−1
+
+!
+
+= Ω 2√n
+
+2O(n9/20 )
+
+!
+
+= 2 Ω( √n).
+
+# 6 Basic Implementation and Experiments 
+
+6.1 Proof of Concept Implementation 
+
+We run a lightweight, proof of concept demonstration of our backdoor. To do so, we train a DNN (subject to Constraints 1, 2, and 3) to perform well on a simple yet nontrivial learning task. Additionally, we implement our backdoor strategy for this DNN to see the backdoor in action. While the emphasis of this work is on the theoretical contribution, the purpose of this implementation is to show that our DNN constraints are sensible and that our backdoors are practical and simple. We emphasize that these initial experiments are not meant to be an end-to-end robust demonstration of backdoors but rather a simple proof of concept towards the viability of our approach. 6
+
+Specifically, we consider the task of generating a semantic embedding model for the Fashion-MNIST dataset [ XRV17 ]. In short, this dataset consists of 70000 28 × 28 grayscale images (split into 60000 training images and 10000 test images), each labeled with one of ten possible types of articles of clothing. It is considered a more challenging and complex variant of the standard MNIST dataset of handwritten digits [LeC98]. We briefly explain our motivation for considering such models. We focus on image models because the backdoor vector z ∈ {± 1}n can be directly interpreted as a prescription of how to change pixel values to go from the original image to the backdoored image. Moreover, images in this dataset are represented with 8 bits, so inputs are naturally discrete with bounded integer entries. We use DNNs for embeddings instead of for other tasks (e.g., classification) because all linear layers after 
+
+> 6A toy implementation is available here.
+
+32 Input :784-pixel image 
+
+256 neurons 
+
+512 neurons 
+
+1024 neurons 
+
+Output :2048-dim. embedding 
+
+Figure 5: Basic architecture of the DNN for our Fashion-MNIST embedding model. The only compressing layer is the first layer, as later compressing layers are not allowed due to Constraint 2. the first layer need to be expanding or square to satisfy Constraint 2. For example, in classification, the final layer would be 10-dimensional, likely requiring an intermediate layer to be compressing. This intermediate layer would have a non-trivial kernel and thus would not be bi-Lipschitz. One technicality is that adding and subtracting 1 from pixels that are either purely black or purely white do not technically conform to the original image file format (e.g., could be −1 or 256 instead of between 0 and 255). Moreover, we add a scaled-up version of z to the image (instead of just z) for a larger effect on the input. To handle these edge cases, we scale the pixel values of the input images after training (including those in Figure 1) to be “more gray” so that adding the scaled-up z does not take the image out of bounds. The basic architecture of our model is shown in Figure 5. The first layer is a frozen 256 × 784 matrix that is either i.i.d. Gaussian (in the honest case) or from Figure 2 (in the backdoored case). We use the LeakyReLU α activation function with the default PyTorch setting of α = 0 .01 [PGM +19 ]. To ensure compliance with Constraint 2, we include a semi-orthogonal loss term to ensure that the linear layers (except for the first) have small condition numbers. For a rectangular weight matrix A, this penalty term takes the form A⊤A − I F (where ∥·∥ F is the Frobenius norm), to ensure that the columns of A are close to orthonormal. Our embedding model enables a linear classifier (applied after the DNN embedding) to have 
+
+≈ 89% accuracy on the test set. On the other hand, purely linear models achieve at most ≈ 84% accuracy [ XRV17 ]. When we scale the inputs to ensure that backdoored images do not go out of bounds, the classification accuracy of our DNN drops to ≈ 86 .5% under the distribution shift. See Figure 1 for a visual demonstration of our backdoor. Depending on concrete parameter choices regarding statistical undetectability, we can make the distances in embedding space between the colliding pairs orders of magnitude smaller than other inputs in the same class. We leave the precise estimate of total variation distance for concrete parameter choices as a direction for future work. 
+
+6.2 Computational Hardness of Collision Finding 
+
+We tested the intractability of our backdoors for a single layer network against four natural algorithms. While our experiments are preliminary, they indicate that the strength of our backdoor is extraordinarily large. In our experiments, we sampled a matrix “backdoored” by the all-ones string z = (+1) n and ran the four algorithms below to look for competitive solutions in {− 1, 0, +1 }n. As all algorithms are invariant under column signing, the (+1) n planted solution is sufficient for our experiments. The restriction of the solution entries to {− 1, 0, 1} in lieu of the full range {− B, . . . , B } is restrictive. Previous work [ BRVV25 ] indicates that the extended range can increase the strength by 33 at most a factor of B. We thus expect our conclusions to extend to reasonable values of B (e.g., 128). To establish a lower bound on what value of κ we need for computational hardness, we look at the LLL algorithm for finding short vectors in lattices [ LLL82 ]. When κ is extremely small, the planted solution stands out as the nonzero integer vector x that minimizes the objective 
+
+∥x∥2 + (1 /κ 2n)∥Ax ∥2. As long as there are no competing solutions within a factor of 2 (n−1) /2, LLL is bound to recover this solution. Thus LLL prevents too small a choice of κ. Our experiments (with values of n up to 50) indicate then when n = (10 /3) m, LLL fails to identify the planted solution as long as κ ≥ 10 −m/ 3. Beyond n = 50, we expect the rounding errors arising from finite-precision arithmetic to present an insurmountable obstacle to LLL for any κ.Table 1: A comparison of ∥Az ∥, where A ∈ Rm×n. In the “planted” column, z is the planted solution, and in columns A, B, and C, z are the best solutions outputted by the respective algorithms. 
+
+n m planted A B C100 10 1.6 · 10 −10 0.14 0.03 0.09 100 20 2.6 · 10 −10 0.31 0.09 0.16 100 30 3.3 · 10 −10 0.36 0.13 0.22 All of the other algorithms we tested are analytic in nature and should not be substantially affected by the choice of κ. Table 1 compares how well algorithms A, B, and C perform compare to the planted z in terms of minimizing ∥Az ∥. The algorithms are as follows: 
+
+• Algorithm A picks the unit vector that indexes the column of A of minimum 2-norm. 
+
+• Algorithm B is Algorithm Cool of [ BRVV25 ] (with B = 1), reporting the best of 100 runs randomized by the order of the sequence. 
+
+• Algorithm C is Algorithm KernelRound of [ BRVV25 ], reporting the best of 100 runs. (As 
+
+B = 1, the rounding is simplified to the sign of x.) In all instances, the experiments indicate backdoor strength roughly 1 /κ ≈ 10 9. On the other hand, the D’Agostino-Pearson normality test ( scipy.stats.normaltest ) gives strong evidence of normality of the samples: All rows of a 100 by 30 backdoored matrix have p-values exceeding 0 .1. 
+
+# 7 Concluding Remarks 
+
+Our theoretical and preliminary empirical analysis demonstrate that neural networks whose first layer is a compressing matrix of random Gaussian weights can be strongly backdoored for invariance-based examples on discrete inputs. Theorem 7 guarantees that backdoors of strength roughly 2 n/m /β upper 
+
+can be planted without affecting any properties of the model. Our experiments indicate that this theoretical guarantee is, if anything, conservative. Backdoors of effectively unlimited strength appear difficult to break. Can the analysis be strengthened to explain these findings? Our Theorem 7 is in fact fairly tight. The reason that our experiments appear to exceed its predictions is that when κ is very small, the null and planted models MA and 
+
+MB can no longer be statistically indistinguishable. It is, however, quite plausible that they remain 
+
+computationally so: The only tests that can tell them apart are inefficient. That is, for all practical 34 purposes, their differences are undetectable. We leave this intriguing possibility open for future investigation. There are many other fascinating questions for future work. For example, are there other or stronger forms of control that the adversary can have on the model, instead of access to an x′ that collides with any x? More broadly, can we make use of different or new cryptographic assumptions to enable backdoors in DNNs or other architectures? 
+
+# Acknowledgments 
+
+We are particularly grateful to Vinod Vaikuntanathan for enlightening discussions. We thank Sam Gunn and Miranda Christ for informing us that one can generate stronger adversarial examples in the CLWE-based construction of [ GKVZ22 ] than what the backdoor directly provides. We are additionally grateful for useful discussions with Justin Y. Chen, Yevgeniy Dodis, Sanjam Garg, Shafi Goldwasser, Keyon Vafa, and Brent Waters. The first author is supported by an NSERC Discovery Grant. The second author is supported by the European Research Council (ERC) under the EU’s Horizon 2020 research and innovation programme (Grant agreement No. 101019547) and the Cariplo CRYPTONOMEX grant. The third author is supported in part by DARPA under Agreement Number HR00112020023, NSF CNS-2154149, NSF DGE-2141064, and a Simons Investigator award. Part of this work was done while the third author was visiting Bocconi University, supported by European Research Council (ERC) under the EU’s Horizon 2020 research and innovation programme (Grant agreement No. 101019547). This work is supported in part by a gift from the Renaissance Philanthropy Fund. 35 References 
+
+[Ajt96] M. Ajtai. Generating hard instances of lattice problems (extended abstract). In 
+
+Proceedings of the Twenty-eighth Annual ACM Symposium on Theory of Computing ,STOC ’96, pages 99–108, New York, NY, USA, 1996. ACM. 11 [ALS21] Emmanuel Abbe, Shuangping Li, and Allan Sly. Proof of the contiguity conjecture and lognormal limit for the symmetric perceptron, 2021. 11, 15 [APZ19] Benjamin Aubin, Will Perkins, and Lenka Zdeborov´ a. Storage capacity in sym-metric binary perceptrons. Journal of Physics A: Mathematical and Theoretical ,52(29):294003, June 2019. 11, 15 [Ban10] Nikhil Bansal. Constructive algorithms for discrepancy minimization. In 51th Annual IEEE Symposium on Foundations of Computer Science, FOCS 2010, October 23-26, 2010, Las Vegas, Nevada, USA , pages 3–10. IEEE Computer Society, 2010. 15 [BCW18] Nitin Bansal, Xiaohan Chen, and Zhangyang Wang. Can we gain more from orthogo-nality regularizations in training deep networks? In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman, Nicol` o Cesa-Bianchi, and Roman Garnett, editors, 
+
+Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems 2018, NeurIPS 2018, December 3-8, 2018, Montr´ eal, Canada , pages 4266–4276, 2018. 4 [BGI +12] Boaz Barak, Oded Goldreich, Russell Impagliazzo, Steven Rudich, Amit Sahai, Salil P. Vadhan, and Ke Yang. On the (im)possibility of obfuscating programs. J. ACM ,59(2):6:1–6:48, 2012. 8 [BRST21] Joan Bruna, Oded Regev, Min Jae Song, and Yi Tang. Continuous LWE. In Samir Khuller and Virginia Vassilevska Williams, editors, STOC ’21: 53rd Annual ACM SIGACT Symposium on Theory of Computing, Virtual Event, Italy, June 21-25, 2021 ,pages 694–707. ACM, 2021. 9 [BRVV25] Andrej Bogdanov, Alon Rosen, Neekon Vafa, and Vinod Vaikuntanathan. Adaptive robustness of hypergrid johnson-lindenstrauss. CoRR , abs/2504.09331, 2025. 7, 9, 15, 33, 34 [BS20] Nikhil Bansal and Joel H. Spencer. On-line balancing of random inputs. Random Struct. Algorithms , 57(4):879–891, 2020. 15 [CBG +17] Moustapha Ciss´ e, Piotr Bojanowski, Edouard Grave, Yann N. Dauphin, and Nicolas Usunier. Parseval networks: Improving robustness to adversarial examples. In Doina Precup and Yee Whye Teh, editors, Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017 ,volume 70 of Proceedings of Machine Learning Research , pages 854–863. PMLR, 2017. 4[CLL +17] Xinyun Chen, Chang Liu, Bo Li, Kimberly Lu, and Dawn Song. Targeted backdoor attacks on deep learning systems using data poisoning. CoRR , abs/1712.05526, 2017. 836 [CPP +26] Sarthak Choudhary, Atharv Singh Patlan, Nils Palumbo, Ashish Hooda, Kassem Fawaz, and Somesh Jha. Undetectable backdoors in model parameters: Hiding sparse secrets in high dimensions. CoRR , abs/2605.04209, 2026. 8 [DF89] M. E. Dyer and A. M. Frieze. Probabilistic analysis of the multidimensional knapsack problem. Math. Oper. Res. , 14(1):162–176, February 1989. 19 [DGB +24] Stanislas Ducotterd, Alexis Goujon, Pakshal Bohra, Dimitris Perdios, Sebastian Neumayer, and Michael Unser. Improving lipschitz-constrained neural networks by learning activation functions. J. Mach. Learn. Res. , 25:65:1–65:30, 2024. 4 [DGMdW24] Andis Draguns, Andrew Gritsevskiy, Sumeet Ramesh Motwani, and Christian Schr¨ oder de Witt. Unelicitable backdoors via cryptographic transformer circuits. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 37: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , 2024. 8 [ERGS26] Marte Eggen, Eirik Reiestad, Kristian Gjøsteen, and Inga Str¨ umke. Backdoor channels hidden in latent space: Cryptographic undetectability in modern neural networks. 
+
+CoRR , abs/2605.13214, 2026. 8 [Ess45] Carl-Gustav Esseen. Fourier analysis of distribution functions. A mathematical study of the Laplace-Gaussian law. Acta Mathematica , 77:1–125, 1945. 24 [GDG17] Tianyu Gu, Brendan Dolan-Gavitt, and Siddharth Garg. Badnets: Identifying vulnerabilities in the machine learning model supply chain. CoRR , abs/1708.06733, 2017. 8 [GKVZ22] Shafi Goldwasser, Michael P. Kim, Vinod Vaikuntanathan, and Or Zamir. Planting undetectable backdoors in machine learning models : [extended abstract]. In 63rd IEEE Annual Symposium on Foundations of Computer Science, FOCS 2022, Denver, CO, USA, October 31 - November 3, 2022 , pages 931–942. IEEE, 2022. 8, 35 [GMR89] Shafi Goldwasser, Silvio Micali, and Charles Rackoff. The knowledge complexity of interactive proof systems. SIAM J. Comput. , 18(1):186–208, 1989. 7 [GPV08] Craig Gentry, Chris Peikert, and Vinod Vaikuntanathan. Trapdoors for hard lattices and new cryptographic constructions. In Proceedings of the Fortieth Annual ACM Symposium on Theory of Computing , STOC ’08, page 197–206, New York, NY, USA, 2008. Association for Computing Machinery. 11 [HCK22] Sanghyun Hong, Nicholas Carlini, and Alexey Kurakin. Handcrafted backdoors in deep neural networks. In Sanmi Koyejo, S. Mohamed, A. Agarwal, Danielle Belgrave, K. Cho, and A. Oh, editors, Advances in Neural Information Processing Systems 35: Annual Conference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 - December 9, 2022 , 2022. 8 37 [HLL +18] Lei Huang, Xianglong Liu, Bo Lang, Adams Wei Yu, Yongliang Wang, and Bo Li. Orthogonal weight normalization: Solution to optimization over multiple dependent stiefel manifolds in deep neural networks. In Sheila A. McIlraith and Kilian Q. Weinberger, editors, Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence, (AAAI-18), the 30th innovative Applications of Artificial Intelligence (IAAI-18), and the 8th AAAI Symposium on Educational Advances in Artificial Intelligence (EAAI-18), New Orleans, Louisiana, USA, February 2-7, 2018 , pages 3271–3278. AAAI Press, 2018. 4 [IM98] Piotr Indyk and Rajeev Motwani. Approximate nearest neighbors: Towards removing the curse of dimensionality. In Jeffrey Scott Vitter, editor, Proceedings of the Thirtieth Annual ACM Symposium on the Theory of Computing, Dallas, Texas, USA, May 23-26, 1998 , pages 604–613. ACM, 1998. 4 [JBZB19] J¨ orn-Henrik Jacobsen, Jens Behrmann, Richard S. Zemel, and Matthias Bethge. Excessive invariance causes adversarial vulnerability. In 7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019 .OpenReview.net, 2019. 3 [JL84] William B Johnson and Joram Lindenstrauss. Extensions of lipschitz mappings into a hilbert space. Contemporary Mathematics , 26:189–206, 1984. 4, 7 [JLS21] Aayush Jain, Huijia Lin, and Amit Sahai. Indistinguishability obfuscation from well-founded assumptions. In Samir Khuller and Virginia Vassilevska Williams, editors, 
+
+STOC ’21: 53rd Annual ACM SIGACT Symposium on Theory of Computing, Virtual Event, Italy, June 21-25, 2021 , pages 60–73. ACM, 2021. 8 [JLS22] Aayush Jain, Huijia Lin, and Amit Sahai. Indistinguishability obfuscation from LPN over $\mathbb {F} p$, dlin, and prgs in nc 0 . In Orr Dunkelman and Stefan Dziembowski, editors, Advances in Cryptology - EUROCRYPT 2022 - 41st Annual International Conference on the Theory and Applications of Cryptographic Techniques, Trondheim, Norway, May 30 - June 3, 2022, Proceedings, Part I , volume 13275 of 
+
+Lecture Notes in Computer Science , pages 670–699. Springer, 2022. 8 [JTGX17] Kui Jia, Dacheng Tao, Shenghua Gao, and Xiangmin Xu. Improving training of deep neural networks via singular value bounding. In 2017 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2017, Honolulu, HI, USA, July 21-26, 2017 ,pages 3994–4002. IEEE Computer Society, 2017. 4 [KK82] Narendra Karmarkar and Richard M. Karp. The differencing method of set partitioning. 1982. 14 [KKLO86] Narendra Karmarkar, Richard M Karp, George S Lueker, and Andrew M Odlyzko. Probabilistic analysis of optimum partitioning. Journal of Applied probability ,23(3):626–645, 1986. 14, 19 [KKO +24] Alkis Kalavasis, Amin Karbasi, Argyris Oikonomou, Katerina Sotiraki, Grigoris Velegkas, and Manolis Zampetakis. Injecting undetectable backdoors in obfuscated 38 neural networks and language models. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, 
+
+Advances in Neural Information Processing Systems 38: Annual Conference on Neu-ral Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , 2024. 8 [LeC98] Yann LeCun. The mnist database of handwritten digits. http://yann. lecun. com/exdb/mnist/ , 1998. 32 [LKKP21] Guanxiong Liu, Issa Khalil, Abdallah Khreishah, and NhatHai Phan. A synergetic attack against neural network classifiers combining backdoor and adversarial examples. In Yixin Chen, Heiko Ludwig, Yicheng Tu, Usama M. Fayyad, Xingquan Zhu, Xiaohua Hu, Suren Byna, Xiong Liu, Jianping Zhang, Shirui Pan, Vagelis Papalexakis, Jianwu Wang, Alfredo Cuzzocrea, and Carlos Ordonez, editors, 2021 IEEE International Conference on Big Data (Big Data), Orlando, FL, USA, December 15-18, 2021 , pages 834–846. IEEE, 2021. 8 [LLL82] H. W. Lenstra, A. K. Lenstra, and L. Lov´ asz. Factoring polynomials with rational coefficients. Math, Ann. , 261:515–534, 1982. 34 [LMA +18] Yingqi Liu, Shiqing Ma, Yousra Aafer, Wen-Chuan Lee, Juan Zhai, Weihang Wang, and Xiangyu Zhang. Trojaning attack on neural networks. In 25th Annual Network and Distributed System Security Symposium, NDSS 2018, San Diego, California, USA, February 18-21, 2018 . The Internet Society, 2018. 8 [MHN +13] Andrew L Maas, Awni Y Hannun, Andrew Y Ng, et al. Rectifier nonlinearities improve neural network acoustic models. In Proc. icml , volume 30, page 3. Atlanta, GA, 2013. 4 [MKKY18] Takeru Miyato, Toshiki Kataoka, Masanori Koyama, and Yuichi Yoshida. Spectral normalization for generative adversarial networks. In 6th International Conference on Learning Representations, ICLR 2018, Vancouver, BC, Canada, April 30 - May 3, 2018, Conference Track Proceedings . OpenReview.net, 2018. 4 [NCM25] Tu Anh Ngo, Anupam Chattopadhyay, and Subhamoy Maitra. Cryptographic backdoor for neural networks: Boon and bane. CoRR , abs/2509.20714, 2025. 8 [NIS] NIST. Post-quantum cryptography standardization. https://csrc.nist.gov/ Projects/Post-Quantum-Cryptography . 7 [Ped92] Torben Pryds Pedersen. Non-interactive and information-theoretic secure verifiable secret sharing. In Joan Feigenbaum, editor, Advances in Cryptology — CRYPTO ’91 ,pages 129–140, Berlin, Heidelberg, 1992. Springer Berlin Heidelberg. 11 [PGM +19] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmai-son, Andreas K¨ opf, Edward Z. Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. Pytorch: An imperative style, high-performance deep learning library. In Hanna M. 39 Wallach, Hugo Larochelle, Alina Beygelzimer, Florence d’Alch´ e-Buc, Emily B. Fox, and Roman Garnett, editors, Advances in Neural Information Processing Systems 32: Annual Conference on Neural Information Processing Systems 2019, NeurIPS 2019, December 8-14, 2019, Vancouver, BC, Canada , pages 8024–8035, 2019. 32, 33 [Pin23] Iosif Pinelis. Quantitative results (with formal proof) on the median approximation of chi-squared distribution. MathOverflow, 2023. 24 [PKB +22] Patricia Pauli, Anne Koch, Julian Berberich, Paul Kohler, and Frank Allg¨ ower. Training robust neural networks using lipschitz bounds. IEEE Control. Syst. Lett. ,6:121–126, 2022. 4 [PX21] Will Perkins and Changji Xu. Frozen 1-rsb structure of the symmetric ising perceptron. In Samir Khuller and Virginia Vassilevska Williams, editors, STOC ’21: 53rd Annual ACM SIGACT Symposium on Theory of Computing, Virtual Event, Italy, June 21-25, 2021 , pages 1579–1588. ACM, 2021. 11, 15 [QLC +21] Fanchao Qi, Mukai Li, Yangyi Chen, Zhengyan Zhang, Zhiyuan Liu, Yasheng Wang, and Maosong Sun. Hidden killer: Invisible textual backdoor attacks with syntactic trig-ger. In Chengqing Zong, Fei Xia, Wenjie Li, and Roberto Navigli, editors, Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing, ACL/IJCNLP 2021, (Volume 1: Long Papers), Virtual Event, August 1-6, 2021 , pages 443–453. Association for Computational Linguistics, 2021. 8 [Reg09] Oded Regev. On lattices, learning with errors, random linear codes, and cryptography. 
+
+Journal of the ACM (JACM) , 56(6):1–40, 2009. 7 [RR07] Ali Rahimi and Benjamin Recht. Random features for large-scale kernel machines. In John C. Platt, Daphne Koller, Yoram Singer, and Sam T. Roweis, editors, Advances in Neural Information Processing Systems 20, Proceedings of the Twenty-First Annual Conference on Neural Information Processing Systems, Vancouver, British Columbia, Canada, December 3-6, 2007 , pages 1177–1184. Curran Associates, Inc., 2007. 4, 30 [RVV24] Seyoon Ragavan, Neekon Vafa, and Vinod Vaikuntanathan. Indistinguishability obfuscation from bilinear maps and LPN variants. In Elette Boyle and Mohammad Mahmoody, editors, Theory of Cryptography - 22nd International Conference, TCC 2024, Milan, Italy, December 2-6, 2024, Proceedings, Part IV , volume 15367 of Lecture Notes in Computer Science , pages 3–36. Springer, 2024. 8 [Sch89] Claus-Peter Schnorr. Efficient identification and signatures for smart cards. In 
+
+Proceedings of the 9th Annual International Cryptology Conference on Advances in Cryptology , CRYPTO ’89, page 239–252, Berlin, Heidelberg, 1989. Springer-Verlag. 11 [SHN +18] Ali Shafahi, W. Ronny Huang, Mahyar Najibi, Octavian Suciu, Christoph Studer, Tudor Dumitras, and Tom Goldstein. Poison frogs! targeted clean-label poisoning attacks on neural networks. In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman, Nicol` o Cesa-Bianchi, and Roman Garnett, editors, Advances in 
+
+40 Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems 2018, NeurIPS 2018, December 3-8, 2018, Montr´ eal, Canada ,pages 6106–6116, 2018. 8 [SRS20] Congzheng Song, Alexander M. Rush, and Vitaly Shmatikov. Adversarial seman-tic collisions. In Bonnie Webber, Trevor Cohn, Yulan He, and Yang Liu, editors, 
+
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Pro-cessing, EMNLP 2020, Online, November 16-20, 2020 , pages 4198–4210. Association for Computational Linguistics, 2020. 3 [TBC +20] Florian Tram` er, Jens Behrmann, Nicholas Carlini, Nicolas Papernot, and J¨ orn-Henrik Jacobsen. Fundamental tradeoffs between invariance and sensitivity to adversarial perturbations. In Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event , volume 119 of Proceedings of Machine Learning Research , pages 9561–9571. PMLR, 2020. 3 [TTM18] Alexander Turner, Dimitris Tsipras, and Aleksander Madry. Clean-label backdoor attacks. 2018. 8 [vEH14] Tim van Erven and Peter Harremo¨ es. R´ enyi divergence and kullback-leibler divergence. 
+
+IEEE Trans. Inf. Theory , 60(7):3797–3820, 2014. 13 [VV25] Neekon Vafa and Vinod Vaikuntanathan. Symmetric perceptrons, number partitioning and lattices. IACR Cryptol. ePrint Arch. , page 130, 2025. To appear at STOC 2025. 9, 14, 15 [XRV17] Han Xiao, Kashif Rasul, and Roland Vollgraf. Fashion-mnist: a novel image dataset for benchmarking machine learning algorithms, 2017. 32, 33 [YM17] Yuichi Yoshida and Takeru Miyato. Spectral norm regularization for improving the generalizability of deep learning. CoRR , abs/1705.10941, 2017. 4 [ZDT +21] Quan Zhang, Yifeng Ding, Yongqiang Tian, Jianmin Guo, Min Yuan, and Yu Jiang. Advdoor: adversarial backdoor attack of deep learning system. In Cristian Cadar and Xiangyu Zhang, editors, ISSTA ’21: 30th ACM SIGSOFT International Symposium on Software Testing and Analysis, Virtual Event, Denmark, July 11-17, 2021 , pages 127–138. ACM, 2021. 8 [ZNS23] Irad Zehavi, Roee Nitzan, and Adi Shamir. Facial misrecognition systems: Simple weight manipulations force dnns to err only on specific persons. arXiv preprint arXiv:2301.03118 , 2023. 8, 9 41
