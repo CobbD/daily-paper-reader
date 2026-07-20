@@ -1,0 +1,1080 @@
+Title: FLINT: Fingerprinting Federated Learning Architectures from 5G PHY-Layer Side Channels
+
+URL Source: https://arxiv.org/pdf/2607.15469v1
+
+Published Time: Mon, 20 Jul 2026 00:22:20 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# FLINT: Fingerprinting Federated Learning Architectures from 5G PHY-Layer Side Channels 
+
+Md Nahid Hasan Shuvo, Mahmudul Hassan Ashik, Moinul Hossain 
+
+George Mason University, Fairfax, VA, USA Email: mshuvo@gmu.edu, mashik@gmu.edu, mhossa5@gmu.edu 
+
+Abstract —Federated Learning (FL) over 5G cellular networks protects raw data but remains vulnerable to side-channel leakage. Prior fingerprinting attacks assume packet-level network visibility, an assumption that does not hold at the 5G Physical (PHY) layer, where user payloads are encrypted and Radio Network Temporary Identifiers (RNTIs) may change over time. However, we demonstrate that PHY-layer scheduling metadata broadcast over the Physical Downlink Control Channel (PDCCH) preserves architecture-associated temporal patterns. We introduce FLINT, a novel black-box fingerprinting framework that infers FL model architecture families, including CNNs, RNNs, and Transformers, using only coarse PHY-layer observations. FLINT overcomes the lack of network-layer visibility by decoding PDCCH scheduling information, mapping changing RNTIs to physical user devices, and applying multi-view temporal modeling to distinguish architecture-specific training behavior. This leakage is security-critical because knowledge of a client’s model architecture can transform passive reconnaissance into targeted downstream exploitation. Extensive experiments on an over-the-air srsRAN-based 5G testbed demonstrate that FLINT achieves a macro F1-score of 0.930 for architecture-family classification. To our knowledge, FLINT is the first work to fingerprint AI/ML model architectures using lower- layer 5G side-channel information obtainable by any protocol-aware adversary. 
+
+Index Terms —AI security, Fingerprinting Federated Learning, Side Channel Attack, 5G vulnerability 
+
+I. I NTRODUCTION 
+
+Federated learning (FL) has emerged as a widely adopted paradigm for training deep learning models across distributed devices without collecting their raw data at a central server [ 1 ], [2]. By keeping data on-device and exchanging only encrypted model updates, FL has been adopted in privacy-sensitive domains such as healthcare, mobile robotics, and the Internet of Things. Increasingly, these deployments rely on Fifth Generation (5G) cellular networks, which provide the low-latency and wide-area connectivity required by geographically distributed clients. Encryption, however, protects only the contents of the updates, not the communication patterns by which they are exchanged. A growing body of work has shown that metadata associated with encrypted traffic, including packet sizes, directions, and timing, leaks significantly more information than intended. Such information enables adversaries to fingerprint visited websites [ 3], identify mobile applications [ 4], and infer device types [ 5] through passive observation alone. Recently, this insight has been extended to the federated learning setting. FLARE [ 6] demonstrated that a passive adver-sary observing encrypted Wi-Fi traffic can infer the architecture of the model being trained, distinguishing convolutional neural networks (CNNs) from recurrent neural networks (RNNs). This capability has important security implications, as knowledge of a client’s model architecture enables targeted downstream attacks, including architecture-specific adversarial examples, model inversion attacks, and resource denial attacks [ 7], [ 8]. However, FLARE and related studies assume access to network-layer packet information, including packet sizes, directions, and inter-arrival times. While this assumption holds in Wi-Fi networks, it does not hold in 5G. In 5G networks, user-plane traffic is protected by the Access Stratum security context, preventing external observers from accessing network-layer packets. Instead, the only information visible over the air is physical-layer control signaling. In particular, scheduling metadata transmitted on the Physical Downlink Control Channel (PDCCH) remains observable. For each scheduling decision, the base station broadcasts Downlink Control Information (DCI) records specifying the scheduled device, allocated resource blocks, and corresponding transport block size. These records are transmitted without encryption and can be decoded by passive software-defined radio receivers without network credentials [ 9], [ 10 ]. Whether this coarser signal still carries sufficient information to fingerprint a client’s model architecture remains unexplored, and we address this question in this paper. 
+
+Challenges: Answering this question presents three key challenges. First ( C1 ), a passive observer in 5G has access only to unlabeled physical-layer scheduling records, which must be mapped back to individual clients despite rotating identifiers and the complexity of operating in a real 5G testbed environment. This complicates the construction of consistent per-device activity streams under live network conditions. Second ( C2 ), packet-level traffic information is not available at the physical layer. Instead, the observer sees only scheduler-generated signals such as resource allocations and transport block sizes. These measurements are indirect and influenced by channel conditions and scheduling decisions, making them a coarse proxy for communication activity. Third ( C3 ), traces are inherently incomplete due to practical constraints in over-the-air collection and decoding, leading to missing or partially observed scheduling records. As a result, the adversary must infer structure from irregular temporal observations. Finally (C4 ), simple statistics based on communication activity are insufficient to distinguish between model families, as different architectures can induce similar overall transmission patterns. arXiv:2607.15469v1 [cs.CR] 16 Jul 2026 This requires representations that capture higher-order temporal dynamics. Addressing these challenges requires a fingerprinting ap-proach that operates on incomplete, coarse-grained, and tem-porally irregular physical-layer observations. Building on this insight, we develop F LINT , a passive fingerprinting framework for identifying federated learning model architectures from 5G PHY-layer side-channel information. 
+
+Contributions: We investigate whether federated learning model architectures, including CNNs, RNNs, and Transformers, can be inferred using only 5G physical-layer scheduling meta-data, and show that capturing temporal structure is essential. In summary, our contributions are as follows:  
+
+> •
+
+We present a fully black-box data collection pipeline on a real srsRAN-based 5G testbed, including an algorithm that maps rotating physical-layer identifiers (RNTIs) back to individual client devices using only the timing of decoded records, addressing C1 . 
+
+> •
+
+We identify a new physical-layer side channel in 5G federated learning, in which scheduling metadata broadcast over the PDCCH leaks information about the underlying learning process and can be exploited by an adversary without network-layer visibility, thereby addressing C2 . 
+
+> •
+
+We design a fingerprinting framework that operates on incomplete and irregular scheduling observations and captures the temporal evolution of training behavior, improving robustness under realistic 5G conditions, ad-dressing C3 . 
+
+> •
+
+We show that simple communication statistics derived from resource block allocations and transport block sizes are insufficient to distinguish among model families, and we evaluate robustness under different abalation studies to address C4 .The remainder of this paper is organized as follows. Sec-tion II discusses the current related research. Section III provides background on 5G cell attachment and DCI decoding. Section IV shows our threat model. Section V presents the system model and our fingerprinting framework pipeline. Section VI describes the dataset and results and shows analysis. Finally, Section VII concludes. II. R ELATED WORK 
+
+This section reviews prior work on privacy attacks in federated learning, traffic fingerprinting, side-channel inference of model properties, and 5G physical-layer monitoring. 
+
+A. Privacy Attacks on Federated Learning 
+
+Federated learning was introduced to keep training data on-device [ 1], but extensive prior work has shown that shared model updates can still leak sensitive information. Membership inference attacks determine whether a specific record was used during training [ 11 ], [ 12 ], and have been extended to federated settings by exploiting per-round gradients exchanged during aggregation [ 13 ]. Gradient inversion attacks reconstruct representative training samples directly from shared updates [ 14 ], [ 15 ], while property inference attacks recover aggregate attributes of local datasets [16], [17]. These attacks typically assume access to model updates or participation in the learning process. In contrast, our work considers a fully passive adversary that neither observes gradients nor participates in training, and instead infers the model architecture from over-the-air observations. 
+
+B. Traffic Fingerprinting and Side-Channel Leakage 
+
+Traffic analysis has been widely used to infer sensitive infor-mation from encrypted communications. Website fingerprinting attacks identify visited pages over Tor or HTTPS using packet sizes, directions, and timing information [ 3], [ 18 ], [ 19 ], and remain effective under various defenses [ 20 ], [ 21 ]. Related approaches infer mobile application usage [ 4 ] and identify IoT device types from network behavior [5], [22]. These methods rely on network-layer visibility and access to per-packet information. FLARE [ 6] applies similar ideas to federated learning using packet-level statistics of encrypted Wi-Fi traffic to distinguish neural architectures such as CNNs and RNNs. However, it relies on network-layer observability that is not available in 5G physical-layer settings. We further show that coarse communication statistics are insufficient to distinguish among modern model families based on physical-layer observations. 
+
+C. Recovering Model Properties via Side Channels 
+
+A related line of work studies the recovery of neural network properties from hardware and system-side channels. Electromagnetic emissions have been used to infer network structure and parameters [ 23 ], while power-based side channels reveal architectural details in controlled environments [ 24 ], [ 25 ]. Timing-based attacks can also expose information about dataset size and model complexity [11]. These approaches typically assume physical access, co-location, or controlled execution environments, and are applied to centralized training or inference on a single machine. In contrast, our work targets a distributed federated learning setting and infers architecture remotely using only physical-layer side-channel metadata. 
+
+D. 5G Physical-Layer Monitoring and PDCCH Sniffing 
+
+The openness of the 5G control plane has enabled passive monitoring of scheduling behavior. Tools such as NR-Scope [ 9]and 5GSniffer [ 10 ] demonstrate that the Physical Downlink Control Channel (PDCCH) can be blind-decoded by unpriv-ileged receivers, revealing per-device scheduling decisions, including resource allocations and transport block sizes. Prior work has used this visibility to infer coarse user activity patterns, analyze information leakage in wireless systems, and enable control-channel-based attacks [ 8 ]. However, no prior study has used decoded PDCCH metadata to infer federated learning model architectures. Our work builds on these decoding capabilities as the data-collection substrate and addresses the challenge of reconstructing per-device traces from interleaved scheduling records with rotating physical-layer identifiers. Msg1 - RA Preamble (PRACH) 
+
+> Random preamble index, Zadoff-Chu sequence
+> Msg2 - RA Response
+> T_C-RNTI, Timing Advance, UL grant for Msg3
+> Transmits Msg4 encoded by T_C-RNTI
+> T_C-RNTI -> C-RNTI
+> Transmits Msg2 encoded by RA-
+> RNTI
+> Detects preamble
+> Computes RA-RNT I
+
+UE  Base Station 
+
+> Decodes Msg3 using
+> T_C-RNTI 39-bit UE-Identity, establishmentCause
+> Msg3 - RRC Setup Request
+> Msg4 - Contention Resolution + RRC Setup
+> CR-MAC-CE (which UE won contention), SRB1 config
+
+Fig. 1: Random access establishment. Msg1–Msg4 and all RRC up to and including RRCSetup and can be decoded by anyone with protocol knowledge III. B ACKGROUND 
+
+A. Adversarial View of Cell Attachment and DCI Decoding 
+
+A UE that powers ON (or toggles airplane mode OFF )must complete cell search, system-information acquisition, random access, and Radio Resource Control (RRC) connection establishment before exchanging user data, and every one of these steps occurs in plaintext on channels that a passive receiver can decode without credentials. We therefore describe attachment from the adversary’s vantage: it performs the same synchronization and decoding as a legitimate UE but stops short of completing random access or establishing a security context. 
+
+Synchronization and system information. The receiver captures in-phase/quadrature (IQ) samples at the cell center frequency and aligns to the 10 ms frame by locating the Syn-chronization Signal Block (SSB) , whose Primary and Secondary Synchronization Signals (PSS/SSS) yield timing, frequency offset, and the Physical-layer Cell Identity (PCI) [26 ]. Decoding the Physical Broadcast Channel (PBCH) returns the Master Information Block (MIB) , which locates Control Resource Set 0 (CORESET#0) and the Type0-PDCCH search space. The receiver then decodes SIB1 on the Physical Downlink Shared Channel (PDSCH) , scheduled by Downlink Control Information (DCI) scrambled with the standardized System Information RNTI (SI-RNTI) on the Physical Downlink Control Channel (PDCCH) [27 ], [ 28 ]. SIB1 exposes the random-access and common radio configuration (e.g., PRACH parameters, 
+
+offsetToPointA ), which is sufficient to monitor the cell without authentication. 
+
+Random access and the plaintext window. Fig. 1 shows the four-message random-access exchange and marks the adversary’s observation window. The UE sends a PRACH 
+
+preamble ( Msg1 ); the gNB replies with the Random Ac-cess Response (Msg2 , scrambled by RA-RNTI ) carrying a Timing Advance, a Msg3 grant, and a Temporary C-RNTI (TC-RNTI) [29 ]. The UE then transmits RRCSetupRequest 
+
+(Msg3 ) and receives RRCSetup (Msg4 , scrambled by TC-RNTI); the Contention Resolution MAC-CE echoes the winning UE’s identity, namely a random value at first attach, an S-TMSI on reconnection, or a C-RNTI on handover [ 29 ]. The winner’s TC-RNTI is then promoted to a C-RNTI and the UE completes RRCSetupComplete , establishing Signaling Radio Bearer 1 (SRB1) . NAS authentication and the NAS and 
+
+AS Security Mode Command (SMC) procedures follow [ 30 ]. Every RRC message up to and including Msg4 is sent in plaintext; the adversary’s observation window closes once the 
+
+AS-SMC activates ciphering on the radio bearer. DCI scheduling metadata on the PDCCH, however, is never AS-ciphered [ 30 ], so per-grant scheduling records remain observable for the entire session. 
+
+Blind decoding of the DCI stream. The gNB confines PDCCH to CORESETs whose locations are advertised in MIB and SIB1, so a receiver that has decoded both can reconstruct every candidate slot and blind-decode it: it applies polar decoding to each candidate and checks the appended 24-bit CRC, which is scrambled with the recipient’s RNTI, so a clean CRC simultaneously validates the message and reveals the target RNTI [ 31 ]. Broadcast messages (SI-RNTI and paging P-RNTI )decode without any per-device identifier; UE-specific grants require the C-RNTI range obtained during reconnaissance (§ V-B ). The output is a time-ordered stream of DCI records, each a tuple of timestamp, RNTI, direction, and scheduling fields. 
+
+a) Vulnerability : Due to a lack of any security protocol at the start of the RACH process, any UE with a SIM (registered or not) can trigger the RACH procedure from the base station: the SIM is not authenticated until RRC establishment completes and the UE can reach the core network. An adversary can therefore force the base station to disclose critical configuration about itself (e.g., available TC-RNTI, CORESET#1 parameters, DCI format) simply by triggering RACH, with no registered SIM required. We show in § V-B how we exploit this to trigger RACH and obtain the parameters needed to decode UE-specific DCI. 
+
+B. Federated Learning over 5G and Its Side-Channel Surface 
+
+Having described how an adversary decodes DCI records from the PDCCH, we now explain why those records carry information about the model architecture being trained. The connection arises from how a federated training session is mapped to the radio scheduler. 
+
+The federated round as a communication pattern. We consider synchronous federated learning, the predominant setting on mobile and edge deployments and the one used in our testbed [ 1]. Training proceeds in discrete rounds: the server broadcasts the current global model; each client trains locally for several epochs and returns an update; the server waits for all selected clients, aggregates, and broadcasts the next model. This yields a repeating per-client pattern, a downlink burst as the global model arrives, near-silence during local computation, and an uplink burst as the update is sent. Two quantities of this pattern are set largely by the client’s model rather than the network. The size of each update scales with the trainable-parameter count θ (a single update is on the order of 4θ bytes for 32-bit floats), and the duration of the silent interval scales with the cost of a forward/backward pass, which differs across architectures even at comparable θ. Architecture therefore shapes both how much a client transmits per round and the rhythm with which it does so. Mapping the round onto 5G scheduling. At the physical layer, this pattern is observed not as packets but as scheduling grants. An upload appears as a series of uplink DCI grants whose transport-block sizes accumulate to the update volume; the global-model arrival appears symmetrically as downlink grants; the local-computation interval appears as a gap with few or no grants. Because the adversary decodes every grant addressed to the client (§V), it observes a time-ordered stream of transport-block sizes and directions tracing the upload– compute–download structure of each round, without ever seeing a user-plane packet. 
+
+Why architecture leaks, and why volume is not enough. 
+
+Architecture influences the signal through two channels. The first is volume : larger parameter counts produce larger transport-block totals per round. The second is temporal structure :the cadence of rounds, the regularity of the upload–compute– download cycle, and the way successive updates evolve. Volume alone is a strong cue when update sizes are distinctive, but it becomes ambiguous when two architecture families have similar parameter counts, as is typical for the compact models used at the edge. In that regime, the temporal structure, not the volume, separates the families, which motivates the feature design of §V. IV. T HREAT MODEL 
+
+We consider an external adversary operating within the coverage area of a 5G cell in a federated learning deployment. The adversary does not participate in training, does not transmit any interference signal during the fingerprinting stage, and has no access to base station infrastructure or client devices. All user-plane communications, including model updates, are protected by the 5G security architecture and remain inaccessible to the adversary. 
+
+A. Adversarial Goal 
+
+The adversary aims to infer the underlying federated learning model architecture used by participating clients from over-the-air physical-layer observations. 
+
+B. Adversarial Capabilities 
+
+C1. Physical-layer observability. The adversary can passively observe and decode downlink control information (DCI) trans-mitted on the Physical Downlink Control Channel (PDCCH). These observations include scheduling decisions such as the scheduled user identity, allocated resource blocks, and transport block sizes. 
+
+C2. Passive monitoring. The adversary operates in a fully passive manner using standard software-defined radio reception capabilities. It does not inject any adversarial traffic, interfere with network operation, or modify any transmissions. 
+
+C. Adversarial Limitations 
+
+L1. No access to user-plane data. The adversary cannot observe or reconstruct network-layer packets, including packet payloads, sizes, directions, or timing information. All user data and model updates remain encrypted under the 5G security framework. 
+
+L2. Restricted observation model. The adversary is limited to physical-layer scheduling metadata obtained from decoded DCI messages. These observations are coarse-grained and do not expose packet-level structure or application-layer semantics. V. M ETHODOLOGY 
+
+This section describes the end-to-end attack pipeline: from passive over-the-air reconnaissance and DCI decoding, through RNTI-to-device mapping via the Conflict-Constrained Chain Decomposition (CCCD) algorithm, to the construction of per-device feature datasets suitable for AI/ML fingerprinting. 
+
+A. System Model and Attack Pipeline 
+
+Deployment model. We consider a 5G cell served by a single gNodeB (gNB), where three client devices participate in a federated learning session. Each client is a User Equipment (UE) device that trains a deep learning model locally and exchanges model updates with a federated server over the 5G network. The gNB schedules uplink and downlink transmissions through the Physical Downlink Control Channel (PDCCH), where scheduling decisions are carried as Downlink Control Information (DCI) records. Given decoded physical-layer scheduling records, the objective is to infer, for each observed client, the model architecture family being trained. 
+
+Architecture families. We study three architecture families that commonly appear in federated learning workloads: con-volutional neural networks (CNNs), recurrent neural networks (RNNs), and Transformer-based models. Each family contains multiple concrete model variants. For example, the CNN family may include both custom networks and standard backbones such as ResNet and DenseNet. Thus, the fingerprinting target is not a specific model instance, but the broader architecture family. In the open-world setting, we additionally include an 
+
+Others category for traffic that does not belong to the trained FL families, such as background non-FL activity or unseen workloads. 
+
+Observation model. After DCI decoding and per-device separation, the adversary obtains a time-ordered sequence of scheduling records for each client. We denote a client’s observation stream as 
+
+S = ( ti, d i, b i, p i)ni=1 ,
+
+where ti denotes the timestamp of the i-th scheduling record, 
+
+di ∈ UL , DL denotes the transmission direction, bi denotes the transport block size in bytes, and pi denotes the number of allocated physical resource blocks. The stream S is segmented into fixed-duration observation windows. For each window, the objective is to infer 
+
+ˆy ∈ CNN , RNN , Transformer , Others .
+
+In the closed-world setting, the task is three-way classification among CNN, RNN, and Transformer when the window is known to belong to one of the trained FL families. In the ❶ Sniffing (PDCCH)   
+
+> FL Clients Training
+> CNN RNN Transformer
+> FL Clients gNB
+> Passive eavesdropper
+> Passive PDCCH Sniffing
+> Capture DCI Scheduling grants
+> (Time, TB size, Direction, PRBs)
+> Time
+> Output: RAW decoded
+> DCI message
+
+D❷ Preprocessing 
+
+DCI à CSV 
+
+D❸ Segmentation 
+
+TB size filter 
+
+> Output: Cleaned and
+> reconstructed grants
+
+Burst detection 
+
+Data loss 
+
+imputation 
+
+❹ Three Temporal View 
+
+Sliding Window 
+
+(w = 300s) 
+
+Round -Cycle 
+
+Segmentation 
+
+> Output: Segments with
+> few full FL rounds
+
+❺ Late Fusion ❻ Fingerprint  
+
+> Output: Class Probabilities per view
+> View W
+> (Wavelet )
+> Multi resolution
+> Energy
+> View R
+> (Rhythm )
+> Cadence and
+> regularity
+> View L
+> (LSTM )
+> Sequential time -
+> series modeling
+> Traffic
+> Wavelet
+> transform
+> Normalize
+> energies
+> XGBoost
+> Round
+> sequence
+> Bi -LSTM
+> XGBoost 𝑃 !
+> 𝑃 "
+> 𝑃 #
+> Feature
+> Extraction
+> Statistical feature
+> Spectral feature
+> Bi -LSTM
+> based Model
+
+𝑃 ! 𝑃 " 𝑃 #
+
+> Fusion
+> Meta Classifier
+> Learned on
+> Training set
+> Output: Final fused
+> class probability
+
+Deanonymize 
+
+clients CNN 
+
+> RNN
+> Transformer
+
+Predicted 
+
+architecture 
+
+View 
+
+Probabilities 
+
+> Others
+> Output:
+> Fingerprint attack
+> Traffic
+
+Fig. 2: Proposed system pipeline, detailing the steps from PDCCH sniffing to fingerprinting. open-world setting, the classifier must also reject windows that do not match any known FL family and assign them to Others .
+
+Pipeline overview. Figure 2 summarizes the end-to-end F LINT 
+
+pipeline. The pipeline begins with passive PDCCH sniffing, which produces raw decoded DCI records. The decoded records are converted into a structured table and preprocessed through transport block filtering, burst detection, data-loss imputation, and RNTI-to-device mapping to reconstruct client-specific traces. The cleaned per-device stream is then segmented into fixed-duration observation windows and further decomposed into round-cycle segments. Each window is represented through three complementary temporal views: a wavelet-based multi-resolution energy view (W), a rhythm view that captures cadence and regularity (R), and a Bi-LSTM-based sequential modeling view that captures round-to-round evolution (L). Each view produces a class-probability vector, and a late-fusion meta-classifier combines these view-level probabilities into the final architecture prediction. Stages related to raw DCI collection, preprocessing, data-loss imputation, and RNTI-to-device mapping are described in Sections V-B and V-C . The remaining stages, including seg-mentation, temporal view extraction, late fusion, and fingerprint decisions, constitute the fingerprinting framework described next. 
+
+B. Black-box Data Collection Pipeline 
+
+Before fingerprinting, the adversary must collect a dataset in a black-box manner and map RNTIs to physical UEs before training. Fig. 3 gives the full flow. Reconnaissance reuses the passive decoding chain of § III-A , performed with NR-Scope [ 32 ]: the nr-scan module synchronizes to the SSB and recovers the ARFCN, after which MIB/SIB1 decoding yields the numerology (subCarrierSpacingCommon ,
+
+subcarrierSpacing ), k_SSB , PCI, and 
+
+offsetToPointA . These parameters suffice to synchronize an SDR front-end to the cell and to decode RRC with the RA-RNTI; the only steps specific to data collection are triggering the RACH to expose the UE-specific PDCCH configuration (Step 3) and configuring 5GSniffer to harvest DCI (Step 4). Perform Cell Search       
+
+> to find gNB
+> NR SCAN
+> Intiate
+> No
+> Yes Cell found input ARFCN NR-Scope
+> MIB Decode SIB1 Decode RACH Decode
+> No
+> Msg 4
+> decoded
+> Used as input
+> for 5GSniffer
+> Collect Log
+> output
+> nid, SSB_num,
+> k_SSB,
+> CORESET0
+> Offset to point A msg4
+> COERSET_id,
+> n_PRB,
+> Numerology,
+> dci_type, and
+> others
+> 5GSniffer
+> Data
+> collection
+> Try to connect an
+> unregister UE
+> Force gNB to broadcast
+> RRC setup
+> Filter out relevant
+> columns
+> Temporal DAG
+> Draw i->j for non-
+> conflicting pairs
+> Simultaneous RNTI
+> change?
+> Chain Merging
+> Merge conflict-free
+> chains-> UE
+> Assign RNTI
+> to UE
+> No
+> HMM resolver -> Viterbi decoding
+> Predict the most probable path
+> States: UEs
+> Observations: Data from 5GSniffer
+> Yes Assign RNTI
+> to UE
+
+Fig. 3: Data collection pipeline. 
+
+a) Step 3: Triggering the RACH Procedure and Ob-serving the RRC Setup. : To decode UE-specific DCI, the adversary must extract the UE-specific PDCCH configura-tion from the RRC Setup message in msg4 . It triggers a RACH exchange by attempting to attach with an unreg-istered SIM; this fails authentication but still drives the RACH procedure and the transmission of RRC Setup . NR-Scope decodes msg4 and reveals the CORESET#1 parame-ters: controlResourceSetId , duration , the frequency-domain resource bitmap ( frequencyDomainResources ), the CCE-to-REG mapping type ( cce-REG-MappingType ), 
+
+dci-Formats , and nrofCandidates . The adversary also observes the temporary C-RNTI assigned during the exchange. Per 3GPP TS 38.321 §5.1.4, the TC-RNTI assigned in Msg2 is promoted to C-RNTI on successful Msg4 reception without a value change. In our srsRAN-based testbed, C-RNTIs are drawn sequentially from a pool, so the adversary can infer the current assignment range after one or more RACH exchanges; commercial gNBs may randomize this assignment, in which case the inference does not apply, though nothing in the remainder depends on it. These RRC messages are observable before AS security is activated [ 30 ], so no cryptographic keys are required. b) Step 4: 5GSniffer Configuration and DCI Dataset Collection. : Using the parameters from reconnaissance and Step 3, the adversary configures 5GSniffer [ 10 ], an open-source PDCCH decoder, for blind UE-specific DCI decoding. For each slot, 5GSniffer attempts CRC verification of decoded candidates across the configured C-RNTI values, recording successful decodes with their full field sets; restricting the search to the narrow range inferred in Step 3 cuts decoding complexity by several orders of magnitude. The output is a time-ordered sequence of DCI records, one per scheduling decision observed on the PDCCH. 
+
+C. RNTI to UE Device Mapping 
+
+In every 5G system, the gNB assigns a temporary identifier (C-RNTI) to each UE during an RRC connection. These iden-tifiers change across RRC sessions, so an eavesdropper cannot trivially map them to devices: whenever a UE disconnects and reconnects, whether due to mobility, inactivity timers, or RRC re-establishment, it receives a fresh C-RNTI with no visible link to the previous one. The decoded DCI records therefore appear as a stream of scheduling metadata tagged with unpredictable identifiers, and to fingerprint per device the adversary must first determine which RNTIs belong to the same physical UE. 
+
+1) Motivation for a Graph-Theoretic Approach: The map-ping problem has one hard constraint: two RNTIs active in the same time window cannot belong to the same UE, since a UE holds exactly one C-RNTI per active RRC connection [ 29 ]. This relation is pairwise, and any structure over objects (nodes) and pairwise relations (edges) is a graph. Representing each RNTI by its activity interval and joining overlapping pairs yields an interval graph [33 ], which is perfect; its clique number therefore equals its chromatic number, i.e., the minimum number of colors, and since one color per device is forced by the constraint, that clique number is the tightest lower bound on the device count K, computable in polynomial time from timestamps alone. The conflict graph states which RNTI pairs cannot share a device but not which non-conflicting pairs do . Resolving that requires a second structure that is (i) derivable from timestamps alone and (ii) asymmetric in time, since reconnection is directed: an old RNTI ends and a new one begins. These properties call for a directed acyclic graph with temporal-gap edge weights, formalized next. 
+
+2) Problem Formulation: The mapping problem takes a set of observed RNTIs R = {r1, . . . , r n}, each with an activity interval [α(ri), β (ri)] from its first to last DCI timestamp, and produces a partition P = {D1, . . . , D K } in which each Dk is the ordered RNTI sequence of one physical UE. Neither K
+
+nor any device’s reconnection schedule is known in advance. We define the two graph structures used throughout: 
+
+Conflict graph GC = ( R, E C ) encodes the one-RNTI-per-connection invariant [ 29 ]: an undirected edge (ri, r j ) ∈ EC
+
+exists whenever the intervals of ri and rj overlap, i.e., α(ri) ≤
+
+β(rj ) and α(rj ) ≤ β(ri).
+
+Succession DAG GS = ( R, E S , w ) encodes candidate same-device transitions: a directed edge (ri → rj ) ∈ ES exists iff 
+
+β(ri) < α (rj ) and (ri, r j ) /∈ EC . Because time is irreversible, 
+
+GS is acyclic. Each edge carries a squared-gap cost 
+
+w(ri, r j ) =  α(rj ) − β(ri)2,
+
+encoding that a reconnecting device minimizes its own recon-nection delay; squaring penalizes long silences superlinearly (a 10 s gap costs 100 × as much as a 1 s gap), matching the physical bound that the delay lies between the RRC procedure time and the inactivity timer. 
+
+Conflict-Constrained Path Cover (CCPC). Partition R into vertex-disjoint directed paths (chains) in GS that (i) cover every 
+
+r ∈ R exactly once and (ii) place no two GC -adjacent RNTIs on one path (enforced by construction, since ES excludes conflicting pairs), while minimizing 
+
+J(P) = X 
+
+> (ri→rj)∈P
+
+w(ri, r j ) + c K (P), (1) where K(P) is the number of chains and c > 0 is the cost of opening a new chain, equivalently of leaving a node without a matched successor. The penalty c is essential. Without it, every w ≥ 0 makes the empty cover ( K = n, J = 0 ) trivially optimal, so a plain minimum-weight matching would return the degenerate solution that treats each RNTI as its own device. With it, linking ri → rj is preferred over opening a new chain exactly when w(ri, r j ) < c , i.e., when the reconnection gap is below τmax = √c. We treat τmax as a confidence threshold on the reconnection gap rather than a hard physical bound: sub-τmax gaps (e.g., RRC re-establishment or brief idle) are strong evidence of same-device continuity, whereas longer gaps are uninformative on their own and are deferred to Phase 3. 
+
+Reduction to assignment. Minimizing (1) reduces to a bipartite assignment. Split each r into a successor port rL and a predeces-sor port rR, and for every (ri → rj ) ∈ ES with w(ri, r j ) < c 
+
+add an edge (rLi , r Rj ) with reward c − w(ri, r j ) > 0. Each matched edge merges two chains and lowers J by exactly 
+
+c − w, since K drops by one ( c saved) at an added link cost 
+
+w. Minimizing J is therefore equivalent to a maximum-weight 
+
+bipartite matching on these rewards, solved by the Hungarian algorithm [ 34 ] in O(n3) time. Because only sub-τmax links are admitted, genuine but long reconnections are deliberately left unlinked, which is what makes the resulting chain count an upper bound on K that Phase 3 then tightens. 
+
+3) Proposed Solution: We solve CCPC with CCCD , which uses only timestamp , RNTI , and direction (UL/DL); these depend on whether and when a device was scheduled, not 
+
+how , making them invariant to the gNB’s resource-allocation decisions. CCCD has three phases: 1) Conflict Detection (§ V-C 4): identify simultaneously active RNTIs that cannot share a device. 2) Succession Scoring (§ V-C 5): among non-conflicting RN-TIs, score how likely one is the direct temporal successor of another. Device partition   
+
+> P= {D_1, ..., D_K}
+> G_S
+
+Output 
+
+> Phase 2: succession scoring
+> Non-conflicting, temporally
+> ordered edges
+> Succession DAG G_S, cost = gap²
+> Phase 3: chain cover and model selection
+> Step 1: Hungarian
+> matching on G_S
+> Initial chains
+> {C_1, ..., C_m}
+> scheduling profiles (ρ, φ)
+> Step 2: BIC-guided mer ging
+> Greedy mer ge of conflict-free chains until BIC stops
+> improving
+> DCI r ecords
+> timestamp,
+> RNTI,
+> direction
+
+Input 
+
+> Conflict graph
+> G_C
+> K_min =
+> clique(G_C)
+> Phase 1: conflict detection
+> Pairwise interval overlap
+> check
+> G_C
+
+Fig. 4: Dataflow of CCCD. 3) Chain Cover and Model Selection (§ V-C 6): stitch RNTIs into per-device chains via the matching above, then estimate K with the Bayesian Information Criterion (BIC). Figure 4 summarizes the dataflow, and Algorithm 1 gives the consolidated procedure. 
+
+4) Phase 1: Conflict Detection: Phase 1 instantiates GC
+
+(§ V-C 2) via the O(n2) pairwise interval-overlap test and reports the lower bound Kmin = ω(GC ) at no additional cost. Since 
+
+n, the number of distinct RNTIs in a session, is on the order of tens to hundreds, this step is negligible in time. 
+
+5) Phase 2: Temporal Succession Scoring: Phase 2 instanti-ates GS (§ V-C 2), admitting an edge (ri → rj ) only when the pair is conflict-free and forward in time ( β(ri) < α (rj )) and weighting it by the squared gap w(ri, r j ). The first condition ensures conflict feasibility, the second enforces causality, and the weight encodes the preference for short reconnection delays defined above. 
+
+6) Phase 3: Chain Cover and Model Selection: Phase 3 converts GS into per-device RNTI sequences and determines the device count. 
+
+Step 1: Minimum-cost chain cover. A chain is a directed path in GS (e.g., r3 → r7 → r12 means one device used three successive RNTIs), and a chain cover assigns every RNTI to exactly one chain. We compute the cover that minimizes J
+
+(1) by the maximum-weight matching of § V-C 2, then convert matched successor links into vertex-disjoint chains. Because a link is taken only when its squared gap is below c, chains break wherever a reconnection gap exceeds τmax = √c, so a device that went idle for longer than τmax is split across several chains. This deliberate splitting is what makes the resulting count m
+
+an upper bound on K; Step 2 then merges the over-split chains using their temporal profiles rather than the gap. 
+
+Step 2: BIC-guided merging. The initial count m upper-bounds K. To decide whether two chains separated by a gap too long for Phase 2 to link cheaply belong to the same device, we use the Bayesian Information Criterion (BIC) [ 35 ], which balances fit against complexity. For each RNTI r with β(r) >α(r) we form a two-dimensional temporal profile 
+
+t(r) =  ρ(r), ϕ (r), (2) where ρ(r) = n(r)/(β(r)−α(r)) is the scheduling density and 
+
+ϕ(r) = nUL (r)/n (r) is the uplink fraction; single-observation RNTIs are retained as singletons. Each device cluster is a 
+
+Algorithm 1 Conflict-Constrained Chain Decomposition 
+
+Require: DCI records X = {(t, r, d )} (t timestamp, r RNTI, d ∈{U L, DL }); new-chain penalty c = τ 2max 
+
+Ensure: Device partition P = {D1, . . . , D K } and estimated device count 
+
+K
+
+1: Aggregate X by RNTI to obtain R
+
+2: for all r ∈ R do 
+
+3: α(r) ← min {t : ( t, r, d ) ∈ X } ; β(r) ← max {t : ( t, r, d ) ∈ X } 
+
+4: n(r) ← |{ (t, r, d ) ∈ X }| ; nU L (r) ← |{ (t, r, U L ) ∈ X }| 
+
+5: end for 
+
+// Phase 1: hard conflict constraints 
+
+6: GC ← (R, ∅)
+
+7: for all unordered pairs {ri, r j } ⊂ R do 
+
+8: if α(ri) ≤ β(rj ) and α(rj ) ≤ β(ri) then 
+
+9: Add conflict edge {ri, r j } to GC
+
+10: end if 
+
+11: end for 
+
+12: Kmin ← ω(GC ) ▷ minimum feasible number of physical UEs 
+
+// Phase 2: feasible temporal transitions 
+
+13: GS ← (R, ∅)
+
+14: for all ordered pairs (ri, r j ) with ri̸ = rj do 
+
+15: if {ri, r j } /∈ EC and β(ri) < α (rj ) then 
+
+16: wij ← (α(rj ) − β(ri)) 2
+
+17: Add edge (ri → rj ) with cost wij to GS
+
+18: end if 
+
+19: end for 
+
+// Phase 3a: initial chain cover (new-chain penalty c)
+
+20: Split each r ∈ R into left and right copies (rL, r R)
+
+21: Build a bipartite graph: for every (ri → rj ) ∈ ES with wij < c , add edge (rLi , r Rj ) with reward c − wij > 0
+
+22: M ← maximum-weight matching on this bipartite graph ▷ minimizes J
+
+in (1) 23: Convert matched successor links in M into vertex-disjoint chains C =
+
+{C1, . . . , C m}, m ≥ K
+
+// Phase 3b: BIC-guided model selection 
+
+24: for all r ∈ R with β(r) > α (r) do 
+
+25: ρ(r) ← n(r)/(β(r) − α(r)) ; ϕ(r) ← nU L (r)/n (r)
+
+26: t(r) ← (ρ(r), ϕ (r)) 
+
+27: end for 
+
+28: repeat 
+
+29: Among all conflict-free chain pairs, find the pair (Ca, C b) with the largest BIC improvement after merging 30: if the best merge strictly improves BIC then 
+
+31: C ← (C \ { Ca, C b}) ∪ { Ca ∪ Cb}
+
+32: end if 
+
+33: until no conflict-free merge improves BIC 34: P ← C ; K ← |P| 
+
+35: return P, K 
+
+diagonal bivariate Gaussian over these profiles, and BIC accepts a merge only when the combined model scores strictly better than the two separate models. The procedure is greedy: at each iteration the conflict-free, merge-eligible pair with the largest BIC improvement is merged (a merge is conflict-free if no RNTI in one chain conflicts with any in the other), and iteration stops when no merge improves BIC. The remaining chain count is the estimated K, obtained without specifying 
+
+K in advance. 
+
+D. Trace Reconstruction and Preprocessing 
+
+After RNTI-to-device mapping, the raw DCI stream is separated into client-specific scheduling traces. Each trace is represented as an ordered sequence of decoded scheduling records, each containing a timestamp, transmission direction, transport block size, and physical resource block allocation. Algorithm 2 Data Reconstruction (Packet-Loss Imputation) 
+
+Require: Raw grants G; τul =300 , τdl =150 ; δ=1 .0s; m;
+
+λ=1 .8; κ
+
+Ensure: Imputed grant set ˜G 
+
+> 1:
+
+G ← { g ∈ G : ( g. dir =UL ∧ g. tb ≥τul ) ∨ (g. dir =DL ∧
+
+g. tb ≥τdl )} 
+
+> 2:
+
+Bul , B dl ← DETECT BURSTS (G, δ ); discard bursts with 
+
+< m grants  
+
+> 3:
+
+Bdl ← KM EANS HEIGHT FILTER (Bdl , k =2)  
+
+> 4:
+
+μs ← med( |Bul |); ρ ← med( DL-to-DL spacing ) 
+
+> 5:
+
+Tul , Tdl ← empirical TB-size pools from Bul , B dl  
+
+> 6:
+
+S ← ∅  
+
+> 7:
+
+for each consecutive pair (di, d i+1 ) in Bdl do  
+
+> 8:
+
+if no UL burst precedes di then  
+
+> 9:
+
+S ← S ∪ SAMPLE BURST (UL , μ s, Tul , d i) 
+
+> 10:
+
+end if  
+
+> 11:
+
+if di+1 .start − di.end > λρ then  
+
+> 12:
+
+n ← min( ⌊(di+1 .start − di.end )/ρ ⌉ − 1, κ ) 
+
+> 13:
+
+S ← S ∪ Snr=1 SAMPLE ROUND (Tul , Tdl , μ s, ρ ) 
+
+> 14:
+
+end if  
+
+> 15:
+
+end for  
+
+> 16:
+
+˜G ← (G ∪ S) with UL grants inside DL windows removed  
+
+> 17:
+
+return ˜G
+
+We then preprocess each per-device trace before extracting temporal fingerprints. First, we remove low-activity or irrelevant scheduling records using a transport block size filter. The remaining records are grouped into uplink and downlink bursts based on temporal proximity. These bursts provide the basis for identifying the FL round-cycle structure, in which each round typically includes downlink activity associated with global model delivery and uplink activity associated with client update transmission. However, passive over-the-air DCI collection is inherently incomplete. A sniffer may miss scheduling records because of decoding failures, temporary synchronization loss, or weak signal conditions. Missing records can introduce artificial gaps in the client-specific trace and distort burst boundaries, which directly affects View R and View L because they rely on cadence and round-to-round temporal structure. To reduce this effect, F LINT applies a missing-grant reconstruction step to each per-device trace. The goal is not to recover packet contents or user-plane data, but to restore the temporal continuity of the scheduling trace by identifying abnormal gaps and imputing likely missing scheduling activity from neighboring observations. Algorithm 2 summarizes this reconstruction process. 
+
+E. Fingerprinting Framework 
+
+The fingerprinting framework takes a cleaned per-device DCI stream and produces an architecture label. In Figure 2, we see that it consists of four stages: segmentation into observation windows, extraction of three complementary temporal views, late fusion of view-level predictions, and the final fingerprint decision. 
+
+1) Segmentation: A passive observer may begin monitoring a client at any point during the training session. Therefore, FLINT operates on fixed-duration observation windows rather than complete training sessions. We slide a window of length w
+
+over each client’s DCI stream and treat each window as an in-dependent attack observation. We set w = 300 , s . This duration provides enough time to capture multiple federated training rounds while remaining practical for passive monitoring. Within each window, F LINT identifies round-cycle structure from the alternation between uplink and downlink activity. This produces a sequence of round-level segments used by the rhythm and sequential views. Windows shorter than w at the end of a stream are retained as independent observations only if they contain sufficient activity. 
+
+2) Three Temporal Views: Simple statistics derived from transport block sizes and resource block allocations do not reliably distinguish model families when their overall commu-nication patterns are similar. F LINT therefore represents each observation window through three complementary temporal views. Each view is trained independently and produces a class-probability vector. The separate views allow the framework to capture different aspects of training behavior and provide robustness when one representation is less informative for a particular window. 
+
+a) View W: Multi-Resolution Energy.: View W captures how scheduling activity is distributed across multiple time scales. As summarized in Algorithm 3, we first convert each observation window into a regularly sampled activity signal based on transport block sizes or resource allocation activity. We then apply a discrete wavelet transform to decompose the signal into components at successively coarser resolutions. The energy at each resolution level is summarized and normalized to obtain a scale-aware descriptor of temporal activity. This view captures whether activity appears as sharp short-lived bursts, slower fluctuations, or a mixture of both. The resulting feature vector is classified using XGBoost, producing the probability vector pW .
+
+b) View R: Cadence and Regularity.: View R captures the periodicity and regularity of the federated training cycle. As shown in Algorithm 4, we use the round-cycle boundaries identified during segmentation to extract statistical descriptors of the round structure, including timing, uplink activity, downlink activity, and phase durations. We also compute spectral descriptors from round-level sequences to measure how strongly the traffic follows a regular cadence. A stable training loop tends to produce more regular round timing, while irregular computation or communication behavior produces a more diffuse temporal pattern. These features are classified using XGBoost, producing the probability vector pR.
+
+c) View L: Sequential Evolution.: View L models the round-to-round evolution of scheduling activity. As described in Algorithm 5, each window is represented as an ordered sequence of per-round descriptors and used to train a bidi-rectional Long Short-Term Memory network. The Bi-LSTM captures dependencies between consecutive rounds that are not preserved by aggregate statistical features. This view is Algorithm 3 View W: Wavelet Multi-Resolution Energy 
+
+Require: Window grants Gw; number of slots N =128 ;wavelet levels L=6 ; XGBoost classifier hW
+
+Ensure: View probability vector pW ∈ ∆2 
+
+> 1:
+
+x ← ACTIVITY SIGNAL (Gw, N ) ▷ x j = P  
+
+> g∈slot j
+
+g. tb  
+
+> 2:
+
+e ← [ ]  
+
+> 3:
+
+for ℓ = 0 to L − 1 do  
+
+> 4:
+
+ai ← (x2i + x2i+1 )/√2 ▷ Haar approximation  
+
+> 5:
+
+di ← (x2i − x2i+1 )/√2 ▷ Haar detail  
+
+> 6:
+
+Append eℓ ← P 
+
+> i
+
+d2 
+
+> i
+
+to e ▷ Detail energy at scale ℓ 
+
+> 7:
+
+x ← a ▷ Recurse on approximation  
+
+> 8:
+
+end for  
+
+> 9:
+
+Append eL ← P 
+
+> i
+
+x2 
+
+> i
+
+to e ▷ Residual approximation energy  
+
+> 10:
+
+xW ← e / PLℓ=0 eℓ ▷ Normalize to energy distribution  
+
+> 11:
+
+pW ← hW (xW ) 
+
+> 12:
+
+return pW
+
+Algorithm 4 View R: Round-Cadence Regularity and Spectral Features 
+
+Require: Window grants Gw; XGBoost classifier hR
+
+Ensure: pR ∈ ∆2 
+
+> 1:
+
+R ← EXTRACT ROUNDS (Gw) 
+
+> 2:
+
+Form sequences: gaps g, UL sizes u, DL sizes d, durations 
+
+δ 
+
+> 3:
+
+for each s ∈ { g, u, d, δ} do  
+
+> 4:
+
+Append μ(s), σ (s), slope( s), AC 1(s) to xstat  
+
+> 5:
+
+end for  
+
+> 6:
+
+for each s ∈ { g, u} do  
+
+> 7:
+
+p(f ) ← | FFT (s − μ(s)) |2 / (P 
+
+> f
+
+|FFT (s − μ(s)) |2 + ϵ) 
+
+> 8:
+
+Append arg max f p(f ), − P 
+
+> f
+
+p(f ) log p(f ), max f p(f )
+
+to xspec  
+
+> 9:
+
+end for  
+
+> 10:
+
+xR ← [ |R| ∥ xstat ∥ xspec ] 
+
+> 11:
+
+pR ← hR(xR) 
+
+> 12:
+
+return pR
+
+sensitive to how the training and update pattern changes over the observation window. At inference time, the trained Bi-LSTM produces the probability vector pL for each observation window. 
+
+3) Late Fusion: The three views provide complementary evidence about the client’s architecture. Instead of concatenat-ing raw feature vectors, F LINT performs late fusion over the view-level probability vectors pW , pR, and pL. Specifically, it forms a stacked probability representation 
+
+z = [ pW ∥ pR ∥ pL],
+
+where | denotes concatenation. A meta-classifier g ∗ ϕ, imple-mented as logistic regression, maps this stacked representation to a fused class-probability vector: 
+
+p ∗ F = g ∗ ϕ(z).
+
+The meta-classifier is trained using view-level predictions generated from the training folds. This probability-level fusion keeps the views modular, allows each view to be trained and 
+
+Algorithm 5 View L: Round-Sequence BiLSTM Training 
+
+Require: {(Gw, y w)}Mw=1 ; class weights wc ∝ 1/n c; epochs 
+
+E
+
+Ensure: Trained BiLSTM fθ 
+
+> 1:
+
+Rw ← EXTRACT ROUNDS (Gw), z-scored by (μf , σf )
+
+∀ w 
+
+> 2:
+
+Initialize 2-layer BiLSTM fθ with softmax over C =
+
+{CNN , RNN , Trans } 
+
+> 3:
+
+Optimize θ via Adam ( E epochs): 
+
+L(θ) = − 1
+
+M
+
+> M
+
+X
+
+> w=1
+
+X 
+
+> c∈ C
+
+wc yw,c log fθ (Rw)c 
+
+> 4:
+
+return fθ
+
+Inference: pL ← fθ (Rw) ∈ ∆|C|− 1
+
+inspected independently, and improves robustness when one view is degraded by missing observations or weak temporal structure and we called this fusion "stacking" fusion. 
+
+4) Fingerprint Decision: In the closed-world setting, the predicted architecture is the class with the highest fused probability: 
+
+ˆy = arg max  
+
+> c∈CNN ,RNN ,Transformer
+
+pF (c).
+
+In the open-world setting, FLINT rejects low-confidence windows as unknown: 
+
+ˆy =
+
+(
+
+Others , if max c pF (c) < η, 
+
+arg max c pF (c), otherwise .
+
+The final client-level fingerprint is obtained by aggregating predictions across multiple windows from the same client. VI. E VALUATION RESULT AND ANALYSIS 
+
+A. Experimental Setup and Metrics 
+
+Testbed. We evaluate F LINT on a real 5G federated learning testbed. The testbed consists of heterogeneous FL client devices connected through a 5G cell served by a gNodeB. Each client trains deep learning model locally and exchanges model updates with a federated server through the 5G network. A passive SDR-based sniffer collects PDCCH scheduling information and decodes DCI records without interacting with the network, the gNodeB, or the FL clients. 
+
+Architecture families. We evaluate three architecture fami-lies: convolutional neural networks (CNNs), recurrent neural networks (RNNs), and Transformers. Each family contains multiple concrete model variants so that the classification target is the architecture family rather than a specific model instance. For open-world experiments, we additionally consider unseen model variants and non-FL background traffic as Others .
+
+Evaluation settings. We evaluate F LINT under closed-world and open-world settings. In the closed-world setting, each observation window belongs to one of the three known FL architecture families, and the task is three-way classification among CNN, RNN, and Transformer. In the open-world setting, the model is trained on known FL families and evaluated on unseen model variants or background traffic, requiring the classifier to reject unknown windows as Others .
+
+Observation windows. Unless otherwise stated, we use fixed observation windows of w = 300 ,s. This window length captures multiple FL round cycles while remaining practical for passive monitoring. Section VI-D 3 studies the effect of different observation window sizes. 
+
+Training protocol. For closed-world evaluation, we use stratified 5-fold cross-validation with balanced class pools. Balancing prevents the classifier from favoring the majority architecture family and ensures that performance reflects per-class separability rather than dataset composition. For each fold, feature extraction, view-level classifiers, and the fusion meta-classifier are trained only on the training split and evaluated on the held-out split. 
+
+Metrics. We report per-class precision, recall, and F1-score, as well as macro-averaged precision, recall, and F1-score. Unless otherwise stated, we report mean and standard deviation across cross-validation folds. For open-world rejection, we also report unknown-detection performance and false-positive behavior for the Others class. 
+
+B. RNTI Mapping Evaluation 
+
+Here, we evaluate CCCD on a 613 s capture of 39 ,669 
+
+DCI records carried by eight C-RNTIs from three UEs, using only timestamp, RNTI, and direction with a reconnection window τmax = 500 ms. After aligning each recovered chain to a ground-truth device for scoring only, CCCD estimates 
+
+ˆK = 3 directly from the data and recovers every chain exactly. Therefore, the confusion matrix is diagonal (Table I) at 100% RNTI accuracy ( 8/8) and 100% record accuracy (39 ,669 /39 ,669 ). 
+
+C. Fingerprinting Performance 
+
+Closed-world performance. Table II reports the closed-world performance of F LINT using the full three-view configuration with stacking-based late fusion at w = 300 ,s. F LINT achieves a macro F1-score of 0.930 ± 0.021 across CNN, RNN, and Transformer families. RNNs are identified with the highest F1-score, reflecting their distinctive temporal scheduling behavior. CNNs and Transformers are difficult to distinguish because they can exhibit similar aggregate communication patterns, yet FLINT still reliably identifies both families. 
+
+Insight. These results confirm that the 5G control channel leaks more information than it appears to at first glance. Although 
+
+TABLE I: Confusion matrix of CCCD RNTI-to-UE mapping (row-normalized). Rows are ground-truth UEs. CCCD assigns every RNTI to the correct device.            
+
+> Predicted (aligned)
+> UE AUE BUE C
+> GT  UE A1.00 0.00 0.00 UE B0.00 1.00 0.00 UE C0.00 0.00 1.00
+
+TABLE II: Main closed-world performance at w = 300 s, stacking fusion.                                    
+
+> Class Precision Recall F1 CNN 0.921 ±0.047 0.871 ±0.030 0.895 ±0.031 RNN 0.963 ±0.030 0.994 ±0.013 0.978 ±0.019 Transformer 0.909 ±0.018 0.929 ±0.040 0.918 ±0.016
+> Macro 0.931 0.931 0.930 ±0.021 0.871
+> (148)
+> 0.035
+> (6)
+> 0.094
+> (16)
+> 0.006
+> (1)
+> 0.994
+> (154)
+> 0.000
+> (0)
+> 0.071
+> (12)
+> 0.000
+> (0)
+> 0.929
+> (158)
+> Predicted label
+> CNN
+> RNN
+> Transformer
+> True label
+> CNN
+> RNN
+> Transformer
+> 0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1
+> Row-normalized value
+
+Fig. 5: Normalized confusion matrix for closed-world finger-printing at w = 300 ,s using stacking fusion. Rows indicate true architecture families and columns indicate predicted families. 
+
+the adversary does not see packets or payloads, the timing and size of scheduling grants still reflect how different model families behave during federated training. The high F1-score shows that FLINT can recover this hidden structure from coarse PHY-layer observations. 
+
+Confusion analysis. Figure 5 shows the normalized confusion matrix for the closed-world setting at w = 300 ,s using stacking fusion. RNN samples are almost perfectly separated from the other families, with only one RNN sample misclassified as CNN. Most errors occur between CNN and Transformer, as expected, because these families tend to exhibit more similar aggregate scheduling behavior than RNNs. Nevertheless, F LINT 
+
+correctly identifies 87.1% of CNN samples and 92.9% of Transformer samples, showing that temporal evidence from the three views substantially reduces CNN-Transformer confusion. 
+
+Insight. The confusion matrix shows that FLINT separates RNNs reliably, while most remaining errors occur between CNNs and Transformers. This indicates that the main challenge is distinguishing architectures with similar communication vol-ume, where temporal structure becomes the key differentiator. 
+
+Attack reliability. The per-class precision values in Table II show that F LINT does not simply produce high recall with many false positives. For example, the Transformer class achieves a precision of 0.908 and a recall of 0.929. A passive adversary can therefore act on high-confidence identifications rather than relying on noisy guesses. 
+
+Insight. For the fingerprinting attack, precision is as important as recall. High precision indicate that when FLINT identifies a model family, the adversary can use that information to support downstream decisions such as architecture-specific probing, resource targeting, or selective monitoring. TABLE III: Baseline comparison and imputation ablation at 
+
+w = 300 s. Entries are F1-scores over 5-fold CV.                   
+
+> Method CNN RNN Trans. Macro FLARE-style 0.825 ±0.058 0.880 ±0.099 0.798 ±0.058 0.834 ±0.047
+> FLARE-style+Imp. 0.819 ±0.035 0.947 ±0.032 0.865 ±0.077 0.877 ±0.033
+> FLINT w/o Imp. 0.814 ±0.066 0.884 ±0.059 0.887 ±0.067 0.862 ±0.054
+> FLINT 0.895 ±0.031 0 .978 ±0.019 0 .918 ±0.016 0 .930 ±0.021
+
+D. Ablation Studies 
+
+We conduct ablation studies to explain why F LINT works and which components are necessary. The studies answer five questions: whether simple communication statistics are suffi-cient, whether the three temporal views provide complementary information, what is the right fusion strategy, whether data-loss imputation matters, and how the observation window affects performance. 
+
+Baseline and imputation analysis. Table III compares the FLARE baseline with its statistical features to our F LINT 
+
+and also isolates the effect of data-loss imputation. Also, FLARE relies on packet-level observations, such as packet sizes, directions, timing, and inter-arrival statistics, which are available from encrypted Wi-Fi traffic but are not visible to a passive 5G PHY-layer observer. In contrast, F LINT uses only decoded PDCCH/DCI scheduling records, including transport block sizes, transmission directions, timestamps, and physical resource block allocations. Therefore, we adapt the FLARE baseline by replacing packet-level quantities with their closest observable PHY-layer counterparts, such as TBS, direction, and timing-derived statistics. The F LINT w/o Imp. row removes data-loss imputation from the proposed temporal multi-view pipeline while keeping the rest of the F LINT framework unchanged. The FLARE baseline achieves a macro F1 of 0.834 ,indicating that statistical summaries of PHY-layer scheduling records provide some architectural signal but are not sufficient. Adding imputation improves the FLARE baseline to 0.877 ,indicating that missing-grant reconstruction helps recover useful temporal continuity. However, the full F LINT pipeline achieves the best macro F1 of 0.930 , showing that imputation and temporal multi-view modeling are both necessary for reliable architecture fingerprinting. 
+
+Insight. The baseline comparison shows that simple PHY-level statistics contain useful signal, but they are not sufficient. FLINT performs better because it combines missing-grant reconstruction with temporal multi-view modeling. 1) Multi-View Contribution: Table IV evaluates all combi-nations of View W, View R, and View L. Single views capture useful but incomplete evidence. Pairwise combinations improve performance, and the full W+R+L configuration achieves the highest macro F1. 
+
+Insight. No single view fully captures the architecture finger-print. View W captures multi-scale activity concentration, View R captures round cadence and regularity, and View L captures round-to-round evolution. 2) Fusion Strategy: Table IV also compares average fusion and learning based fusion (stacking). As our dataset is balanced TABLE IV: View ablation and fusion strategy comparison at 
+
+w = 300 s.                                                                                                     
+
+> View CNN F1 RNN F1 Trans. F1 Macro F1 W0.833 ±0.020 0.947 ±0.026 0.883 ±0.022 0.888 ±0.004 R0.864 ±0.043 0.981 ±0.015 0.881 ±0.041 0.909 ±0.030 L0.766 ±0.049 0.911 ±0.037 0.853 ±0.037 0.843 ±0.036 W + R 0.881 ±0.033 0.972 ±0.023 0.903 ±0.033 0.919 ±0.023 W + L 0.879 ±0.013 0.963 ±0.025 0.904 ±0.018 0.915 ±0.012 R + L 0.851 ±0.050 0.968 ±0.015 0.884 ±0.053 0.901 ±0.036 W+R+L, avg. 0.880 ±0.037 0.976 ±0.016 0.892 ±0.029 0.916 ±0.024
+> W+R+L, stack 0.895 ±0.031 0.978 ±0.019 0.918 ±0.016 0.930 ±0.021 Sniffing window (s)
+> 60
+> 120
+> 180
+> 240
+> 300
+> 360
+> 420
+> 480
+> 540
+> 600
+> F1-score
+> 0.65
+> 0.7
+> 0.75
+> 0.8
+> 0.85
+> 0.9
+> 0.95
+> 1
+> CNN
+> RNN
+> Transformer
+> Macro-F1
+> Optimal sniffing window
+
+Fig. 6: Effect of sniffing window size on F LINT ’s fingerprinting performance. F1-score improves rapidly from 60 s to 300 s as longer windows capture more FL round-cycle structure, and then largely saturates. We use w = 300 s as the default operating point because it provides a strong tradeoff between attack accuracy and observation cost. so, the average and weighted-average fusion both achieve a macro F1 of 0.916, hence we show average fusion result. With compare to average fusion, stacking improves macro F1 to 0.930 and yields the best overall result. 
+
+Insight. The similar performance of average and weighted fusion suggests that the three views contribute comparably. Stacking performs best because it learns when to trust each view, rather than assigning some fixed weight to every window. 3) Observation Window Analysis: We evaluate how the sniffing window affects F LINT ’s performance by varying w
+
+from 60 s to 600 s. Short windows may not contain enough FL round-cycle structure, while longer windows increase the adversary’s observation cost. In real scenario, attack window is not fixed, attacker can come and join any time, hence the impact of sniffing window represent the attack impacts with compare to sniffing time. 
+
+Insight. FLINT does not require observing the full training session. A few minutes of passive PDCCH sniffing are sufficient to recover a reliable architecture fingerprint, while very short observations fail to capture enough FL round-cycle structure. E. Exploratory Open-World Rejection Analysis 
+
+In practical deployments, the adversary may observe traffic that does not belong to any of the architecture families represented during classifier training. We therefore examine TABLE V: Threshold-based unknown rejection at w=300 s. Known Macro F1 measures classification of known architecture families.       
+
+> Mechanism Unknown Recall FAR Known Macro F1 Softmax threshold 0.111 0.889 0.909
+
+whether the three-class FLINT classifier can reject unknown observations using a confidence threshold. This analysis is intended to evaluate the limitations of standard softmax-based rejection of open-world evaluation. 
+
+a) Rejection mechanism.: We evaluate confidence-threshold-based rejection using the fused three-class softmax probabilities. An observation window is rejected as Others 
+
+when its maximum class probability is below a threshold η;otherwise, it is assigned to the architecture family with the highest probability. The threshold η is calibrated using held-out validation windows from the known architecture families to retain approximately 90% of known validation observations. Thus, Others is a rejection outcome rather than a separately trained fourth class. 
+
+b) Metrics.: We report three metrics. Known Macro F1 is the macro-averaged F1-score over CNN, RNN, and Transformer observations accepted as known. Unknown Recall 
+
+is the fraction of true Others observations correctly rejected. The False Acceptance Rate (FAR) is the fraction of true 
+
+Others observations incorrectly accepted as one of the known architecture families. 
+
+c) Results.: Table V reports the performance of confidence-threshold-based rejection at w = 300 s. The thresholded softmax maintains a Known Macro F1-score of 0.909 for accepted known observations. However, it correctly rejects only 11.1% of Others observations and produces an FAR of 0.889. These results indicate that the three-class softmax classifier remains overconfident when presented with observations outside the known architecture families. Conse-quently, confidence thresholding alone is insufficient for reliable unknown-workload detection. 
+
+Insight. Strong classification performance among known architecture families does not automatically provide reliable rejection of unknown observations. The low Unknown Recall and high FAR show that standard softmax confidence is not a dependable indicator of whether a PHY-layer trace belongs to a known architecture family. More specialized open-set recognition methods are therefore required for reliable open-world fingerprinting. F. Downstream Attacks Based on Fingerprinting 
+
+This subsection establishes the downstream stage of the attack, in which the adversary converts model architecture into surgical interference against the targeted FL client(s). The upstream fingerprinting stage has already revealed to the adversary which architecture the clients run, so the adversary no longer treats the radio link as an opaque pipe and instead jams the uplinks of selected clients at the PHY layer during FL training. FL round     
+
+> 510 15 20 25
+> Round time (s)
+> 0
+> 200
+> 400
+> 600
+> Orange bands mark attack-active observations.
+> Benign
+> Attack
+> Jamming period
+
+(a) CNN FL round       
+
+> 510 15 20 25
+> Round time (s)
+> 50
+> 100
+> 150
+> 200
+> Orange bands mark attack-active observations.
+> Benign Attack
+> Jamming period
+
+(b) RNN 
+
+Fig. 7: Targeted jamming under synchronous FL, showing round completion time for (a) CNN and (b) RNN client. FL update     
+
+> 20 40 60 80
+> Test loss
+> 0
+> 2
+> 4
+> 6
+> Orange bands mark attack-active observations.
+> Benign Attack
+> Jamming effect
+> Jamming period
+
+(a) CNN FL update      
+
+> 20 40 60 80
+> Test loss
+> 2
+> 4
+> 6
+> Orange bands mark attack-active observations.
+> Benign Attack
+> Jamming period
+> Jamming effect
+
+(b) RNN 
+
+Fig. 8: Targeted jamming under asynchronous federated learn-ing, showing test loss per asynchronous update for (a) the convolutional and (b) the recurrent client. 
+
+1) Attack on Synchronous Federated Learning: We first examine synchronous aggregation, where the attack converts a single jammed client into a stall of the entire round, and both architectures suffer. The mechanism follows directly from the synchronization barrier in FedAvg. Because the aggregator cannot produce the next global model until every selected client has returned its update, jamming the targeted client stalls communication between clients and the server. For the convolutional client in Fig. 7a, jammed rounds complete in a mean of 243 s against a clean-round mean of 44 s, an inflation of roughly 5.5× per jammed round, and the cumulative training time rises by +152% over the benign baseline. Moreover, the recurrent client incurs a higher relative cost. Fig. 7b reports jammed rounds at a mean of 195 s against a clean-round mean of only 26 s, an inflation of nearly 7.6×,with the total training time rising by +157% . The mechanism is identical to the CNN case. In both cases, the jamming effect stays confined to the jamming period, because every spike sits inside an orange band and the round time returns to baseline the moment the band ends, and the final accuracy converges to the benign trajectory at 0.894 against 0.892 for the CNN client and 0.905 against 0.918 for the recurrent one. The attack therefore denies timely convergence rather than accuracy. 
+
+2) Attack on Asynchronous Federated Learning: We now turn to asynchronous aggregation, where the global model is updated as client updates arrive without waiting. Therefore, jamming no longer stalls progress. Instead, it injects stale and partial contributions into the aggregate. The CNN client in Fig. 8a resolves this into two regimes. During the first isolated burst near updates 16 through 23 , the test loss climbs to roughly 
+
+4 and then falls back toward the benign level within a few updates after the band ends. However, continuous jamming forces the global model to update with fewer client updates, leading to higher loss and a +6 .66 increase over the baseline. The recurrent client in Fig. 8b isolates a single short jamming period and exposes a delayed response that outlives it. The jamming period spans only the band near updates 39 through 
+
+45 , yet the test loss continues to climb for roughly 15 updates after the band ends, peaks near update 60 , and only then decays back toward the benign trajectory, settling a mere 
+
++0 .16 above baseline by the end while the accuracy tracks benign at 0.626 against 0.628 . The aggregate statistics show the same lag because the jammed updates themselves average only +1 .47 above benign, while the nominally clean updates average +0 .83 , confirming that much of the damage falls on updates the adversary never touched. Therefore, the two cases together support a single structural claim: that synchronous federated learning confines the attack to the time domain within the jamming period while asynchronous federated learning relocates it to the training loss and lets it persist beyond the jamming period, and the magnitude and recoverability within each domain depend jointly on the architecture and the jamming duration. 
+
+Insight. Fingerprinting makes targeted attack possible. Once the adversary identifies which client is training a particu-lar model family, it can selectively jam that client instead of attacking blindly. The resulting stale updates can then propagate through aggregation, turning model-architecture reconnaissance into a practical downstream attack. G. Countermeasure 
+
+TABLE VI: Effect of countermeasure on F LINT .
+
+Class / Target Correct Misclassified Rejected Not correctly id. CNN / 5 MB 0.0% 66.7% 33.3% 100.0% CNN / 10 MB 85.2% 0.0% 14.8% 14.8% RNN / 5 MB 100.0% 0.0% 0.0% 0.0% RNN / 10 MB 100.0% 0.0% 0.0% 0.0% Overall 79.8% 7.1% 13.1% 20.2% 
+
+Traffic-analysis defenses commonly use padding, dummy traffic, size normalization, timing obfuscation, burst shaping, and cluster anonymization to reduce side-channel leakage [ 36 ], [37 ], [ 38 ]. We evaluate a lightweight size-obfuscation defense in which each FL update is compressed when possible and then padded to a fixed target size. We test two targets, 5 MB and 10 MB, and measure fingerprinting attack performance. Table VI shows that size obfuscation provides only limited protection. For CNN with a 5 MB target, none of the defended samples are correctly identified; however, with a 10 MB target, 85.2% remain correctly identified. RNN is unaffected, with 100.0% correct identification under both targets. Overall, only 20.2% of defended samples are either misclassified or rejected. The defense also increases commu-nication overhead from between 14% - 89%. These results suggest that effective defenses must hide not only update-size information, but also round-cycle timing and scheduling dynamics exposed through 5G PHY-layer metadata. Existing traffic-analysis countermeasures are largely designed for packet-level fingerprints, where the main observable features are packet size, direction, timing, and burst shape. In contrast, FLINT operates on 5G PHY-layer scheduling metadata, where the attacker observes transport block sizes, resource block allocations, transmission direction, and round-cycle dynamics exposed through PDCCH/DCI records. Future defenses should therefore consider 5G-specific obfuscation mechanisms that jointly hide update size, scheduling cadence, uplink/downlink round structure, and resource allocation patterns while keeping the communication overhead practical for federated learning over cellular networks. VII. C ONCLUSION 
+
+This paper presented FLINT, a fully black-box framework for fingerprinting federated learning model architectures from 5G physical-layer side channels. Although 5G encryption protects user-plane packets and AI/ML model update contents, FLINT shows that PDCCH scheduling metadata still leaks architecture-dependent patterns. By reconstructing per-device RNTI grants via a novel RNTI-to-UE mapping, imputing incomplete scheduling observations, and combining multi-resolution energy, round-cadence, and sequential temporal views, FLINT infers whether a client is training a CNN, RNN, or Transformer without requiring participation in training or access to packet-level traffic. Evaluation on a real 5G FL testbed demonstrates that the proposed RNTI mapping accurately recovers device identities and that temporal multi-view fingerprinting substantially outperforms simple PHY-layer statistical baselines. The results further show that open-world rejection and downstream architecture-aware attacks are practical concerns, making this leakage more than a passive privacy issue. Overall, FLINT exposes an overlooked vulnera-bility at the intersection of 5G control-plane observability and federated learning security, and motivates future defenses that obfuscate or normalize scheduling behavior without degrading FL performance. REFERENCES [1] B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas, “Communication-efficient learning of deep networks from decentralized data,” in Proc. Artificial Intelligence and Statistics (AISTATS) . PMLR, 2017, pp. 1273–1282. [2] P. Kairouz, H. B. McMahan et al. , “Advances and open problems in federated learning,” Foundations and Trends in Machine Learning , vol. 14, no. 1–2, pp. 1–210, 2021. [3] T. Wang, “High precision open-world website fingerprinting,” in Proc. 2020 IEEE Symposium on Security and Privacy (SP) . IEEE, 2020, pp. 152–167. [4] J. Li, Z. Lin, J. Qu, S. Wu, H. Zhou, Y. Liu, X. Ma, T. Wang, X. Luo, and X. Guan, “Robust app fingerprinting over the air,” IEEE/ACM Transactions on Networking , 2024. [5] R. R. Chowdhury and P. E. Abas, “A survey on device fingerprinting approach for resource-constraint iot devices: Comparative study and research challenges,” Internet of Things , vol. 20, p. 100632, 2022. [6] M. N. H. Shuvo, M. Hossain, A. Mallik, J. Twigg, and F. Dagefu, “FLARE: A wireless side-channel fingerprinting attack on federated learning,” in Proc. IEEE International Conference on Computer Com-munications (INFOCOM) , 2026, to appear. [7] M. Zhou, W. Zhou, J. Huang, J. Yang, M. Du, and Q. Li, “Stealthy and effective physical adversarial attacks in autonomous driving,” IEEE Transactions on Information Forensics and Security , 2024. [8] M. H. Ashik and M. Hossain, “ReaperPulse: A targeted energy-efficient control channel jamming in 5g,” in Proc. 2025 ACM Workshop on Wireless Security and Machine Learning (WiseML) , 2025, pp. 2–7. [9] H. Wan, X. Cao, A. Marder, and K. Jamieson, “NR-Scope: A practical 5g standalone telemetry tool,” in Proc. 20th International Conference on Emerging Networking Experiments and Technologies (CoNEXT) , 2024, pp. 73–80. [10] N. Ludant et al. , “From 5G sniffing to harvesting leakages of privacy-preserving messengers,” in Proc. 2023 IEEE Symposium on Security and Privacy (SP) . IEEE, 2023, pp. 3146–3161. [11] R. Shokri, M. Stronati, C. Song, and V. Shmatikov, “Membership inference attacks against machine learning models,” in 2017 IEEE Symposium on Security and Privacy (SP) . IEEE, 2017, pp. 3–18. [12] M. Nasr, R. Shokri, and A. Houmansadr, “Comprehensive privacy analysis of deep learning: Passive and active white-box inference attacks against centralized and federated learning,” in 2019 IEEE Symposium on Security and Privacy (SP) . IEEE, 2019, pp. 739–753. [13] G. Zhu, D. Li, H. Gu, Y. Yao, L. Fan, and Y. Han, “FedMIA: An effective membership inference attack exploiting “all for one” principle in federated learning,” in Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2025, pp. 20 643–20 653. [14] W. Yang, S. Wang, D. Wu, T. Cai, Y. Zhu, S. Wei, Y. Zhang, X. Yang, Z. Tang, and Y. Li, “Deep learning model inversion attacks and defenses: A comprehensive survey,” Artificial Intelligence Review , vol. 58, no. 8, pp. 1–52, 2025. [15] D. Chen, Y. Luo, Q. Qi, and H. Fei, “Deep diffusion gradients leakage in federated learning,” in Proc. ICASSP 2025 – IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) . IEEE, 2025, pp. 1–5. [16] S. Mehnaz, S. V. Dibbo, E. Kabir, N. Li, and E. Bertino, “Are your sensitive attributes private? novel model inversion attribute inference attacks on classification models,” in 31st USENIX Security Symposium (USENIX Security 22) , 2022, pp. 4579–4596. [17] Z. Wang, Y. Huang, M. Song, L. Wu, F. Xue, and K. Ren, “Poisoning-assisted property inference attack against federated learning,” IEEE Transactions on Dependable and Secure Computing , vol. 20, no. 4, pp. 3328–3340, 2022. [18] P. Sirinam, M. Imani, M. Juarez, and M. Wright, “Deep fingerprinting: Undermining website fingerprinting defenses with deep learning,” in 
+
+Proc. 2018 ACM SIGSAC Conference on Computer and Communications Security (CCS) , 2018, pp. 1928–1943. [19] A. Panchenko, F. Lanze, J. Pennekamp, T. Engel, A. Zinnen, M. Henze, and K. Wehrle, “Website fingerprinting at internet scale,” in Network and Distributed System Security Symposium (NDSS) , 2016. [20] M. Shen, K. Ji, Z. Gao, Q. Li, L. Zhu, and K. Xu, “Subverting website fingerprinting defenses with robust traffic representation,” in Proc. 32nd USENIX Security Symposium (USENIX Security 23) , 2023, pp. 607–624. [21] X. Deng, R. Zhao, Y. Wang, M. Zhan, Z. Xue, and Y. Wang, “CountMamba: A generalized website fingerprinting attack via coarse-grained representation and fine-grained prediction,” in Proc. 2025 IEEE Symposium on Security and Privacy (SP) . IEEE, 2025. [22] C. Sheng, W. Zhou, Q.-L. Han, W. Ma, X. Zhu, S. Wen, and Y. Xiang, “Network traffic fingerprinting for IIoT device identification: A survey,” 
+
+IEEE Transactions on Industrial Informatics , 2025. [23] L. Batina, S. Bhasin, D. Jap, and S. Picek, “CSI NN: Reverse engineering of neural network architectures through electromagnetic side channel,” in 28th USENIX Security Symposium (USENIX Security 19) , 2019, pp. 515–532. [24] X. Zhang, A. A. Ding, and Y. Fei, “Deep-learning model extraction through software-based power side-channel,” in 2023 IEEE/ACM Inter-national Conference on Computer Aided Design (ICCAD) . IEEE, 2023, pp. 1–9. [25] H. Chabanne, J.-L. Danger, L. Guiga, and U. Kuhne, “Side channel attacks for architecture extraction of neural networks,” CAAI Transactions on Intelligence Technology , vol. 6, no. 1, pp. 3–16, 2021. [26] 3GPP, “NR; Physical channels and modulation,” ETSI, Technical Specification (TS) 3GPP TS 38.211 (ETSI TS 138 211), Apr. 2025, release 18. [Online]. Available: https://www.etsi.org/deliver/etsi_ts/ 138200_138299/138211/18.06.00_60/ts_138211v180600p.pdf [27] ——, “NR; Radio Resource Control (RRC); Protocol specification,” ETSI, Technical Specification (TS) 3GPP TS 38.331 (ETSI TS 138 331), Jul. 2025, release 18. [Online]. Available: https://www.etsi.org/deliver/ etsi_ts/138300_138399/138331/18.06.00_60/ts_138331v180600p.pdf [28] ——, “NR; Physical layer procedures for control,” ETSI, Technical Specification (TS) 3GPP TS 38.213 (ETSI TS 138 213), Apr. 2025, release 18. [Online]. Available: https://www.etsi.org/deliver/etsi_ts/ 138200_138299/138213/18.06.00_60/ts_138213v180600p.pdf [29] ——, “NR; Medium Access Control (MAC) protocol specification,” ETSI, Technical Specification (TS) 3GPP TS 38.321 (ETSI TS 138 321), Feb. 2026, release 18. [Online]. Available: https://www.etsi.org/deliver/ etsi_ts/138300_138399/138321/18.08.00_60/ts_138321v180800p.pdf [30] ——, “Security architecture and procedures for 5G System,” ETSI, Technical Specification (TS) 3GPP TS 33.501 (ETSI TS 133 501), Apr. 2025, release 18. [Online]. Available: https://www.etsi.org/deliver/etsi_ ts/133500_133599/133501/18.09.00_60/ts_133501v180900p.pdf [31] ——, “NR; Multiplexing and channel coding,” ETSI, Technical Specification (TS) 3GPP TS 38.212 (ETSI TS 138 212), Apr. 2025, release 18. [Online]. Available: https://www.etsi.org/deliver/etsi_ts/ 138200_138299/138212/18.06.00_60/ts_138212v180600p.pdf [32] H. Wan, X. Cao, A. Marder, and K. Jamieson, “Nr-scope: A practical 5g standalone telemetry tool,” in Proc. the 20th International Conference on Emerging Networking EXperiments and Technologies , ser. CoNEXT ’24. New York, NY, USA: Association for Computing Machinery, 2024, p. 73–80. [Online]. Available: https://doi.org/10.1145/3680121.3697808 [33] M. C. Golumbic, Algorithmic graph theory and perfect graphs . Elsevier, 2004, vol. 57. [34] H. W. Kuhn, “The hungarian method for the assignment problem,” Naval research logistics quarterly , vol. 2, no. 1-2, pp. 83–97, 1955. [35] G. Schwarz, “Estimating the dimension of a model,” The annals of statistics , pp. 461–464, 1978. [36] K. P. Dyer, S. E. Coull, T. Ristenpart, and T. Shrimpton, “Peek-a-boo, i still see you: Why efficient traffic analysis countermeasures fail,” in 2012 IEEE symposium on security and privacy . IEEE, 2012, pp. 332–346. [37] J. K. Holland, J. Carpenter, S. E. Oh, and N. Hopper, “Detorrent: An adversarial padding-only traffic analysis defense,” in Proc. 24th Privacy Enhancing Technologies Symposium (PETS 2024) , 2023. [38] M. Shen, K. Ji, J. Wu, Q. Li, X. Kong, K. Xu, and L. Zhu, “Real-time website fingerprinting defense via traffic cluster anonymization,” in Proc. 2024 IEEE Symposium on Security and Privacy (SP) . IEEE, 2024, pp. 3238–3256.

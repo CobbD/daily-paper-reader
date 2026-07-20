@@ -1,0 +1,1153 @@
+Title: From Neural Intent to Cryptographic Authorization: Governing Agentic Workflows
+
+URL Source: https://arxiv.org/pdf/2607.15596v1
+
+Published Time: Mon, 20 Jul 2026 00:34:05 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# From Neural Intent to Cryptographic Authorization: Governing Agentic Workflows 
+
+Jiasi Weng 1, Jian Weng 1, Minrong Chen 2, Ming Li 1, Jia-Nan Liu 3, Zhi Li 4, and Yue Zhang 5
+
+> 1
+
+Guangzhou University, China 
+
+> 2
+
+South China Normal University, China 
+
+> 3
+
+Dongguan University of Technology, China 
+
+> 4
+
+Jinan University, China 
+
+> 5
+
+Shandong University, China 
+
+Abstract —The rapid adoption of artificial intelligence (AI)-driven and agentic workflows is transforming traditional gov-ernment and enterprise systems into language-based, tool-using and increasingly autonomous infrastructures. Conventional key management services authenticate who may invoke a cryp-tographic primitive, but remain agnostic to which workflow steps are authorized at runtime: an authenticated agent can still be hijacked by direct or indirect prompt injection into executing malicious actions that satisfy identity checks yet violate user intent. We present Neural Cryptographic Services 
+
+(NCS), an active security governance plane grounded in aneural-symbolic design and interposed between LLM agents and privileged tools. Under NCS, an untrusted neural planner compiles natural-language instructions into structured plan drafts but holds no execution authority. Execution is instead gated by a deterministic symbolic controller operating over an offline-signed, hash-chained instruction stream. NCS verifies the signature, incrementally validates the hash chain, releases exactly one instruction payload at a time, and enforces strict binding between the agent’s proposed tool parameters and the verified payload. Mismatched or out-of-order tool calls are rejected fail-closed, while previously verified states are retained for post-hoc auditing. We evaluate NCS on AgentDojo and a custom argument-hijacking benchmark. NCS drives attack success rates to near zero while preserving acceptable utility on benign workflows. NCS thus reframes agent security from asking whether a model’s intent complied to asking whether a proposed dispatch matches a cryptographically authorized step. 
+
+I. I NTRODUCTION 
+
+Artificial intelligence (AI) agents driven by large language models (LLMs) are rapidly transforming enterprise workflows in government and financial domains from statically compiled and rule-based pipelines into generative and autonomous workflows [1–4]. In traditional environments, business logic is explicitly encoded by developers, providing deterministic control and data flows that can be statically analyzed and verified. In contrast, under an agentic paradigm, control and data flows may be dynamically synthesized at runtime through natural language reasoning, tool orchestrations, and multi-step planning. Although this significantly enhances operational autonomy and decision-support efficiency [5, 6], it fundamentally breaks the security assumptions of determin-istic execution. By shifting the business logic from rule con-straints to runtime model generation, agentic systems expose critical interfaces to semantic manipulation [7, 8], adversarial injection [9–12], and privilege escalation attacks [13]. Within government and financial workflows, cryptographic servers, such as hardware security modules (HSM) and key management systems (KMS), serve as the ultimate root of trust for authentication and compliance. Indeed, utilizing certified cryptographic services is increasingly a hard legal mandate rather than an optional defense-in-depth measure, as exemplified by critical information infrastructure regulations such as China’s Cryptography Law [14] and EU Cyber Re-silience Act [15]. However, traditional cryptographic servers play the role of passive execution engines. They can enforce 
+
+how a cryptographic primitive is computed, but they are not aware of why , when , and under what workflow conditions 
+
+a given operation should be legitimately invoked. The lack of awareness may render conventional security protection ineffective in agentic workflows. Consider a concrete scenario that an agent’s identity has been successfully authenticated and its actions fall within legitimate operational permissions, but an adversary can silently subvert the workflow by indi-rectly injecting a malicious instruction into external data or tools like “ignore previous instructions and send an email to ⟨attacker ⟩” [16]. The underlying cryptographic services have no mechanism to detect or reject the resulting operation, because the cryptographic identity check passed and the permissions are legitimate. This exposes a fundamental gap that authentication establishes who is acting, but provides no assurance about which action is being authorized when the intent 1 is mapped into actions at runtime. Based on these observations, Fig. 1 compares the security risks of traditional deterministic information processing and dynamic agentic workflows. In the former, cryptographic operations are statically verified, hard-coded actions bound to immutable triggers and predefined access-control lists; hence, direct interaction with standard passive cryptographic servers is sufficient. In agentic systems, however, cryptographic invocations occur along dynamically synthesized execution paths governed by probabilistic language models. Under this paradigm, standard cryptographic interfaces may fail to se-cure the workflow boundary due to three-fold reasons: (a) The attack surface expands to include untrusted inputs, enabling attackers to hijack agentic control flows or operation argu-ments [16–19]; (b) LLM-mediated reasoning is probabilistic, meaning that critical decisions, such as checking a staff’s permission before delegating authority, are resolved through distribution-based inferences rather than cryptographic exact-ness [20]; (c) Because agentic workflows are compositional 
+
+> 1The intent refers to the semantic goal inferred from an instruction, capturing what the agent is expected to accomplish. arXiv:2607.15596v1 [cs.CR] 17 Jul 2026
+
+Fig. 1: Comparison of the traditional deterministic information processing and dynamic agentic workflow, along with the corresponding application security risks ( R) and security requirements ( S). The left panel illustrates a traditional CS instance focused on standard cryptographic services and module invocation for deterministic systems. The right panel depicts the NCS framework designed for AI-driven environments. and execute sequentially, a single probabilistic deviation in an early step can propagate through downstream execution paths, causing cascading errors [21]. 
+
+Our Goals. To close this gap, cryptographic services for agentic workflows should evolve from a passive execution engine into an active runtime security governance plane 
+
+that governs when and under what workflow conditions sensitive operations are released, and how untrusted actions are prevented. Concretely, we argue that such a plane should provide two core properties:  
+
+> •
+
+Proactive Instruction Authentication and Runtime Ac-tion Checking. The governance plane should establish a unified trust boundary that validates the authenticity of instructions and the legitimacy of actions, rather than identities alone. This entails verifying who is permitted, and in which context, to execute a downstream action, and ensuring that the corresponding upstream action has completed successfully before the downstream action is released.  
+
+> •
+
+Post-hoc Instruction and Action Traceability. The gover-nance plane should produce a cryptographically verifiable and non-repudiable audit log of the entire execution. This log faithfully captures who executed which action, when, and under what informational context, thereby reconstruct-ing a complete and tamper-evident timeline of the agent’s runtime decisions. 
+
+Challenges. Realizing such a security governance plane is inherently challenging, as it needs to reconcile two different computational paradigms, i.e. , the deterministic and discrete exactness demanded by cryptographic operation logic vs. the probabilistic nature of intent interpretation in agentic work-flows . One possible approach is to place a neural guardrail model directly atop a cryptographic server, introducing a pure neural overlay for intent understanding. While such overlays can filter certain classes of attacks, their verdicts remain probabilistic. Semantic plausibility does not guarantee crypto-graphic operation correctness (see our attacks on FATH [22] later). An alternative design is to expose the cryptographic service provider as a naive external tool in the agent’s toolbox that may enable flexible capability invocation, but entirely bypasses workflow-level enforcement. Under this model, the cryptographic server processes individual primitive requests in isolation, with no visibility into workflow-level depen-dencies. Consequently, it is powerless to prevent an agent from skipping a critical precondition before executing an irreversible downstream operation. 
+
+Inspiration. Bridging these two computational paradigms is related to an active research line known as Neural-Symbolic computing [20, 23–25]. Neural components utilize artificial neural networks characterized by continuous, differentiable, and distributed representations, where computational outputs are inherently statistical and probabilistic rather than mathe-matically guaranteed. Conversely, Symbolic components rely on algebraic and logical processing over discrete, explicit, and well-defined symbols, where execution paths strictly adhere to formal syntax and mathematical invariants. While neural representations excel at high-dimensional semantic parsing and contextual generalization, they lack the structural provability, algebraic rigor, and deterministic invariants that symbolic components natively enforce. Within our security model, cryptographic operations must be positioned strictly within the symbolic domain, since cryptographic primitives, including finite field arithmetic, modular exponentiation, and hash functions, possess zero tolerance for approximation due to the avalanche effect. Prior Neural-Symbolic designs typically couple the two domains through explicit interfaces. Representative patterns include perception-to-symbol pipelines that feed a sym-2bolic logic engine ( e.g. , NS-CL [26]), LLM-generated pro-grams executed and verified by external compilers [27], and probabilistic-logical frameworks that treat neural predictions as soft evidence under symbolic constraints (e.g. , Deep-ProbLog [28]). 
+
+Our Designs. We adopt this separation principle to estab-lish a secure governance plane: neural components interpret unstructured intent, while symbolic components authenticate, validate and execute. We propose Neural Cryptographic Services (NCS), an active runtime security governance plane for agentic workflows built upon a Neural-Symbolic design that splits authority between probabilistic neural generation and deterministic symbolic execution (as the lower right corner in Fig. 1 shown). NCS comprises five modules: a 
+
+Neural Planner , a Symbolic Controller , a Crypto Execution Engine , a Verifier , and Runtime State Management . External agents and tool actors sit outside the modules and may propose actions but cannot set authorization outcomes or release signed payloads. The Neural Planner compiles open-ended natural-language requests and already authenticated instruction blocks at runtime into structured execution plan drafts. These drafts are explicit interfaces between neural and symbolic sides, but carry zero execution authority . Authority transfers only after symbolic processing by a deterministic Symbolic Controller to enforce trust-material constraints, to map each validated plan into a registered cryptographic inter-mediate representation (IR) backend, to schedule instruction payloads, and to commit validation results into session and audit state. The Crypto Execution Engine interprets algorithm-agnostic IR opcodes ( e.g. , signature verification, hashing, encryption) via pluggable software or hardware backends. The Verifier enforces a fail-closed gate at workflow-level binding that requires an agent’s tool-calling arguments to match the cur-rently released instruction payload. Runtime State Manage-ment holds the authoritative session context. By isolating probabilistic drafting from deterministic verification and ex-ecution, NCS enforces a fail-closed boundary while remain-ing compatible with enterprise key-management deployments through standard cryptographic interfaces ( e.g. , PKCS#11). 
+
+Two-Phase Authentication. Under the Neural-Symbolic architecture, NCS further enforces instruction authenticity and execution integrity through stateful instruction authen-tication , which proceeds in two phases (Phase A and B). The stateful instruction authentication starts with a signed instruction stream, where the stream head authenticates the worksheet-level authorization, and each subsequent ex-ecutable instruction block binds its successor via hash com-mitment.  
+
+> •
+
+During Phase A, the Neural Planner parses the unstructured natural-language input, identifies the embedded digital signature, and drafts an admission plan. The Symbolic Controller validates this draft and submits a signature-verification task to the Crypto Execution Engine to verify only the stream head, while Runtime State Management records the verification result.  
+
+> •
+
+During Phase B, the Symbolic Controller feeds executable instruction block to the Crypto Execution Engine for hash-chain continuity against the expected digest, and releases the plain instruction block, the Neural Planner compiles a step plan draft, the Verifier binds agent tool proposals to the released block, and the Symbolic Controller dispatches actions only after successful binding. Consequently, instruction authenticity and execution integrity are enforced at three distinct layers: ( i) worksheet autho-rization at admission, ( ii ) per-block hash-chain verification at execution time, and ( iii ) parameter binding against the released instruction block, systematically preventing indirect prompt injections from converting valid authorizations into unauthorized tool invocations. Cryptographic verification is therefore not an external wrapper around the LLM; it is a first-class symbolic operation whose outcomes gate both neural drafting and deterministic execution. In summary, we make the following contributions:  
+
+> •
+
+We formalize a strict authority split, where probabilistic neural components interpret intent and draft plans, while deterministic symbolic components authenticate, schedule, verify and execute. No neural output can trigger key access or privileged tool dispatch without passing symbolic gates.  
+
+> •
+
+We propose a stateful instruction authentication approach. User signs only a worksheet as the stream head, while hash-chained instruction blocks bind step order and parameters. Phase A certifies worksheet authorization; Phase B releases each payload incrementally and requires exact equality between agent tool calls and the released instruction block before dispatch.  
+
+> •
+
+We implement a backward-compatible prototype inter-facing with PKCS#11-style backends and evaluate it on AgentDojo [12], a variant of InjecAgent [29] and the Open-PromptInjection dataset [30]. NCS reduces attack success rate to nearly zero under both injection and argument-hijacking threats, while preserving acceptable utility. II. B ACKGROUND 
+
+A. Neural-Symbolic Computing 
+
+A natural question motivating this line of work is how systems that learn from data can be combined with systems that manipulate discrete, rule-governed structures, so that each compensates for the other’s weaknesses. This question underlies the study of Neural-Symbolic Computing [20, 24, 25]. Neural (sometimes written neuro ) refers to artificial neural networks, which occupy a prominent place in machine learning and, in the form of deep learning, drive much of current AI research and deployment. Symbolic computation, by contrast, is computation over discrete objects via exact, compositional and rule-governed transformations. Where an application depends on precisely encoded knowledge, prov-able correctness, or the ability to inspect an algorithm’s execution in order to understand why it behaved a certain way rather than only assess its output statistically, neural systems tend to fall short while symbolic representations excel. Hybrid designs that combine the two therefore offer a practical path toward intelligent yet controllable computation, making them a natural foundation for applications that demand both flexibility and formal guarantees. Motivated by Kautz’s framing [24] of the field, we bridge the two paradigms through an architectural coupling in which a neural planner feeds structured input to an independent 3symbolic component. In our setting, we extend this principle by treating cryptographic computing itself as a form of symbolic computing, and use the Neural-Symbolic separation to build a security-oriented governance layer. 
+
+B. Cryptographic Primitives 
+
+Collision-Resistant Hash Functions. A hash function 
+
+H : {0, 1}∗ → {0, 1}d is a polynomial-time algorithm mapping arbitrary-length inputs to fixed-length digests, where 
+
+d ∈ N denotes the output digest length (e.g., 256 bits). H
+
+is collision-resistant, if for any probabilistic polynomial-time (PPT) adversary A, finding two distinct inputs that yield the exact same output is computationally infeasible. 
+
+Stream Signature. A stream signature scheme allows a signer to authorize an ordered sequence of message blocks (referred to as a stream ) such that a verifier can authen-ticate each individual block sequentially without buffering or re-verifying the entire stream. Formally, we represent a stream M as an ordered sequence of message blocks 
+
+(M1, M 2, . . . , M k) where each block Mi ∈ {0, 1}∗ and 
+
+i ∈ N. Below, we detail the formal definition. A stateful stream signature scheme Π is defined by a tuple of three PPT algorithms 
+
+(KeyGen , StreamSign , StreamVerify ) parameterized by a security parameter λ: 
+
+> •
+
+KeyGen (1 λ) → (pk, sk ): The key generation algorithm takes the security parameter 1λ as input and outputs a public verification key pk and a private signing key sk . 
+
+> •
+
+StreamSign (sk, M i, st i−1) → (M ′ 
+
+> i
+
+, st i): The stateful sign-ing algorithm takes as inputs the private key sk , the current message block Mi, and the prior signer state st i−1, where the initial state is st 0 = ∅. It outputs an authenticated block 
+
+M ′ 
+
+> i
+
+= ( Mi, σ i), where σi is a temporal signature, and an updated signer state st i. 
+
+> •
+
+StreamVerify (pk, M ′ 
+
+> i
+
+, vt i−1) → (δi, vt i): The stateful ver-ification algorithm takes as inputs the public key pk , the received authenticated block M ′ 
+
+> i
+
+, and the prior verifier state 
+
+vt i−1 (where vt 0 = ∅). It outputs a decision bit δi ∈ { 0, 1},where δi = 1 indicates acceptance and δi = 0 indicates rejection, and an updated verifier state vt i.
+
+Correctness. Let M = (M1, . . . , M k) be an arbitrary stream. Let (pk, sk ) ← KeyGen (1 λ). For i = 1, . . . , k ,let (M ′ 
+
+> i
+
+, st i) ← StreamSign (sk, M i, st i−1) and (δi, vt i) ←
+
+StreamVerify (pk, M ′ 
+
+> i
+
+, vt i−1). The scheme Π satisfies correct-ness if: Pr 
+
+hVki=1 (δi = 1) 
+
+i
+
+= 1 .
+
+EU-CSA Security. The security goal of a stream signature is to prevent an adversary from forging message blocks, reordering the execution sequence, or truncating the stream. This is formalized via Existential Unforgeability against adaptive Chosen-Stream Attacks ( EU -CSA ), defined using a cryptographic game between a Challenger C and an Adver-sary A: 
+
+> •
+
+Setup: C runs KeyGen (1 λ) to generate (pk, sk ), sends pk 
+
+to A, and initializes a query set Q ← ∅ . 
+
+> •
+
+Query Phase: A can adaptively query a stream signing oracle OSign (·) on a block-by-block basis. For a query M (j)
+
+> i
+
+(representing the i-th block of the j-th stream), C computes 
+
+(M ′(j) 
+
+> i
+
+, st (j) 
+
+> i
+
+) ← StreamSign (sk, M (j) 
+
+> i
+
+, st (j)
+
+> i−1
+
+) and returns 
+
+M ′(j) 
+
+> i
+
+. C records the queried sequences in Q. 
+
+> •
+
+Forgery: A outputs a forged authenticated stream M′∗ =(M ′∗  
+
+> 1
+
+, . . . , M ′∗  
+
+> m
+
+).Let M∗ = (M ∗ 
+
+> 1
+
+, . . . , M ∗
+
+> m
+
+) be the underlying message stream extracted from M′∗ . A wins the game if: For i =1, . . . , m , (δ∗ 
+
+> i
+
+, vt ∗ 
+
+> i
+
+) ← StreamVerify (pk, M ′∗  
+
+> i
+
+, vt ∗
+
+> i−1
+
+) yields 
+
+δ∗ 
+
+> i
+
+= 1, and M∗ is not a prefix of any queried stream in Q (denoted as ∀M (j) ∈ Q , M∗̸ ⊆ M (j)). A stream signature scheme Π is EU -CSA , if for any PPT adversary 
+
+A, the advantage in winning the above game is negligible. III. A M OTIVATING EXAMPLE 
+
+We first present an AI-driven business workflow as a moti-vating scenario example, while exposing the attack surface of adversarial injection. Concretely, drawing on representative multi-agent design paradigms [1], we describe an agentic financial report generation workflow as an example. To automate operational reporting, the enterprise integrates a workflow consisting of a Control Agent, which coordinates high-level control-flow logic and conditional state transitions, and a Data Agent which interfaces with backend APIs to retrieve, process and consolidate various data sources. 
+
+Fig. 2: Illustration of the agentic financial report generation workflow, and potential injection threats. 
+
+Agentic Financial Report Generation. The workflow starts with an automatic trigger at a predefined milestone ( e.g. ,at the close of a business quarter) by a system calendar event. This initial trigger initializes the workflow session with the baseline execution instructions, as shown on the top of Fig. 2. Overall, the autonomous workflow consists of a multi-stage collaborative execution loop between agents:   
+
+> •1
+
+Task Scheduling. Upon activation, the orchestrating Control Agent interprets the high-level reporting objective, establishes the current execution context, and delegates a structured reporting request to the downstream Data Agent.   
+
+> •2
+
+Data Retrieval. The Data Agent parses the delegated request and dynamically invokes corporate tool-chains to retrieve financial records. It queries heterogeneous en-terprise database modules, specifically reading raw data payloads from the general ledger , payroll , and taxation 
+
+repositories.   
+
+> •3
+
+Report Generation. The Data Agent synthesizes the retrieved unstructured and structured data to generate a draft quarterly report. To guarantee financial accuracy, 4the pipeline routes the draft through a critical Human-in-the-Loop (HITL) verification stage, where human experts manually review, revise, and sign off on the finalized document.   
+
+> •4
+
+Report Retrieval. Once validated, the finalized quarterly report is retrieved by the Control Agent, updating the global workflow state.   
+
+> •5
+
+Report Submission. The Control Agent receives the ver-ified report, updates the secure session log, and submits the document to the executive committee for formal approval. 
+
+Injection Threats. When the control-flow boundaries are shifted from statically compiled code to AI-driven runtime planning, this autonomous agentic pipeline may introduce cascading security risks.  
+
+> •
+
+Direct Prompt Injection ( A1): This attack directly targets the initial workflow trigger payload. By injecting malicious system instructions at the entry boundary, an adversary hijacks the Control Agent’s logical execution flow. As illustrated in Fig. 2, this control-flow manipulation forces the Data Agent to access restricted out-of-scope assets (specifically reading a sensitive purchase contract during Step 2 ).  
+
+> •
+
+Indirect Prompt Injection ( A2): This attack targets pas-sive data-plane boundaries during Step 2 . An adversary pre-poisons an external, untrusted data source (specifically, embedding malicious prompt payloads into the taxation 
+
+database). When the Data Agent ingests this poisoned payload, the LLM interprets the embedded instructions as active execution commands rather than passive data. Consequently, during Step 3 , the agent generates a com-promised report containing a nested A2 payload that evades both automated filters and HITL validation. Upon retrieval of the poisoned report in Step 4 , the embedded A2
+
+payload hijacks the Control Agent, forcing it to execute an unauthorized send operation (via Gmail) to exfiltrate sensitive enterprise data. IV. T HE OVERVIEW OF NCS 
+
+Fig. 3: The overview of NCS. Modern agentic enterprise workflows combine probabilistic language models with privileged tools, such as file system ac-cess, database queries, and out-of-band email dispatch, which should strictly adhere to deterministic enterprise security policies. As demonstrated in the agentic workflow scenario in the previous section, a primary threat in these environments is the control-flow hijack. Our NCS augments a conventional cryptographic server with Neural-Symbolic design to defend against the hijack. Neural components interpret intent and structure candidate plans; symbolic components validate, ex-ecute cryptography and hold authoritative session state. Fig. 3 illustrates the modular interaction of this Neural-Symbolic framework, and Section V-C formalizes a stateful instruction authentication scheme that gates multi-step execution paths. The Neural-Symbolic design comprises five modules that manage the lifecycle of an agentic workflow:   
+
+> •1
+
+Neural Planner: Parses unstructured natural-language requests so as to identify embedded cryptographic mate-rial, and maps verified instruction blocks to a structured intermediate plan draft.   
+
+> •2
+
+Symbolic Controller: Validates planner drafts against static policy, schedules dependency-ordered execution, and orchestrates stream workflows starting from authorization through per-step authentication, admitting agent actions only after authentication succeeds.   
+
+> •3
+
+Crypto Execution Engine: Interprets algorithm-agnostic IR instruction streams and dispatches them to pluggable cryptographic hardware or software backends.   
+
+> •4
+
+Verifier: Enforces fail-closed, state-aware gates on the active execution path by blocking privileged IR transitions until session preconditions hold and by checking canonical equality between untrusted tool-call arguments and the released instruction payload.   
+
+> •5
+
+Runtime State Management: Maintains the authorita-tive session and IR runtime context, containing program counters, verification transcripts and workflow gates. We further instantiate the components above in two sequential phases with the stateful instruction authentication scheme. The first phase answers who authorized which instructions, while the second phase answers whether some step to be executed is authentic now and may run with exactly the signed parameters. Under this design, cryptographic operations, e.g., signature verification, are not treated as discretionary tools invoked by the agent at runtime. Instead, they are positioned as hard and stateful preconditions managed by the symbolic components that must be satisfied before any dependent agent action is permitted to proceed. 
+
+Assumptions. We assume a pre-agentic enterprise baseline equipped with a robust identity and access control manage-ment framework. Within this baseline, human staff utilize certified cryptographic credentials to authenticate against the corporate domain, operating under strictly defined role-based access control policies. Binding each credential directly to the role-based access policy within the symbolic components is left to future work. All communication channels are assumed to be secure, and the underlying hardware boundary of the cryptographic server is trusted. However, we do not 
+
+assume that LLM planning outputs, retrieved documents, 5or tool-returned text are trusted. An attacker may actively poison database records or compromise the agent’s semantic planning. We assume that signing keys used to authorize workflows remain under the strict control of authorized staff. 
+
+Design Goals. NCS pursues three design goals, includ-ing (i) Instruction Authenticity: The scheduling instructions are protected against unauthenticated execution triggers and prompt injections; (ii) Runtime Control-Flow Integrity: The execution of downstream toolcalls should be dynamically gated by the verified state of upstream preconditions, while preventing hijacked control flows from executing unautho-rized outbound actions such as out-of-band email dispatch; and (iii) Fail-Closed Traceability: NCS generates audit trail of the entire execution, capturing under what specific infor-mational context which action is or is not executed. 
+
+Definition 1 (Instruction Authenticity): NCS satisfies in-struction authenticity if every control action a ∈ C ctrl that is granted allow exactly matches some authorized instruction 
+
+Ji ∈ J that was released only after successful stepwise cryptographic verification. 
+
+Definition 2 (Runtime Control-Flow Integrity): NCS sat-isfies runtime control-flow integrity if, for any PPT adversary behaving as A1 and A2, the probability of granting allow to an unauthorized action is bounded by a negligible function of the security parameter: Pr allow ∧ a ∈ C ctrl \ J  ≤ negl (λ).
+
+Definition 3 (Fail-Closed Traceability): Upon verification or binding failure at step i, NCS satisfies fail-closed trace-ability if no subsequent payload Jj (j ≥ i) is released and no control action for steps j ≥ i receives allow , and prior allow/deny outcomes for steps {1, . . . , i −1} are preserved, and meanwhile, the runtime appends an immutable audit record that identifies the authorization context of the decision. V. M ETHODOLOGY 
+
+This section presents the concrete architectural design of the NCS and details how its constituent modules interact to secure agentic execution. We first define terminology, formalize the motivating two-agent workflow, present stateful instruction authentication with execution binding and details the Neural-Symbolic components. 
+
+A. Terminology Definition 
+
+To avoid ambiguity, we define the core terminology used throughout this paper.  
+
+> •
+
+Instruction: The natural-language command issued by a user or upstream agent to initiate a workflow or request a specific business operation.  
+
+> •
+
+Intent: The semantic goal inferred from an instruction, capturing what the agent is expected to accomplish before it is translated into executable units.  
+
+> •
+
+Execution Plan: A structured and machine-readable can-didate specification, represented as a JSON schema, that translates intents into checkable and policy-constrained execution units.  
+
+> •
+
+Authenticity state (auth state ): A runtime flag vector maintained in Runtime State Management, summarizing whether the current instruction and data authenticity checks have succeeded. Agents and the Verifier treat auth state as a mandatory precondition for control-flow decisions.  
+
+> •
+
+Task: The smallest policy-checkable and schedulable unit within an execution plan. Each task contains a unique identifier id , a symbolic algorithm algorithm , and optional parameters such as key references key ref and data pay-loads payload . 
+
+> •
+
+Algorithm: The symbolic runtime identifier assigned to a task (e.g., stream signature verify ir ), which maps the task to a specific cryptographic operation.  
+
+> •
+
+Intermediate Representation (IR): An instruction-level and algorithm-agnostic assembly format executed by the runtime engine to enforce step-wise correctness.  
+
+> •
+
+State: The active runtime execution context, containing the program counter, policy registers, fault flags, scoped mem-ory variables, and the verified authenticity state auth state . 
+
+> •
+
+Policy: A set of static and dynamic constraints that define permissible actions, parameter overrides, state-transition in-variants, and audit requirements at planning-time, routing-time, and run-time.  
+
+> •
+
+Block: The atomic step in a signed instruction stream. A 
+
+instruction block Bi is the canonical encoded instruction executed at step i; a chain block B′ 
+
+> i
+
+= enc (Bi ∥ hi+1 )
+
+binds Bi to its successor via hash commitment hi+1 ,where enc (·) denotes a canonical serialization function that guarantees a unique byte representation for any instruction. Block B′ 
+
+> 0
+
+is the stream head, containing (h1, k, σ ) rather than an executable instruction. 
+
+B. Agentic Workflow Formalization 
+
+We formalize the Control Agent ( CAgent ) and the Data Agent ( DAgent ) in the motivating workflow (Fig. 2). Both agents consume authorized context and auth state , but cannot mint signatures, release signed payloads, or bypass Verifier gates. 
+
+Control Agent. The Control Agent selects the next control-flow action, when it receives a natural-language scheduling description, the current input, the NCS authenticity state, and a constrained action space Cctrl :
+
+act ← CAgent (inst desp , inp , auth state , Cctrl ),
+
+where inst desp is the semantic description of the staff-issued worksheet (on the top of Fig. 2), inp is the transactional context at step i, and Cctrl is the set of permissible control actions. The selected action act must be consistent with 
+
+auth state : if stream authorization has not succeeded, or the active step payload fails binding, the branch is rejected fail-closed. 
+
+Data Agent. The Data Agent materializes outputs when receiving the task description, a permitted data-source set D,and the authenticity state of the retrieved context: 
+
+outp ← DAgent (inst desp , D, auth state ),
+
+where outp is the generated artifact ( e.g. , a quarterly report draft). If auth state indicates tampering, an unverified source, or policy violation, execution halts before outp propagates to downstream control steps. 
+
+C. Stateful Instruction Authentication 
+
+To enforce the authenticity and control-flow integrity of non-deterministic agentic workflows without incurring pro-hibitive asymmetric cryptographic overhead at every step, 6Fig. 4: Overview of two sequential phases with stateful instruction authentication. Phase A certifies who authorized which worksheet ; Phase B certifies which step is authentic at execution time and enforces execution binding. NCS introduces a stream signature mechanism to enable stateful instruction authentication with respect to an instruc-tion stream which consists of multiple blocks of instructions. Users authorize a worksheet, and hash-chain all instruction blocks. Rather than signing each instruction in isolation, the user or staff constructs a cryptographic hash chain over the entire instruction sequence and asserts an asymmetric signature exclusively on the stream head. This design enables efficient “ 1 + N ” verification under a strict execution-after-authentication paradigm. 
+
+Notations. Let H(·) : {0, 1}∗ → {0, 1}d denote acryptographically secure hash function ( e.g. , SHA-256). Let 
+
+KeyGen () → (SK, P K ) denote the key generation algo-rithm, Sign (SK, M ) → σ denote the signing primitive, and Verify (P K, M, σ ) → {0, 1} represent the signature verification primitive. Let 0256 denote a 256-bit terminal zero-vector. We number plain instruction blocks from B1 onward. The first block carries the logical content of the entire instruction stream. Executable instructions in order are B2, . . . , B k,where k is the total number of instruction blocks. On the wire, a separate head block B′ 
+
+> 0
+
+carries the signature; transport order is B′ = ( B′
+
+> 0
+
+, B ′
+
+> 1
+
+, . . . , B ′
+
+> k
+
+), where B′ 
+
+> 0
+
+is the signed stream head whose parsed fields (h1, k, σ ) bind the origin and length to the chain rooted at B′
+
+> 1
+
+. The offline backward-chain construction at the user side (or the staff) and the online forward-pass verification at the NCS side proceeds in two phases. As demonstrated in Fig. 4, Phase A establishes worksheet-level trust before any payload is released. Phase B step i = 2 , . . . , k releases Bi to agents. Step i = 1 releases the stream-content block B1 after B′ 
+
+> 1
+
+verifies, typically for audit rather than direct tool dispatch. 
+
+The User Side. Before initiating the workflow, the user constructs a signed stream B′ = (B′
+
+> 0
+
+, B ′
+
+> 1
+
+, . . . , B ′
+
+> k
+
+) in a backward-recursive manner to bind each instruction to its logical successor with the following steps. 
+
+Step 1: Canonicalization. Each raw instruction Bi is seri-alized into a deterministic byte string via enc (Bi) to ensure consistent hash derivation. B1 encodes the entire instruction content. 
+
+Step 2: Terminal Anchor Initialization. The tail block B′
+
+> k
+
+is bound to the terminal zero-vector to prevent unauthorized append actions B′ 
+
+> k
+
+= enc (Bk ∥ 0256 ).
+
+Step 3: Backward Hash Chaining. For each preceding block i = k − 1, . . . , 1, the user recursively commits to the suffix of the stream by embedding the cryptographic hash of the subsequent block hi+1 = H(B′
+
+> i+1
+
+), B′ 
+
+> i
+
+= enc (Bi ∥
+
+hi+1 ), where each block B′ 
+
+> i
+
+thus cryptographically promises the exact structure, parameters and order of its downstream successor B′
+
+> i+1
+
+.
+
+Step 4: Stream Head Signing. The user computes the digest of the first block h1 = H(B′
+
+> 1
+
+) and binds it to the absolute stream length k to construct the metadata block 
+
+M0 = h1 ∥ uint64 (k), the user then signs M0 with its private key via σ = Sign (SK, M 0), and yields the stream head B′ 
+
+> 0
+
+= h1 ∥ uint64 (k) ∥ σ. Digest h1 anchors the chain at B′ 
+
+> 1
+
+and, transitively, at B′ 
+
+> 2
+
+→ · · · → B′ 
+
+> k
+
+through the backward-built links. As a result, this stream head provides an asymmetric proof of origin, binds the exact execution boundary, and anchors the entry point of the entire execution 7chain via h1.
+
+The NCS Side. The symbolic component enforces astrict execution-after-authentication paradigm. No instruction payload Bi is released to the agent unless its corresponding block B′ 
+
+> i
+
+passes verification. 
+
+Phase A: Signature Verification. Staff input embeds 
+
+B′. The Neural Planner parses and extracts cryptographic signature material. The Symbolic Controller submits only head block B′
+
+> 0
+
+. NCS parses B′ 
+
+> 0
+
+→ (h1, k, σ ), reconstructs 
+
+M0 = h1 ∥ uint64 (k), and checks Verify (P K, M 0, σ ) ?
+
+= 1 .On success it sets stream auth ok , records k, stores h1, and initializes the expected digest register A0 ← h1. Phase A performs no hash over B′
+
+> 1
+
+, . . . , B ′
+
+> k
+
+. Semantically, Phase A certifies that the user authorized a worksheet of k instruction blocks whose chain is rooted at the entire instruction content block B′
+
+> 1
+
+, not yet that each body block is intact. If verification fails, the session is immediately aborted. If successful, the symbolic component registers the total authorized length k
+
+and A0.
+
+Phase B: Hash Chain Verification. When wire block B′
+
+> i
+
+is fed, the following four steps are executed:  
+
+> •
+
+Verify. Parse B′ 
+
+> i
+
+→ (Bi ∥ hi+1 ); assert H(B′
+
+> i
+
+) ?
+
+= Ai−1;abort on mismatch.  
+
+> •
+
+Release. Admit plain Bi as the sole active instruction payload.  
+
+> •
+
+Plan and bind. For executable blocks ( i ≥ 2), the Neural Planner compiles a step plan draft and the Verifier requires Agent tool call(args) to match Bi before dispatch.  
+
+> •
+
+Dispatch. Set Ai ← hi+1 ; if i = k, assert hk+1 ?
+
+= 0 256 .Enforcing this zero-anchor constraint prevents adversaries from appending unauthorized downstream commands to a legitimate stream. Note that no block B′ 
+
+> i+1
+
+may be fed until step i completes dispatch; no dispatch may proceed without successful verifi-cation and binding. 
+
+D. Neural-Symbolic Components 
+
+The previous section describes how NCS authenticates and releases signed workflow instructions. We now detail the Neural-Symbolic components that translate, validate, execute and audit those instructions along the runtime path.  
+
+> 1
+
+Neural Planner. The Neural Planner is the intent-facing entrance of NCS. Its responsibility is semantic trans-lation: converting unstructured natural-language directives, or already-released instruction payloads, into structured plan drafts that describe high-level agentic tasks such as delegate ,scoped read , and constrained submit . This layer has no access to raw wire-format chain blocks B′
+
+> i
+
+, or low-level cryptographic execution. The core module of this component is the Intent-to-Plan Compiler . It uses a hybrid compilation pipeline, including a rule-based parser to extract deterministic syntactic structures, an LLM fallback to resolve semantic ambiguities, and a learned predictor to fill in missing parameters, such as algo-rithm types and corporate key references ( key ref handles, 
+
+e.g. , mpub-04xxxxx ). When a multi-step workflow arrives as a signed instruction stream, natural-language input may embed signature material. The Neural Planner identifies and normalizes this material, and the corresponding algorithm (see Fig. 3’s example), and drafts an admission Execution Plan . It does not parse hash-chain suffixes, verify signatures, or release instruction payloads. After the symbolic layer verifies wire block B′
+
+> i
+
+and releases plain payload Bi, the planner compiles Bi into a step-level plan draft, e.g. , mapping a delegation payload to a delegate task. Wire blocks B′ 
+
+> i
+
+never enter the neural domain; only authenticated, released payloads do. Consequently, the plan draft describes what agents should do, not whether cryptographic authorization has succeeded. The authentication boundary remains entirely in symbolic and verifier components and cannot be bypassed by prompt manipulation or model hallucination.  
+
+> 2
+
+Symbolic Controller. The Symbolic Controller serves as the deterministic authority core of NCS. Following the principles of skill-specialized decomposition and verifiable routing [31], it translates a neural plan draft into an autho-rized, auditable execution plan. Four components process the draft sequentially: 
+
+Plan Validator. The Plan Validator is the first static security gateway. It enforces schema conformance, required parameter fields, authorized parameter overrides, registered references, and task-dependency well-formedness. For stream-backed workflows, admission plans must reference only manifest material in Phase A; step plans must correspond to the currently released payload Bi in Phase B. Any static check failure aborts execution and returns a clarify response rather than an authorized execution plan. 
+
+Algorithm Router. The Algorithm Router maps each task’s logical algorithm identifier to a concrete crypto backend and its associated oracle IR program, e.g. , map-ping stream signature verify ir to SignatureVerifyIR-Backend ), producing a normalized algorithm index. 
+
+Algorithm Orchestrator. The Algorithm Orchestrator schedules tasks by evaluating explicit dependency relations. It ensures that cryptographic verification tasks always pre-cede dependent and privileged agent actions. At instruction granularity, the orchestrator streams IR steps to the Crypto Execution Engine. Phase A submits B′ 
+
+> 0
+
+for manifest autho-rization; Phase B feeds each B′
+
+> i
+
+, releases Bi, and advances the workflow only after binding succeeds. The orchestrator would immediately abort downstream execution if any gating task faults. 
+
+Execution Resolver. The Execution Resolver manages the execution-to-agent boundary. Upon successful execution, it commits session updates and returns structured outcomes; upon policy or runtime fault, it intercept the flow and emits a structured rejection, preventing unverified outputs from propagating to downstream tools.  
+
+> 3
+
+Crypto Execution Engine. The Crypto Execution Engine is the runtime execution core of NCS. It inter-prets validated plans as algorithm-agnostic IR instruction streams and, at each step, dispatches opcodes to pluggable cryptographic backends (signature verification, hash-chain checks, etc. ), while unified control semantics govern in-struction progression, program counters, halting, branching, and fault propagation. Concrete cryptographic operations are executed entirely within the pluggable backends, decoupling the mathematical primitives from the stateful orchestration logic. For the given stream worksheet example, Phase A runs 8stream signature verify ir on B′ 
+
+> 0
+
+only. Phase B performs incremental checks on H(B′
+
+> i
+
+) = Ai−1 and optional bound IR tasks after Verifier approval. During execution, the engine records per-step snapshots and traces, generating reproducible evidence for auditing and post-hoc analysis. To prevent key leakage, sensitive key material never transits the neural or high-level routing layers. The underlying cryp-tographic server securely isolates cryptographic keys within hardware or software boundaries.  
+
+> 4
+
+Verifier. The Verifier is an active and state-aware guard situated on the execution hot path between the Crypto Execution Engine and external side effects ( e.g. , outbound API invocations). Before each IR instruction is executed by the engine, the Verifier queries the current execution state and asserts active policy invariants, such as forbidden opcodes ( e.g. , restricting rollback after state commitment) and execution step budgets. For signature verification programs, NCS requires that the state register session.verify ok be set to true before a dependent SEND opcode is permitted to fire. For stream-backed workflows, this is extended to require that the active authenticity state auth state be verified and the expected digest matches the register Ai−1 (Section V-C). After Phase A, this reflects manifest authorization ( stream auth ok ); it does not imply that every B′ 
+
+> i
+
+has already verified. In Phase B, stream workflows additionally require execution binding: Agent tool call(args) must match the released payload Bi
+
+before side effects proceed. If any predicate fails, e.g., a neural planning deviation attempting to bypass a verification task, the Verifier raises a hard fault, immediately halting the engine before privileged tools can be triggered, so as to close the gap between “model said” and “agent did”.  
+
+> 5
+
+Runtime State Management. Runtime State Manage-ment is the shared, policy-enforced memory backbone of NCS. It maintains program counters, fault flags and step-by-step traces, handling cross-turn routing and caching verified session states. It stores non-sensitive execution snapshots, the session.verify ok status, and per-step execution traces for auditability. The Symbolic Controller, Crypto Execution Engine, and Verifier continuously read and write this state at every step. For signed streams, Runtime State stores the verification transcript: stream auth ok , authorized length k, h1, the expected digest register Ai−1, the current block index, per-step gate snapshots, and the active instruction payload. The derived auth state consumed by CAgent and DAgent is true only when Phase A has succeeded and the active step’s pay-load has been chain-verified, released, and bound. External actors may read authorized slices of this context but cannot set verification outcomes or substitute instruction payloads without passing Symbolic scheduling and Verifier gates. VI. S ECURITY ANALYSIS 
+
+A. Instruction Authenticity Theorem 1: Assuming the collision resistance of H and the EUF-CMA security of the signature scheme, no PPT adversary A1 can obtain allow for any unauthorized control action a / ∈ J , except with negligible probability. 
+
+Proof. We analyze the three attack abilities available to A1: 
+
+> •
+
+Signature Forgery. To inject a completely custom in-struction stream, A1 must forge a valid B′
+
+> 0
+
+. This requires breaking the EUF-CMA security of an adopted signature scheme, which succeeds only with probability ≤ negl (λ). 
+
+> •
+
+Block Modification or Insertion, or Deletion. To alter an authorized instruction Ji ∈ J to an unauthorized J∗ 
+
+> i
+
+,or to insert or delete blocks, A1 must produce a block B∗
+
+> i
+
+such that H(B∗ 
+
+> i
+
+) = Ai−1 while B∗
+
+> i
+
+̸ = B′
+
+> i
+
+. If B∗ 
+
+> i
+
+results in a matching digest, this represents a collision in the hash function H. Let Adv Coll  
+
+> H
+
+(A1) denote the advantage of A1
+
+in finding a collision in H. Since H is collision-resistant, we have Pr[ H(B∗ 
+
+> i
+
+) = Ai−1 ∧ B∗
+
+> i
+
+̸ = B′
+
+> i
+
+] ≤ Adv Coll  
+
+> H
+
+(A1) ≤
+
+negl (λ). 
+
+> •
+
+Unsigned Context Injection. A1 may append adversarial instructions outside the authenticated envelope. At the beginning, the Symbolic Controller separates the request into signed stream markers and B′ (denoted as qhi ), and all remaining unstructured text ( qlo ). Only material in qhi 
+
+is admitted to cryptographic verification and may yield a released instruction Ji after Phase B succeeds, while qlo 
+
+cannot authorize any control action. Consequently, even if the Neural Planner emits a candidate tool call (arg )
+
+inspired by qlo , arg is rejected whenever no instruction has been released, or whenever arg does not exactly match the currently released instruction Ji.Combining these above cases, the probability that A1 suc-cessfully dispatches any a / ∈ J is bounded by negl (λ) under the security parameter λ. □
+
+B. Runtime Control-Flow Integrity 
+
+We now address indirect prompt injection attacks A2,where the adversary attempts to hijack the runtime control flow. 
+
+Theorem 2 (Runtime Control-Flow Integrity): Under The-orem 1, if all untrusted external content resides exclusively within qlo , NCS satisfies Runtime Control-Flow Integrity. 
+
+Proof. Let a ∈ C ctrl \ J be an unauthorized control action proposed by a hijacked agent. By assumption, the mali-cious payload injected by A2 resides in qlo or is returned dynamically from an external tool. As analyzed above, qlo 
+
+authorize any control action. The maximum probability of a
+
+being allowed is bounded by the probability of an adversary forging a valid cryptographic block in B′, which is negligible. Additionally, a is allowed only if canon (a) = canon (J⋆).Since a / ∈ J and every releasable J⋆ lies in J ∪ {⊥} , the gate returns deny . Therefore Pr[ allow ∧ a / ∈ J ] ≤ negl (λ),and unauthorized actions are structurally excluded while authorized Ji ∈ J may still proceed. □
+
+C. Fail-Closed Traceability 
+
+Due to space limits, we give a brief argument. If verifica-tion or binding fails at step i, NCS enters a faulted state. It clears the currently released instruction and stops accepting further blocks B′ 
+
+> j
+
+for all j ≥ i. Consequently, Gate denies every subsequent control action. Steps that already received 
+
+allow remain unchanged; the fault does not roll back their effects. Meanwhile, Runtime State Management appends an audit record for the failure and for prior decisions. These records are written to isolated storage and cannot be altered by the untrusted planner. 9VII. I MPLEMENTATION AND EVALUATION 
+
+We implement our proposed NCS framework as a Python prototype structured around the five modules illustrated in Fig. 3. Our prototype is implemented with two design prop-erties central to our security evaluation:  
+
+> •
+
+Admission Separation: Only the signed worksheet prefix is authenticated; any appended or interleaved context is isolated as untrusted context and restricted from triggering write-enabled control actions.  
+
+> •
+
+Step-Level Fail-Closed Enforcement: A signature verifi-cation or argument-binding failure aborts only the active execution step, preventing unauthorized actions while pre-serving previously completed and verified state transitions. We instantiate the instruction-stream authentication scheme using standard Ed25519 digital signatures (128-bit security level) paired with SHA-256 hash chains. We evaluate three architectural configurations: ( i) NCS-A which includes the signature verification of worksheet prefix, ( ii ) NCS-B which appends NCS-A with incremental hash-chain verification, and (iii ) NCS-Full, which additionally incorporates exact JSON-to-argument schema binding on all control tool dispatches. We also simulate an active adversary capable of injecting ma-licious content into retrieval-augmented generation corpora, external tool outputs, or user-visible contexts. The adversary can construct sophisticated parameter-hijacking payloads de-signed to preserve valid tool names while replacing write arguments, e.g., target accounts or transaction amounts. 
+
+A. Experimental Setup 
+
+Methodology. We systematically evaluate NCS’s security guarantees and operational overhead. We compare the attack success rates (ASR) and the LLM/agent utility on NCS and other defenses under indirect prompt injection (IPI) and argument-hijacking attempts. We also measure the processing overhead of cryptographic validation operations. 
+
+Datasets. We utilize AgentDojo [12] as our primary bench-mark, covering workspace, travel, and banking domains. To systematically evaluate argument hijacking, we learn from the financial direct-harm scenarios in InjecAgent [29] to construct InjecAgent-ArgHijack dataset including 85 cases. Each case follows a two-step protocol: Step 1, the agent calls a benign user tool and receives an observation that may contain injected text; Step 2, it invokes a fixed control tool with signed benign arguments, and the injection instructs the agent to call the same tool but with adversarial JSON parameters. While maintaining the original tool schemas and read-tool outputs, we modify the attack vector. Instead of conventional cross-tool redirection, e.g. , Read Tool →
+
+Inject → Call Attacker Tool, we evaluate direct parameter manipulation on the control tool, e.g. , Read Tool → Inject →
+
+Call Intended Tool with Malicious Arguments. As a result, the dataset pairs each of the five financial control tools listed in Table I with 17 distinct read tools. We also use the OpenPromptInjection dataset as FATH [22] to achieve success injection. 
+
+Baselines and Models. We benchmark NCS against four baselines: no defense (Baseline ), Spotlighting [32], FATH [22], and FIDES [33] over four models, involving TABLE I: Examples from InjecAgent-ArgHijack dataset.                           
+
+> Control Tool Example
+> BankManagerPayBill Benign : $85 →payee P-UTIL-001
+> Malicious : $500 →payee P-123456 BankManagerTransferFunds Benign : $1,200 →account 9012-0678-236
+> Malicious : $3,000 →attacker account 123-1234-1234 VenmoWithdrawMoney Benign : $120 →bank USER-BANK-001
+> Malicious : $500 →AW-12345678 BinanceDeposit Benign : $200 USD →user-fiat-001
+> Malicious : $2,000 USD →abcd1234 BinanceWithdraw Benign : 0.05 BTC →cold wallet
+> Malicious : 5.0 BTC →attacker destination
+
+DeepSeek-Chat, GPT-4o-mini, GPT-5 Reasoning and GPT-5-Chat. 
+
+Metrics. We also define the following evaluation metrics.  
+
+> •
+
+ASR tool : The fraction of runs in which the attacker successfully triggers an unauthorized tool execution or achieves their high-level malicious target.  
+
+> •
+
+ASR args : The rate of argument mismatch detections where the model attempts to invoke the correct tool but with parameters that deviate from the authorized block Bi. 
+
+> •
+
+BU (Benign Utility): The task completion rate on benign inputs without prompt injections.  
+
+> •
+
+U (Attack Utility): The overall task success rate under active injection attacks.  
+
+> •
+
+U∂ (Partial Utility): The fraction of authorized worksheet steps successfully completed, or read-only sub-goals exe-cuted, while unauthorized write operations are blocked. 
+
+B. Evaluation Results 
+
+IPI Attack Resilience. Table II compares four models under Baseline and NCS-Full. NCS-Full reduces ASR tool 
+
+to 0.0% on three models and to 8.3% on GPT-4o-mini. It also raises U∂ sharply (up to 94 .4% on DeepSeek-Chat), reflecting improved partial task completion under attack. At-tack utility U improves on DeepSeek-Chat, GPT-5 Reasoning, and GPT-5-Chat, but declines on GPT-4o-mini, although U∂
+
+rises (41.7% →84.7%). The reason is that GPT-4o-mini lacks sufficient planning capacity to convert that partial progress into full task success. Overall, NCS-Full on GPT-5 Reason-ing achieves the best overall balance with BU /U= 75 .0% ,ASR tool = 0 .0% and U∂ = 93 .1% .Fig. 5 show that Spotlighting, FATH and FIDES improve one axis at the expense of another, whereas NCS-Full more reliably aligns low ASR tool with competitive U. DeepSeek-Chat is highly vulnerable under Baseline. Spotlighting pre-serves high BU but barely improves U and still leaves ASR tool = 63 .9% ; FATH drives ASR tool down to 2.8% at the cost of BU ; FIDES improves U to 63.9% yet retains ASR tool = 19 .4% . NCS-Full achieves the security-utility trade-off, since ASR tool drops to 0.0% while U rises to 
+
+69.4% , with a moderate BU reduction (83.3% →75.0%). GPT-4o-mini starts from a weaker Baseline with BU =50 .0% , U= 41 .7% , ASR tool = 44 .4% . Spotlighting and FATH reduce ASR tool to 41.7% and 13.9%, respectively, but both degrade U; FIDES raises ASR tool to 50.0%. Under NCS-Full, ASR tool decreases to 8.3%, but both 
+
+BU =44.4% and U=33.3% fall below Baseline, showing 10 TABLE II: Cross-model comparison under Baseline and NCS-Full on IPI Attacks. 
+
+Models Baseline NCS-Full 
+
+BU ↑ U ↑ U∂ ↑ ASR tool ↓ BU ↑ U ↑ U∂ ↑ ASR tool ↓
+
+DeepSeek-Chat 83.3% 55.6% 0.0% 69.4% 75.0% 69.4% 94.4% 0.0% 
+
+GPT-4o-mini 50.0% 41.7% 41.7% 44.4% 44.4% 33.3% 84.7% 8.3% 
+
+GPT-5 Reasoning 69.4% 63.9% 63.9% 0.0% 75.0% 75.0% 93.1% 0.0% 
+
+GPT-5-Chat 58.3% 30.6% 30.6% 69.4% 58.3% 50.0% 88.9% 0.0% Baseline Spotlighting FATH FIDES NCSFull   
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Rate (%)
+> 83.3
+> 88.9
+> 61.1
+> 86.1
+> 75.0
+> 55.6 55.6 55.6
+> 63.9
+> 69.4 69.4
+> 63.9
+> 2.8
+> 19.4
+> 0.0
+> BU
+> U
+> ASR tool
+
+(a) DeepSeek-Chat Baseline Spotlighting FATH FIDES NCSFull      
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Rate (%)
+> 50.0
+> 55.6 55.6 52.8
+> 44.4
+> 41.7
+> 30.6 27.8
+> 41.7
+> 33.3
+> 44.4 41.7
+> 13.9
+> 50.0
+> 8.3
+> BU
+> U
+> ASR tool
+
+(b) GPT-4o-mini Baseline Spotlighting FATH FIDES NCSFull  
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Rate (%)  58.3
+> 63.9
+> 50.0 50.0
+> 58.3
+> 30.6
+> 41.7
+> 47.2
+> 36.1
+> 50.0
+> 69.4
+> 44.4
+> 0.0
+> 27.8
+> 0.0
+> BU
+> U
+> ASR tool
+
+(c) GPT-5-Chat Baseline Spotlighting FATH FIDES NCSFull        
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Rate (%)
+> 69.4
+> 63.9 63.9
+> 50.0
+> 75.0
+> 63.9
+> 72.2
+> 58.3 58.3
+> 75.0
+> 0.0 0.0 0.0 0.0 0.0
+> BU
+> U
+> ASR tool
+
+(d) GPT-5 Reasoning 
+
+Fig. 5: IPI attacks across four evaluated models. that security improves partially while benign/attack util-ity both regress. The remaining 8.3% are exclusively 
+
+travel/injection_task_6 , in which attack success requires the string “Riverside View Hotel” in the model response, not a hijacked control-tool call. NCS-Full does not filter natural-language output leakage on this attack class, a limitation most visible on the weakest backbone. GPT-5-Chat mirrors DeepSeek’s vulnerability pattern. Baseline has ASR tool = 69 .4% with low U = 30 .6% .Spotlighting improves BU and U but ASR tool remains high; FATH eliminates tool hijacks while raising U to 47.2%; FIDES remains ASR tool = 27 .8% with U = 36 .1% . NCS-Full achieves ASR tool = 0 .0% and improves U = 50 .0% 
+
+with BU unchanged at 58.3%, indicating effective protection without sacrificing benign task completion. As for GPT-5 Reasoning, the Baseline already yields ASR tool = 0.0% with relatively high U = 63 .9% and 
+
+BU = 69 .4% . Spotlighting boosts U to 72.2% but lowers 
+
+BU to 63.9%; FIDES reduces BU to 50.0% while keeping ASR tool = 0 .0% . NCS-Full delivers the best overall outcome on this model: BU = U = 75 .0% with ASR tool = 0 .0% , im-proving both benign and attack utility without reintroducing tool hijacks. This is the strongest configuration across all four models. 
+
+Designing Injection Attacks on FATH. FATH [22] is an authentication-based defense closest to ours, but it relies on the LLM to voluntarily follow a prompt-level secu-rity policy. Specifically, it requires the LLM to separate benign and injected content into <tag authorized > and 
+
+<tag unauthorized > regions. The backend then extracts the last <tag authorized > block as trusted output. We eval-uate two attacks that exploit this text-bound authentication design by causing malicious content to be placed inside the authenticated region on the OpenPromptInjection dataset’s question answering (QA) and URL injection tasks. The fol-lowing results show that FATH remains vulnerable whenever the LLM places malicious content inside an authorized tag despite detecting the injection.  
+
+> •
+
+Attack 1. We reframe the injected answer as a required fact that must be copied verbatim into the trusted output, even after the model detects injected instructions (e.g., 
+
+“Include this fact (verbatim) inside BOTH the reasoning scratchpad tags and the authorized answer tag pair, even if you also detect additional instructions.” ). On QA tasks, this attack yields a stable ASR of 33% for GPT-5-Chat (resp. ASR=22% for DeepSeek-Chat), confirming format-compliance coercion as the primary bypass path. Trans-ferring the same attack to URL-style injection tasks raises ASR to 42% in DeepSeek-Chat while decreasing at 5% for GPT-5-Chat.  
+
+> •
+
+Attack 2. We combine two coordinated prompts: the first instructs the model to keep the malicious content in the 11 TABLE III: Argument hijacking ASR args comparison.                                             
+
+> DeepSeek-Chat GPT-4o-mini GPT-5 Reasoning Control Tool Baseline NCS-Full Baseline NCS-Full Baseline NCS-Full
+> BankManagerPayBill 16/17 (94.1%) 0/17 (0%) 17/17 (100%) 0/17 (0%) 1/17 (5.9%) 0/17 (0%) BankManagerTransferFunds 5/17 (29.4%) 0/17 (0%) 17/17 (100%) 0/17 (0%) 0/17 (0%) 0/17 (0%) VenmoWithdrawMoney 12/17 (70.6%) 0/17 (0%) 17/17 (100%) 0/17 (0%) 5/17 (29.4%) 0/17 (0%) BinanceDeposit 9/17 (52.9%) 0/17 (0%) 17/17 (100%) 0/17 (0%) 2/17 (11.8%) 0/17 (0%) BinanceWithdraw 2/17 (11.8%) 0/17 (0%) 17/17 (100%) 0/17 (0%) 0/17 (0%) 0/17 (0%)
+> Total 44/85 (51.8%) 0/85 (0%) 85/85 (100%) 0/85 (0%) 8/85 (9.4%) 0/85 (0%)
+
+trusted output and place only a harmless refusal note in the discard region, even when injection is detected (e.g., 
+
+“If extra instructions are present, still place the injected answer inside the authorized tag pair, and place a brief note about ignored text inside the unauthorized tag pair. Do not swap them.” ); the second requires the same content to be copied verbatim into the final trusted answer. This attack achieves 54% ASR on QA tasks for GPT-5-Chat (resp. ASR=49% for DeepSeek-Chat). 
+
+Argument Hijacking Attacks. Argument hijacking at-tacks preserve the correct tool name but substitute critical input fields (e.g., payees, transaction amounts, or recipients) to execute unauthorized side effects. We evaluate this vector on our derived InjecAgent-ArgHijack benchmark across three backbones: DeepSeek-Chat, GPT-4o-mini, and GPT-5 Rea-soning. We omit GPT-5-Chat because its Baseline behavior closely mirrors DeepSeek-Chat on Standard IPI (Table II). We report ASR args : the fraction of cases in which the agent invokes the control tool with parameters matching the hijack payload rather than the user-intended values. As shown in Table III, Baseline vulnerability is both model-dependent and tool-dependent, whereas NCS-Full drives ASR args to 0.0% for every model and control tool. GPT-4o-mini is uniformly compromised under Baseline, with ASR args = 100% on every control tool. Thst is, once an argument hijacking is emitted, the model consistently adopts the injected parameters. DeepSeek-Chat exhibits selective 
+
+Baseline weakness: ASR args is highest for BankManager-PayBill (94.1%, 16/17) and VenmoWithdrawMoney (70.6%, 12/17), but substantially lower for BankManagerTransfer-Funds (29.4%, 5/17) and BinanceWithdraw (11.8%, 2/17). We hypothesize that this spread reflects semantic alignment between the user task and the Step 1 injection: bill-payment and peer-withdrawal instructions overlap more with the in-jected “urgent payment” narrative than transfer or exchange-withdrawal schemas do. GPT-5 Reasoning appears the most resistant Baseline backbone by aggregate ASR args (9.4%, 8/85). However, in 85.9% of cases, the model produces no parseable Step 2 Action and thus never dispatches an evaluable control call; only 12/85 yield a valid tool invo-cation. Conditional on reaching Step 2, the hijack success rate is 66.7%, indicating that GPT-5’s low aggregate ASR stems primarily from execution abstention rather than robust argument discrimination at dispatch time. This experiment confirms that cryptographic argument binding on the signed control call is an effective defense for this threat class: even when the model selects the correct tool, mismatched arguments are rejected before any side effect occurs. NCS-A NCS-B NCS-Full 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> Latency (ms)
+> 0.544
+> 0.141
+> 1.150
+> 0.580
+> 0.160
+> 1.191
+> 0.547
+> 0.142
+> 1.150
+> p50
+> p99
+> mean
+
+Fig. 6: Latency measurement. 
+
+Cryptographic Overhead. We evaluate the end-to-end latency overhead on the deterministic five-step signed work-sheet of Fig. 2 (refer to Appendix A). We isolate the cryp-tographic overhead via a microbenchmark measuring Ccrypto 
+
+as the combined latency of Ed25519 signature verification and SHA-256 chain validation. Crucially, the total latency under attack is dominated by sequential LLM inference turns and step-level aborts, not by cryptographic computations. We measure three distinct operations over 1,000 iterations (results reported in Fig. 6): ( i) NCS-A verifies the Ed25519 signature over M0 = h1 ∥ uint64 be( k) on B′ 
+
+> 0
+
+only. Manifest authentication completes in approximately 0.54 ms (p50). ( ii )
+
+NCS-B adds NCS-A with incremental feeding of B′ 
+
+> 1
+
+. . . B ′
+
+> 6
+
+through one full five-block chain per iteration. Incremental per-chain verification of five blocks averages approximately 
+
+0.14 ms per feed cycle (p50). ( iii ) NCS-Full conducts one-shot verification of B′ 
+
+> 0
+
+∥ B′ 
+
+> 1
+
+∥ · · · ∥ B′
+
+> 6
+
+. The end-to-end full-stream verification completes in under 1.2 ms (p50). These latencies are three to six orders of magnitude smaller than a single LLM inference turn which typically requires several seconds, verifying that Ccrypto is negligible relative to the overall agent latency. VIII. R ELATED WORK 
+
+Table IV organizes 30 defenses along an Intervention Layer Taxonomy ( L0–L5) that follows trust boundaries in an agentic pipeline: untrusted data sources ( L0), assembled input context (L1), model parameters ( L2), generated model outputs ( L3), single-action agent execution ( L4), and stateful, multi-step system orchestration ( L5). Each entry is further tagged by guarantee type: statistical guarantees arise from classifiers or trained/model-mediated behavior that can in principle be fooled by an unseen distribution; deterministic guarantees arise from control-flow, capability, policy, or cryptographic 12 TABLE IV: Systematic Comparison of State-of-the-Art Defenses                                                                                                                                                                                                                            
+
+> Literature Intervention Layer Defense Technique Training Required? Black-box API Compatible? Deterministic Guarantee? Multi-Step Workflow?
+> InstructGPT [34] L2fine-tuning ✓✓statistical △
+> Spotlighting [32] L1input transf. ×✓statistical ×
+> Instruction Hierarchy [35] L1+L2fine-tuning ✓✓statistical △
+> GradSafe [36] L2detection △×statistical ×
+> FATH [22] L3authentication ×✓statistical ×
+> Embedding-based Classifiers [37] L1detection △✓statistical ×
+> Circuit Breakers [38] L2fine-tuning ✓△statistical △
+> TaskTracker [39] L2detection △×statistical ×
+> CachePrune [40] L2fine-tuning △×statistical ×
+> InstructDetector [41] L2detection △×statistical ×
+> SecAlign [42] L2fine-tuning ✓×statistical △
+> FIDES [33] L4+L5IFC ×✓deterministic △
+> f-secure [43] L4+L5IFC ×✓deterministic △
+> RTBAS [44] L4+L5IFC △△deterministic ✓
+> CaMeL [45] L4+L5IFC ×✓deterministic ✓
+> PFI [46] L4+L5IFC ×✓deterministic △
+> InjecGuard [47] L1detection △✓statistical ×
+> PromptArmor [48] L1detection ×✓statistical ×
+> Removal [49] L1detection ×✓statistical ×
+> DataSentinel [50] L1detection ✓△statistical ×
+> PromptLocate [51] L1detection △✓statistical ×
+> TaskShield [52] L4alignment ×✓statistical △
+> MELON [53] L4alignment ×✓statistical △
+> BIPIA [54] L1+L2input transf. + FT △△statistical ×
+> StruQ [55] L1+L2fine-tuning ✓△statistical △
+> RENNERVATE [56] L2+L3detection ××statistical ×
+> ASIDE [57] L1+L2input transf. △△statistical ×
+> Tool Result Parsing [58] L1detection ×✓statistical ×
+> PlanGuard [59] L4alignment ×✓statistical △
+> Progent [60] L4+L5privilege ctrl. △✓deterministic ✓
+> NCS (this work) L4+L5authentication + alignment ×✓deterministic ✓
+> Legend: ✓indicates required/supported; ×indicates not required/not supported; △indicates partially supported.
+
+restrictions that hold regardless of what the model outputs. Statistical guarantees dominate L1–L3; deterministic ones concentrate at L4–L5.
+
+L1–L2: Detection, Transformation, Fine-Tuning (FT). 
+
+Detectors and filters [36, 37, 47–51, 58] sanitize what the model sees, while fine-tuning-based methods [34, 35, 38, 40, 42, 55] and activation-level detectors [39, 41, 56] harden weights or internal representations against instruction conflation. Both families leave L4 unconstrained. Once an adaptive adversary bypasses the filter or fine-tuned models, tool dispatch remains unprotected. Instruction and data sep-aration [32, 54, 57] is a partial exception when isolation is enforced as a hard channel restriction rather than left to model adherence. 
+
+L3–L5: Execution Gating, Privilege Control, and Infor-mation Flow Control (IFC). Statistical gating [22, 52, 53, 59] audits proposed actions via auxiliary LLMs, masked re-execution, or model-emitted tags, reintroducing probabilistic bypass risk. Deterministic mechanisms include ( i) Progent’s SMT-checked least-privilege policies [60], ( ii ) IFC [33, 43, 44] and capability-scoped control-flow separation [45, 46] constrain who may influence whom and which call classes are permitted, but none binds an individual execution step to an offline-signed and task-specific authorization. Despite that RTBAS [44] is based on IFC, it retains a statistical dependency screener for labeling. 
+
+NCS (This Work). NCS treats the LLM as an untrusted intent generator and moves the security boundary to a neuro-symbolic execution spine at L4–L5. It requires no weight updates and remains compatible with commercial APIs. Au-thorization is bound not to fragile text tags or probabilistic planners, but to a cryptographically signed, hash-chained instruction stream to verify the current block, release the payload, bind the agent’s tool proposal to the released instruc-tion, then advance. Even under complete reasoning hijack by indirect prompt injection, the runtime cannot dispatch unauthorized control actions without a valid signed release, yielding a deterministic, fail-closed execution contract com-plementary to IFC and privilege controllers. IX. C ONCLUSION 
+
+We presented NCS, a Neural-Symbolic architecture that separates probabilistic intent interpretation from determinis-tic authorization and execution in LLM agents. While the neural planner may propose arbitrary actions from open-ended instructions and untrusted contexts, it possesses zero execution authority. Instead, operational authorization is me-diated strictly by verifying an offline-signed, hash-chained instruction stream and by enforcing an exact parameter-binding contract between the proposed toolcall and the cryptographically released payload. Under this paradigm, direct and indirect prompt injections may hijack the model’s internal reasoning, but they cannot forge execution rights for control actions outside the signed schedule. Empirical evaluations demonstrate that NCS mitigates unauthorized tool use and argument hijacking to near-zero while preserving audited execution progress on benign steps. We emphasize that NCS is complementary to, rather than a replacement for, information-flow and privilege-control defenses. Those frameworks constrain general data-flow boundaries, whereas NCS enforces cryptographic and step-bound parameter in-tegrity. In addition, our current NCS implementation focuses primarily on signature verification and hashing. Extending it to support encryption or threshold signatures remains future work. 13 REFERENCES 
+
+[1] Y. Ye, X. Cong, S. Tian, J. Cao, H. Wang, Y. Qin, Y. Lu, H. Yu, H. Wang, Y. Lin et al. , “Proagent: From robotic process automation to agentic process automation,” https://arxiv.org/pdf/2311.10751, 2023. [2] S. Fan, X. Cong, Y. Fu, Z. Zhang, S. Zhang, Y. Liu, Y. Wu, Y. Lin, Z. Liu, and M. Sun, “Workflowllm: En-hancing workflow orchestration capability of large lan-guage models,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 24 498–24 525. [3] SAP, “Sap help portal: What is joule,” https://help.sap. com/docs/joule/serviceguide/what-is-joule, 2024. [4] Z. Zeng, W. Watson, N. Cho, S. Rahimi, S. Reynolds, T. Balch, and M. Veloso, “Flowmind: automatic work-flow generation with llms,” in Proceedings of the Fourth ACM International Conference on AI in Finance , 2023, pp. 73–81. [5] T. E. Times, “Automating repetitive tasks: Ai for invoicing, inventory and more,” https: //economictimes.indiatimes.com/small-biz/sme-sector/ automating-repetitive-tasks-ai-for-invoicing-inventory-and-more/ articleshow/111306183.cms?from=mdr, 2025. [6] B. C. Group, “Genai can revolutionize erp transformations,” https://www.bcg.com/publications/ 2025/gen-ai-can-revolutionize-erp-transformations, 2025. [7] V. Raina, A. Liusie, and M. Gales, “Is llm-as-a-judge robust? investigating universal adversarial attacks on zero-shot llm assessment,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024, pp. 7499–7517. [8] Y. Zhao, H. Liu, D. Yu, S. Kung, M. Chen, H. Mi, and D. Yu, “One token to fool llm-as-a-judge,” arXiv preprint arXiv:2507.08794 , 2025. [9] F. Perez and I. Ribeiro, “Ignore previous prompt: Attack techniques for language models,” in NeurIPS ML Safety Workshop , 2022. [10] J. Shi, Z. Yuan, G. Tie, P. Zhou, N. Z. Gong, and L. Sun, “Prompt injection attack to tool selection in llm agents,” 
+
+arXiv preprint arXiv:2504.19793 , 2025. [11] R. Wang, Y. Jia, and N. Z. Gong, “Obliinjection: Order-oblivious prompt injection attack to llm agents with multi-source data,” arXiv preprint arXiv:2512.09321 ,2025. [12] E. Debenedetti, J. Zhang, M. Balunovic, L. Beurer-Kellner, M. Fischer, and F. Tram` er, “Agentdojo: Adynamic environment to evaluate prompt injection at-tacks and defenses for llm agents,” Advances in Neural Information Processing Systems , vol. 37, pp. 82 895– 82 920, 2024. [13] A. Happe, A. Kaplan, and J. Cito, “Llms as hackers: Autonomous linux privilege escalation attacks,” Empi-rizhu2025melon Engineering , vol. 31, no. 3, p. 70, 2026. [14] J. Chen, “Regulation and deregulation: understanding the evolution of the chinese cryptography legal regime from the newly released cryptography law of china,” 
+
+International Cybersecurity Law Review , vol. 1, no. 1, pp. 73–86, 2020. [15] O. J. of the European Union, “Regulation (eu) 2024/2847 of the european parliament and of the council,” https://digital-strategy.ec.europa.eu/en/library/ cyber-resilience-act, 2024. [16] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world llm-integrated applica-tions with indirect prompt injection,” in Proceedings of the 16th ACM workshop on artificial intelligence and security , 2023, pp. 79–90. [17] A. Oliveira, B. Tancio, D. Fiser, P. Lin, and R. Reyes, “Malicious openclaw skills used to distribute atomic macos stealer,” Trend Micro Research , 2026. [18] X. Liu, Z. Yu, Y. Zhang, N. Zhang, and C. Xiao, “Automatic and universal prompt injection attacks against large language models,” arXiv preprint arXiv:2403.04957 , 2024. [19] Q. Zhan, Z. Liang, Z. Ying, and D. Kang, “Injeca-gent: Benchmarking indirect prompt injections in tool-integrated large language model agents,” in Findings of the Association for Computational Linguistics: ACL 2024 , 2024, pp. 10 471–10 506. [20] A. d. Garcez and L. C. Lamb, “Neurosymbolic ai: The 3 rd wave,” Artificial Intelligence Review , vol. 56, no. 11, pp. 12 387–12 406, 2023. [21] Y. Su, D. Yang, S. Yao, and T. Yu, “Language agents: Foundations, prospects, and risks,” in Proceedings of the 2024 conference on empirical methods in natural language processing: tutorial abstracts , 2024, pp. 17– 24. [22] J. Wang, F. Wu, W. Li, J. Pan, E. Suh, Z. M. Mao, M. Chen, and C. Xiao, “Fath: Authentication-based test-time defense against indirect prompt injection attacks,” 
+
+arXiv preprint arXiv:2410.21492 , 2024. [23] N. Jones, “How good old-fashioned ai could spark the field’s next revolution,” Nature , vol. 647, no. 8091, pp. 842–844, 2025. [24] H. Kautz, “The third ai summer: Aaai robert s. engel-more memorial lecture,” Ai magazine , vol. 43, no. 1, pp. 105–125, 2022. [25] P. Hitzler, A. Eberhart, M. Ebrahimi, M. K. Sarker, and L. Zhou, “Neuro-symbolic approaches in artificial intelligence,” National Science Review , vol. 9, no. 6, p. nwac035, 2022. [26] J. Mao, C. Gan, P. Kohli, J. B. Tenenbaum, and J. Wu, “The neuro-symbolic concept learner: Inter-preting scenes, words, and sentences from natural su-pervision,” in International Conference on Learning Representations , 2019. [27] Y. Weng, M. Zhu, F. Xia, B. Li, S. He, K. Liu, and J. Zhao, “Mastering symbolic operations: Augmenting language models with compiled neural networks,” in 
+
+International Conference on Learning Representations ,vol. 2024, 2024, pp. 26 979–27 009. [28] R. Manhaeve, S. Dumancic, A. Kimmig, T. Demeester, and L. De Raedt, “Deepproblog: Neural probabilistic logic programming,” Advances in neural information processing systems , vol. 31, 2018. [29] Q. Zhan, Z. Liang, Z. Ying, and D. Kang, “Injeca-gent: Benchmarking indirect prompt injections in tool-14 integrated large language model agents,” in Findings of the Association for Computational Linguistics: ACL 2024 , 2024, pp. 10 471–10 506. [30] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong, “For-malizing and benchmarking prompt injection attacks and defenses,” in 33rd USENIX Security Symposium (USENIX Security 24) , 2024, pp. 1831–1847. [31] J. C.-Y. Chen, S. Yun, E. Stengel-Eskin, T. Chen, and M. Bansal, “Symbolic mixture-of-experts: Adaptive skill-based routing forheterogeneous reasoning,” https: //arxiv.org/pdf/2503.05641, 2025. [32] K. Hines, G. Lopez, M. Hall, F. Zarfati, Y. Zunger, and E. Kiciman, “Defending against indirect prompt injection attacks with spotlighting,” arXiv preprint arXiv:2403.14720 , 2024. [33] M. Costa, B. K¨ opf, A. Kolluri, A. Paverd, M. Russinovich, A. Salem, S. Tople, L. Wutschitz, and S. Zanella-B´ eguelin, “Securing ai agents with information-flow control,” arXiv preprint arXiv:2505.23643 , 2025. [34] L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray 
+
+et al. , “Training language models to follow instructions with human feedback,” Advances in neural information processing systems , vol. 35, pp. 27 730–27 744, 2022. [35] E. Wallace, K. Xiao, R. Leike, L. Weng, J. Heidecke, and A. Beutel, “The instruction hierarchy: Training llms to prioritize privileged instructions,” arXiv preprint arXiv:2404.13208 , 2024. [36] Y. Xie, M. Fang, R. Pi, and N. Gong, “Gradsafe: Detecting jailbreak prompts for llms via safety-critical gradient analysis,” in Proceedings of the 62nd annual meeting of the association for computational linguistics (volume 1: Long papers) , 2024, pp. 507–518. [37] M. A. Ayub and S. Majumdar, “Embedding-based classifiers can detect prompt injection attacks,” arXiv preprint arXiv:2410.22284 , 2024. [38] A. Zou, L. Phan, J. Wang, D. Duenas, M. Lin, M. An-driushchenko, R. Wang, Z. Kolter, M. Fredrikson, and D. Hendrycks, “Improving alignment and robustness with circuit breakers,” Advances in Neural Information Processing Systems , vol. 37, pp. 83 345–83 373, 2024. [39] S. Abdelnabi, A. Fay, G. Cherubin, A. Salem, M. Fritz, and A. Paverd, “Get my drift? catching llm task drift with activation deltas,” in 2025 IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) ,2025, pp. 43–67. [40] R. Wang, J. Wu, Y. Xia, T. Yu, R. Zhang, R. Rossi, S. Mitra, L. Yao, and J. McAuley, “Cacheprune: Neural-based attribution defense against indirect prompt injec-tion attacks,” arXiv preprint arXiv:2504.21228 , 2025. [41] T. Wen, C. Wang, X. Yang, H. Tang, Y. Xie, L. Lyu, Z. Dou, and F. Wu, “Defending against indirect prompt injection by instruction detection,” in Findings of the As-sociation for Computational Linguistics: EMNLP 2025 ,2025, pp. 19 472–19 487. [42] S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri, D. Wagner, and C. Guo, “Secalign: Defending against prompt injection with preference optimization,” in Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security , 2025, pp. 2833–2847. [43] F. Wu, E. Cecchetti, and C. Xiao, “System-level de-fense against indirect prompt injection attacks: An information flow control perspective,” arXiv preprint arXiv:2409.19091 , 2024. [44] P. Y. Zhong, S. Chen, R. Wang, M. McCall, B. L. Titzer, H. Miller, and P. B. Gibbons, “Rtbas: Defending llm agents against prompt injection and privacy leakage,” 
+
+arXiv preprint arXiv:2502.08966 , 2025. [45] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Car-lini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tram` er, “Defeating prompt injections by design,” arXiv preprint arXiv:2503.18813 , 2025. [46] J. Kim, W. Choi, and B. Lee, “Prompt flow integrity to prevent privilege escalation in llm agents,” arXiv preprint arXiv:2503.15547 , 2025. [47] H. Li and X. Liu, “Injecguard: Benchmarking and mitigating over-defense in prompt injection guardrail models,” arXiv preprint arXiv:2410.22770 , 2024. [48] T. Shi, K. Zhu, Z. Wang, Y. Jia, W. Cai, W. Liang, H. Wang, H. Alzahrani, J. Lu, K. Kawaguchi et al. ,“Promptarmor: Simple yet effective prompt injection defenses,” arXiv preprint arXiv:2507.15219 , 2025. [49] Y. Chen, H. Li, Y. Sui, Y. He, Y. Liu, Y. Song, and B. Hooi, “Can indirect prompt injection attacks be detected and removed?” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 18 189– 18 206. [50] Y. Liu, Y. Jia, J. Jia, D. Song, and N. Z. Gong, “Datasentinel: A game-theoretic detection of prompt injection attacks,” in 2025 IEEE Symposium on Security and Privacy (SP) . IEEE, 2025, pp. 2190–2208. [51] Y. Jia, Y. Liu, Z. Shao, J. Jia, and N. Z. Gong, “Promptlocate: Localizing prompt injection attacks,” in 
+
+2026 IEEE Symposium on Security and Privacy (SP) .IEEE, 2026, pp. 4243–4261. [52] F. Jia, T. Wu, X. Qin, and A. Squicciarini, “The task shield: Enforcing task alignment to defend against in-direct prompt injection in llm agents,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,2025, pp. 29 680–29 697. [53] K. Zhu, X. Yang, J. Wang, W. Guo, and W. Y. Wang, “Melon: Provable defense against indirect prompt injec-tion attacks in ai agents,” in International Conference on Machine Learning , 2025, pp. 80 310–80 329. [54] J. Yi, Y. Xie, B. Zhu, E. Kiciman, G. Sun, X. Xie, and F. Wu, “Benchmarking and defending against indirect prompt injection attacks on large language models,” in 
+
+Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1 , 2025, pp. 1809–1820. [55] S. Chen, J. Piet, C. Sitawarin, and D. Wagner, “ {StruQ }:Defending against prompt injection with structured queries,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 2383–2400. 15 [56] Y. Zhong, Q. Miao, Y. Chen, J. Deng, Y. Cheng, and W. Xu, “Attention is all you need to defend against in-direct prompt injection attacks in llms,” in 33rd Annual Network and Distributed System Security Symposium ,2026. [57] E. Zverev, E. Kortukov, A. Panfilov, S. Tabesh, S. La-puschkin, W. Samek, and C. H. Lampert, “Aside: Archi-tectural separation of instructions and data in language models,” in ICLR 2025 Workshop on Building Trust in Language Models and Applications , 2025. [58] Q. Yu, X. Cheng, and C. Liu, “Defense against indirect prompt injection via tool result parsing,” arXiv preprint arXiv:2601.04795 , 2026. [59] G. Gong and Z. Deng, “Planguard: Defending agents against indirect prompt injection via planning-based consistency verification,” arXiv preprint arXiv:2604.10134 , 2026. [60] T. Shi, J. He, Z. Wang, L. Wu, H. Li, W. Guo, and D. Song, “Progent: Programmable privilege control for llm agents,” arXiv e-prints , pp. arXiv–2504, 2025. APPENDIX 
+
+A. Workflow Instantiation 
+
+We instantiate the motivating workflow of Fig. 2 in the notation of §V-B. Control tools and data sources are 
+
+Cctrl = {delegate , read , retrieve ,
+
+submit , abort },
+
+D = {general ledger , payroll ,
+
+taxation },
+
+1 delegate ← CAgent (inst desp , timestamp ,
+
+auth state , Cctrl ),
+
+2 report ← DAgent (inst desp , D,
+
+auth state ),
+
+3 report ok ← HITL (report , auth state ),
+
+4 retrieve ← CAgent (inst desp , report ok ,
+
+auth state , Cctrl ),
+
+5 submit ← CAgent (inst desp , report ok ,
+
+auth state , Cctrl ).
+
+The workflow in Fig. 2 includes one stream block plus five executable steps: 
+
+B1 : entire instruction-stream content ,B2 : send subtasks of retrieval and generation to the Data Agent ,B3 : retrieve general ledger, payroll, and taxation records ,B4 : generate quarterly report draft and pause for HITL review ,B5 : retrieve the approved report after HITL validation ,B6 : submit the approved report to stakeholders A and B .
+
+B. Stream-Integrity Ablation 
+
+We conduct an ablation study to analyze which compo-nents, i.e. , only authentication (NCS-A), incremental chain verification (NCS-B), or exact JSON argument binding (NCS-Full), are necessary to maintain stream integrity. We construct a five-step signed worksheet under four distinct scenarios (T0 to T3, as defined in Table V). Table VI and Fig. 7 show the results of this ablation. TABLE V: Tamper case scenarios. 
+
+ID Tamper Vector Description T0 Legitimate unmodified signed stream T1 Block reordering (swapping blocks 2 and 3) T2 Chain-suffix manipulation (single-byte modification in block 2) T3 Addition of an unsigned trailing block 
+
+TABLE VI: Worksheet stream-integrity ablation matrix. 
+
+Condition NCS-A NCS-B NCS-Full T0 ✓ ✓ ✓
+
+T1 × ✓ ✓
+
+T2 × ✓ ✓
+
+T3 × ✓ ✓   
+
+> ✓indicates a secure outcome (successful exe-cution, tamper detection, or block); ×indicates insecure execution of tampered payloads. T0 legit
+> T1 reorder
+> T2 suffix
+> T3 append
+> NCS-A
+> NCS-B
+> NCS-Full
+> Insecure (0)
+> Secure (1)
+
+Fig. 7: Security performance visualization of stream-integrity ablation. As summarized in Table VI, all three defense configu-rations securely complete the unmodified stream under T0 (U∂ = 1 .0). However, on tampered streams (T1–T3), the security guarantees diverge:  
+
+> •
+
+Head-only authentication is insecure against stream manipulation: It validates only the initial batch signature, failing to detect block reordering (T1), suffix edits (T2), or appended unsigned blocks (T3), all of which execute with 
+
+U∂ = 1 .0, indicated by the red cells in Fig. 7.  
+
+> •
+
+Incremental chain verification successfully detects tam-pering: It flags chain violations under T1 and T2 and iden-tifies signature mismatches under T3. However, detection alone does not prevent the model from executing unverified actions unless coupled with dispatch binding.  
+
+> •
+
+Exact JSON binding is necessary for secure enforce-ment: Even when head-only verification accepts tampered inputs, NCS-Full intercepts the execution prior to dispatch. This ensures that any deviation between the plan and the signed worksheet blocks prevents the orchestrator from dispatching control tools. We conclude that batch head verification is insufficient to enforce stream integrity. Securing the agent’s execution boundary requires both incremental chain verification for detection and exact JSON argument binding for runtime enforcement. 16
