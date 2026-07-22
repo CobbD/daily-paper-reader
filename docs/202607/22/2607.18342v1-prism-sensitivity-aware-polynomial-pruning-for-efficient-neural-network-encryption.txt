@@ -1,0 +1,730 @@
+Title: PRISM: Sensitivity-Aware PolynoMial PRuning for EffIcient Neural Network Encryption
+
+URL Source: https://arxiv.org/pdf/2607.18342v1
+
+Published Time: Wed, 22 Jul 2026 00:08:31 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+Personal use of this material is permitted. Permission must be obtained for all other uses, in any current or future media, including reprinting/republishing this material for advertising or promotional purposes, creating new collective works, for resale or redistribution to servers or lists, or reuse of any copyrighted component of this work in other works.This manuscript has been submitted to an IEEE Transactions journal and is currently under review. 
+
+# PRISM: Sensitivity-Aware Polyno Mial P Runing for Eff Icient Neural Network Encryption 
+
+Sahaj Majavdia and Mahdi Taheri 
+
+Abstract —Structured pruning is essential for making neural network inference feasible under homomorphic encryption (HE), yet its impact on model reliability has remained unexplored. This paper presents a systematic reliability characterization of pruned CKKS-encrypted neural networks and introduces Polynomial-Sensitivity-Aware Pruning (PSAP), a structured pruning method that is inherently reliability-aware. PSAP scores filters jointly by weight magnitude, polynomial activation sensitivity, and rotation cost, which concentrates pruning in fault-tolerant regions. Across two architectures, two datasets, two numerical representations, and five bit-error rates (40 full-model and 108 per-layer experiments), PSAP-pruned models limit catastrophic ( >10 pp accuracy drop) layers to at most two versus 5–14 for magnitude-pruned baselines, reducing worst-case vulnerability by up to 29 × (1.4 ×–29 ×
+
+across configurations) under int32 bit-flip injection. Direct CKKS encrypted fault injection indicates a safe operating boundary near BER ≤ 10 −5, supporting int32 injection as a conservative reliability proxy. The fault-critical structural layers account for only 1.1% of parameters, enabling selective hardening at minimal overhead. These reliability gains are obtained alongside competitive efficiency: PSAP reduces Halevi–Shoup rotations by up to 45.2% on ResNet-32, and an adaptive mixed-degree allocation scheme lowers multiplicative depth from 66 to 56 levels, enabling leveled inference without bootstrapping. 
+
+Index Terms —Reliability, fault tolerance, homomorphic en-cryption, CKKS, structured pruning, bit-flip injection, encrypted inference, silent data corruption, polynomial activation 
+
+I. I NTRODUCTION 
+
+# HOMOMORPHIC encryption (HE), particularly the Cheon–Kim–Kim–Song (CKKS) scheme [1], enables neural network inference directly on encrypted data, making it an attractive solution for privacy-sensitive applications such as healthcare diagnostics, financial fraud detection, and biometric authentication. Since plaintext inputs are never exposed during computation, inference can be offloaded to untrusted cloud servers while preserving data confidentiality. However, this privacy comes at a significant computational cost. Each ciphertext consists of polynomial coefficients represented under a large coefficient modulus Q (1260–1760 bits in typical configurations), and every homomorphic operation requires computationally expensive Halevi–Shoup rotations [2]. Consequently, structured pruning has become an important optimization technique for reducing the computational overhead of HE inference. Several HE-aware pruning methods have been proposed to reduce this computational overhead. Hunter [3] identifies 
+
+Sahaj Majavdia is with Brandenburgische Technische Universit ¨at Cottbus-Senftenberg, Germany. Mahdi Taheri is with Humboldt University of Berlin, Germany and also with Tallinn University of Technology, Tallinn, Estonia (e-mail: sahaj.majavdia@b-tu.de; mahdi.taheri@taltech.ee). 
+
+HE-friendly structures for pruning, SpENCNN [4] jointly optimizes single instruction multiple data (SIMD) encoding and sub-block sparsity, MOSAIC [5] adopts a prune-and-assemble strategy, and PrivCirNet [6] employs block circulant transformations. These methods focus primarily on improving computational efficiency by reducing rotation counts and optimizing ciphertext packing. However, the pruning process is guided by conventional plaintext criteria, such as weight magnitude or structural alignment, without considering the sensitivity of the polynomial activation functions used in HE inference. Reliability under hardware faults is a critical concern for safety-critical applications deployed on cloud and edge platforms. Transient faults, such as cosmic-ray-induced single-event upsets [7], [8], can corrupt bits stored in dynamic random access memory (DRAM), caches, or accelerator registers. The impact of such faults on plaintext neural networks has been extensively investigated [9]–[12]. Compared to conventional plaintext inference, homomorphic encryption (HE) inference places substantially greater demands on the underlying computing system. The large ciphertext representation significantly increases the memory footprint, while homomorphic operations incur considerably longer execution times. Together, these characteristics increase the exposure of encrypted inference to transient hardware faults by enlarging both the amount of memory susceptible to bit corruptions and the duration over which such faults may occur. Consequently, random memory bit-flips are more likely to affect HE workloads than conventional neural network inference. Moreover, faults introduced into ciphertext coefficients propa-gate through subsequent homomorphic operations, potentially corrupting the entire encrypted computation and resulting in silent data corruption without any indication to the user. Recent work has begun to investigate the reliability of fully homomorphic encryption (FHE) at the cryptographic-operation level [13], [14], showing that a single bit-flip in a ciphertext polynomial can invalidate an entire homomorphic computation; these efforts are discussed in detail in Section II. However, these studies focus on the reliability of cryp-tographic operations and hardware implementations without considering the effect of model optimization on the reliability of encrypted inference. Structured pruning and polynomial approximation directly modify the computational graph, the distribution of model parameters, and the sequence of homo-morphic operations, all of which can influence fault propagation and model resilience. Despite their importance for efficient HE inference, the reliability implications of these optimization techniques remain largely unexplored. To address this gap, this 1arXiv:2607.18342v1 [cs.CR] 20 Jul 2026 2
+
+paper presents Polynomial-Sensitivity-Aware Pruning (PSAP), a reliability-aware structured pruning framework for CKKS-encrypted neural networks. Unlike existing HE-aware pruning approaches that primarily optimize computational efficiency, PSAP jointly considers filter importance, polynomial activation sensitivity, and homomorphic rotation cost to guide pruning toward more fault-tolerant network structures. Furthermore, an adaptive mixed-degree polynomial allocation strategy reduces the multiplicative depth required for encrypted inference, while a comprehensive fault injection framework evaluates the reliability impact of each optimization decision under transient hardware faults. The main contributions of this paper are summarized as follows:  
+
+> •
+
+A systematic reliability characterization framework for pruned CKKS-encrypted neural networks under transient bit-flip faults, enabling the analysis of fault propagation across different network architectures, datasets, numerical representations, and fault conditions.  
+
+> •
+
+A reliability-aware structured pruning framework, Polynomial-Sensitivity-Aware Pruning (PSAP), that jointly considers weight importance, polynomial activation sen-sitivity, and homomorphic rotation cost to optimize both fault tolerance and computational efficiency.  
+
+> •
+
+A comprehensive fault analysis methodology for encrypted neural networks, combining plaintext and direct CKKS fault injection to investigate fault propagation, identify fault-critical components, and evaluate the reliability of encrypted inference.  
+
+> •
+
+An adaptive mixed-degree polynomial allocation strategy for CKKS-encrypted neural networks that jointly opti-mizes multiplicative depth, computational efficiency, and inference feasibility without requiring bootstrapping. II. R ELATED WORK 
+
+HE-Aware Neural Network Optimization 
+
+CryptoNets [15] first demonstrated neural inference on en-crypted data. GAZELLE [16] introduced a hybrid HE/garbled-circuit approach, and CryptoNAS [17] further optimized the network architecture to minimize the ReLU budget for such hybrid protocols. Lee et al. [18] scaled CKKS to ResNet archi-tectures. HyPHEN [19] achieves 1.4 s on GPU via rotation-free aggregation. These methods focus on enabling or accelerating HE inference but do not address the pruning criterion itself. Hunter [3] identifies HE-friendly structures to prune opera-tions aligned with ciphertext packing, achieving 49% permuta-tion reduction on ResNet-32. MOSAIC [5] extends this with a prune-and-assemble strategy, reducing computational cost by up to 91% on ResNet-50. SpENCNN [4] co-designs SIMD encoding with sub-block weight pruning, reporting 1.87 ×
+
+speedup on ResNet-20. PrivCirNet [6] transforms weights into block circulant matrices, achieving 2–7 × latency reduction (NeurIPS 2024). HE-PEx [20] uses tile-tensor permutations, achieving 10–35% latency reduction, while MOFHEI [21] systematically optimizes the model architecture for efficient HE execution. All these methods optimize sparsity patterns or weight structure for ciphertext layout but select pruning targets using standard plaintext heuristics (magnitude, group lasso, or structural alignment); none accounts for the sensitivity profile of the polynomial activations that replace ReLU in HE inference, nor has any prior HE-aware pruning method evaluated the fault tolerance of the pruned models. AutoFHE [22] automates degree selection but does not prune filters. Standard magnitude ( ℓ1-norm [23]) and reconstruction-error [24] pruning reduce FLOPs but ignore rotation count, the dominant HE cost, and polynomial sensitivity. A unified criterion that jointly accounts for rotation cost, polynomial sensitivity, and weight magnitude remains an open problem. 
+
+Fault Tolerance in Encrypted Computation 
+
+The interaction between hardware faults and homomorphic encryption has been studied across distinct layers of the system stack. Earlier efforts in FHE reliability focused on cryptographic noise management: for instance, Chillotti et al. [25] utilize TFHE gate bootstrapping to refresh ciphertexts, though this addresses internal cryptographic noise accumulation rather than physical hardware faults, and is limited to exact Boolean logic rather than approximate arithmetic schemes like CKKS. At the hardware and cryptographic layers, physical memory faults have also been characterized. Rajagede and Solihin [13] analyze the propagation of memory faults through core FHE primitive operations (NTT and RNS decomposition), demon-strating that a single bit-flip in a ciphertext polynomial can invalidate the entire homomorphic evaluation. In a parallel study, Mu et al. [14] provide the first comprehensive character-ization of Silent Data Corruptions (SDCs) in CKKS-encrypted operations, demonstrating that single-bit flips in ciphertexts lead to a 22% SDC rate. They show that slot-level error magnitudes scale monotonically with the ciphertext modulus Q (ranging up to 10 125 ), multiplication and rescaling operations damp error growth, and conventional hardware/software mitigations such as Dual Modular Redundancy (DMR) and checksum-based Algorithm-Based Fault Tolerance (ABFT) introduce significant latency overheads ( 1.15 × –2.0×). From a security perspective, Mankali et al. [26] (GlitchFHE) demonstrate adversarial fault injection attacks on physical FHE accelerators. These lines of work occupy different regions of the design space than the present study, representing a difference in scope rather than performance. Traditional DNN reliability studies [9]–[12] characterize fault propagation and selective protection (such as selective hardening or TMR) in unencrypted models but do not reach the encrypted execution domain. FHE reliability studies [13], [14], [26] operate purely at the low-level cryptographic operator or hardware accelerator level, without an algorithmic, model-level, or layer-level view of the neural network. No prior work investigates how model optimization decisions (such as structured pruning or mixed-degree activation allocation) reshape the layer-wise fault tolerance of CKKS-encrypted networks. Whereas these operator-level studies characterize how individual cryptographic primitives fail, the evaluation in this paper targets the orthogonal dimension left open by both, providing the first model-level characterization of layer-wise vulnerability and establishing empirical safe operating boundaries for encrypted neural network inference. 3 
+
+> Plain CNN
+> ReLU + BN
+> Phase 1
+> Poly Conversion
+> ReLU to Polynomial BN Folding
+> Phase 2
+> PSAP Pruning
+> Sensitivity-Aware Rotation-Aware Reliability-Aware
+> Phase 3
+> Mixed-Degree
+> Deg-2/Deg-1 Assign. Depth Reduction
+> Phase 4
+> QAT + Export
+> Quant.-Aware Training HE Model Export
+> HE Ready
+> CNN
+> Reliability
+> Evaluation
+> Bit-Flip Injection Per-Layer Analysis
+> Poly. CNN
+> Sparse CNN
+> Depth-Opt. CNN
+> Untrusted Server (OpenFHE CKKS)
+> Encrypted Inference: Conv to Poly Act to Rot & Rescale
+> Client
+> Encrypts Image
+> Client
+> Decrypts Pred.
+> Enc (x)
+> + Eval Keys
+> Enc (y)
+> Deploy Model
+> Fig. 1. End-to-end PSAP pipeline: optimization phases (top), reliability evaluation (top-right), and deployed encrypted inference (bottom).
+
+III. M ETHODOLOGY 
+
+This section presents the proposed reliability-aware opti-mization framework for homomorphic encryption (HE)-based neural network inference. The framework jointly addresses the computational constraints imposed by the Cheon–Kim– Kim–Song (CKKS) scheme and the reliability challenges associated with transient hardware faults. Rather than treating efficiency optimization and reliability evaluation as independent processes, the proposed methodology integrates both objectives into a unified optimization flow that transforms a pretrained convolutional neural network into an HE-compatible model suitable for efficient and reliable encrypted inference. As illustrated in Fig. 1, the proposed framework consists of four sequential optimization stages. The network is first transformed into an HE-compatible representation through polynomial activation modeling. The transformed model is then optimized using the proposed Polynomial-Sensitivity-Aware Pruning (PSAP), which exploits activation sensitivity, filter importance, and homomorphic computation cost to guide structured pruning. Next, an adaptive mixed-degree polynomial allocation strategy reduces the multiplicative depth required for encrypted inference while preserving the nonlinear behavior of the most influential activations. Finally, quantization-aware fine tuning generates the model deployed within the OpenFHE CKKS inference pipeline. The resulting network is subsequently characterized under transient memory faults using the proposed reliability modeling framework. Unlike conventional HE optimization methods that focus solely on reducing computational complexity, the proposed methodology jointly optimizes computational efficiency, multi-plicative depth, and intrinsic fault tolerance. The optimization therefore aims not only to reduce the execution cost of encrypted inference, but also to preserve network structures that contribute to reliable operation under transient hardware faults. This flow is complemented by a reliability modeling framework that relates the pruning and degree-allocation decisions to their impact on fault propagation and layer vulnerability, so that efficiency and fault tolerance are analyzed within the same framework. 
+
+A. Overall Framework 
+
+Let 
+
+M0 = {W1, . . . , W M , ϕ 1, . . . , ϕ M } (1) denote a pretrained convolutional neural network consisting of weight tensors Wl and activation functions ϕl.The proposed methodology transforms the initial network into an optimized model through a sequence of optimization operators, 
+
+M∗ = TQAT ◦ T Deg ◦ T PSAP ◦ T Poly (M0) , (2) where TPoly converts the network into an HE-compatible architecture through polynomial activation replacement, TPSAP 
+
+performs reliability-aware structured pruning, TDeg optimizes the polynomial degrees to satisfy the available multiplicative depth budget, and TQAT denotes the quantization-aware fine-tuning stage that restores the prediction accuracy of the optimized model before deployment. Each transformation addresses a different optimization objective while preserving the modifications introduced by the previous stages. Consequently, the optimized model M∗
+
+simultaneously satisfies the computational constraints of CKKS inference and the reliability requirements considered throughout this work. The optimized network is finally deployed within the OpenFHE CKKS runtime and analyzed using the reliability modeling framework presented later in this section. 
+
+B. Design Objectives 
+
+The proposed methodology simultaneously satisfies four complementary objectives. First, the optimized model must remain compatible with leveled CKKS inference, replacing all unsupported nonlinear operations with polynomial approx-imations while keeping the total multiplicative depth within the available level budget. Second, the encrypted-inference overhead should be minimized by reducing homomorphic rotations, ciphertext operations, and memory through HE-aware structured pruning. Third, the optimization should preserve the intrinsic fault tolerance of the network by avoiding pruning decisions that increase the vulnerability of fault-critical layers or amplify fault propagation. Finally, the model should main-tain prediction accuracy while remaining deployable without bootstrapping under the selected CKKS security parameters. The following subsections describe how each stage contributes to these objectives. 
+
+C. Polynomial Activation Modeling 
+
+The first optimization stage transforms the pretrained neural network into an architecture compatible with leveled homomor-phic encryption (HE) inference. Since the Cheon–Kim–Kim– Song (CKKS) scheme supports only additions and multiplica-tions, conventional nonlinear activation functions containing 4
+
+comparison operations cannot be directly evaluated on en-crypted data. Consequently, all unsupported nonlinear operators are replaced with trainable polynomial approximations while preserving the predictive capability of the original network. This transformation defines the operator TPoly introduced in Eq. (2) and provides the activation sensitivity information required by the subsequent reliability-aware pruning stage. 
+
+1) Polynomial Activation Replacement: Recall the pretrained network M0 from Eq. (1), consisting of weight tensors Wl
+
+and activation functions ϕl.Each rectified linear unit (ReLU) activation is replaced by a trainable polynomial using the Self-Learning Activation Func-tion (SLAF) formulation [27], extending earlier polynomial-based HE activation approaches [28], 
+
+p(x) = ax 2 + bx + c, (3) where the coefficients a, b, and c are optimized jointly with the network parameters during retraining. Degree-two polynomials are adopted because they provide the highest nonlinearity that remains compatible with leveled CKKS inference under the selected security parameters. Eval-uating a polynomial of degree d requires d multiplicative levels. Increasing the polynomial degree generally improves the approximation accuracy of ReLU, but also increases the multiplicative depth of the encrypted computation, eventually requiring bootstrapping, which remains a costly operation even with state-of-the-art algorithms [29]. Degree-two activations therefore provide an effective compromise between approxi-mation accuracy and computational feasibility. To further simplify the encrypted computation graph, ev-ery batch normalization layer is folded into its preceding convolution by absorbing the normalization parameters into the convolution weights and biases. The transformed network therefore consists only of operations directly supported by the CKKS evaluation pipeline, including convolutions, polynomial activations, residual additions, average pooling, and fully connected layers. Following the architectural transformation, the network is retrained to recover the prediction accuracy lost during the replacement of ReLU activations, producing the transformed model 
+
+MPoly = TPoly (M0), (4) which serves as the input to the subsequent optimization stages. 
+
+2) Activation Sensitivity Characterization: Replacing ReLU with trainable polynomial activations introduces non-uniform activation behavior across different operating regions. Unlike ReLU, whose derivative is piecewise constant, polynomial ac-tivations exhibit continuously varying gradients. Consequently, the contribution of each filter depends not only on its weights but also on the local behavior of its activation function. To quantify this behavior, activation statistics are collected for every output channel using a representative calibration subset of the training data. Let μi and σi denote the mean and standard deviation of the activation distribution corresponding to filter i. The effective operating interval is approximated as 
+
+[μi − 3σi, μ i + 3 σi], (5) which contains the majority of the observed activation values. The activation sensitivity is defined as the expected mag-nitude of the polynomial gradient over the corresponding operating interval, assuming a uniform input distribution, 
+
+Si = Ex∈[μi±3σi]
+
+ ∂p (x)
+
+∂x 
+
+
+
+, (6) where, for the adopted quadratic polynomial, 
+
+∂p (x)
+
+∂x = 2 ax + b. (7) The activation sensitivity Si provides a quantitative estimate of the information preserved by each feature map after polynomial transformation. Filters with large Si operate in steep polynomial regions and therefore contribute more strongly to feature propagation, whereas filters with small Si reside in flat regions where the activation response varies little. Rather than directly determining pruning decisions, this quantity serves as one of the optimization variables employed by the proposed reliability-aware structured pruning framework. 
+
+D. Reliability-Aware Structured Pruning 
+
+The transformed model MPoly still contains substantial structural redundancy and is subsequently optimized through the proposed Polynomial-Sensitivity-Aware Pruning (PSAP), corresponding to the operator TPSAP in Eq. (2). Conventional structured pruning ranks filters by criteria such as the ℓ1/ℓ2-norm or reconstruction error; although effective for floating-point inference, these metrics do not reflect the characteristics of encrypted execution. Instead, PSAP jointly considers three complementary objectives during filter selection: predictive importance, activation sensitivity (filters in highly sensitive polynomial regions propagate more information), and homo-morphic evaluation cost (the Halevi–Shoup rotation count varies with each layer’s dimensions). The resulting optimization reduces the computational overhead of encrypted inference while preserving network structures that are expected to contribute most strongly to reliable operation under transient hardware faults, avoiding excessive pruning of structurally critical layers. 
+
+1) PSAP Importance Metric: Consider convolution layer ℓ
+
+containing Nℓ output filters, 
+
+Fℓ = {f1, f 2, . . . , f Nℓ }. (8) Each filter is characterized by three complementary opti-mization variables. The predictive importance is represented by the weight magnitude mi = ∥Wi∥2, where Wi denotes the convolution kernel associated with filter i.The second variable is the polynomial activation sensitivity 
+
+Si obtained from Eq. (6), which estimates the contribution of the corresponding feature map after polynomial transformation. 5
+
+The third variable quantifies the computational benefit associated with pruning layer ℓ through the normalized Halevi– Shoup rotation cost Rℓ = rℓ/ max j rj , where rℓ is the number of homomorphic rotations required to evaluate layer ℓ.Since the early feature extraction layers generally exhibit higher information density, an additional depth-dependent protection factor is introduced, 
+
+Πℓ = 1 + 2(1 − δℓ), (9) where δℓ ∈ [0 , 1] denotes the normalized network depth. The linear form is deliberately simple, granting the earliest layers (δℓ=0 ) a threefold importance boost that decays to unity at the output ( δℓ=1 ), reflecting the higher information density and broader fault influence of early feature extraction stages; only the relative ordering it induces affects pruning, so the specific slope is not critical. Combining these quantities yields the proposed PSAP importance metric, 
+
+Ii = mi Sαi
+
+1 + λR ℓ
+
+Πℓ, (10) where α controls the contribution of activation sensitivity and λ determines the relative importance of homomorphic computation cost. Equation (10) assigns larger importance scores to filters that simultaneously exhibit strong predictive contribution, high activation sensitivity, and limited computational benefit if removed. Conversely, filters with small importance scores represent redundant feature maps located in computationally expensive regions of the network and are therefore selected as pruning candidates. 
+
+2) Layer-wise Sparsity Allocation: Ranking filters according to Eq. (10) determines their relative importance within each layer. However, applying a uniform pruning ratio across all layers does not account for the non-uniform distribution of activation sensitivity throughout the network. To adapt the pruning budget to the characteristics of each layer, the average activation sensitivity is first computed as 
+
+¯Sℓ = 1
+
+NℓNℓX
+
+> i=1
+
+Si, (11) where Nℓ denotes the number of filters in layer ℓ.The maximum pruning ratio assigned to each layer is then determined by 
+
+cap( ℓ) = s0
+
+1 − γ ¯Sℓ
+
+max 
+
+> j
+
+¯Sj
+
+ , (12) where s0 denotes the baseline sparsity scaling factor (equal to the target sparsity, e.g., 0.5 at the 50% operating point) and 
+
+γ controls the degree of sensitivity-aware protection. When 
+
+γ > 0, layers with higher average sensitivity receive smaller pruning budgets; the resulting per-layer caps may therefore yield an effective global sparsity below s0.Layers containing highly sensitive feature representations receive smaller pruning budgets, whereas layers with lower average sensitivity are allowed to remove a larger number of filters. Consequently, the global pruning process becomes adaptive to the distribution of information throughout the network rather than applying an identical sparsity ratio to every convolution layer. After the layer-wise sparsity budgets have been determined, filters within each layer are ranked according to Eq. (10), and those with the smallest importance scores are removed until the corresponding sparsity constraint defined by Eq. (12) is satisfied. The resulting pruned model MPSAP = TPSAP (MPoly ) serves as the input to the adaptive polynomial degree optimization described in the following subsection. 
+
+3) Fine-Tuning: Structured pruning modifies both the feature representation and the optimization landscape of the network. Consequently, the pruned model is fine-tuned to recover the prediction accuracy degraded by filter removal while preserving the sparsity pattern determined by the proposed PSAP optimization. Fine-tuning starts from the pruned model MPSAP . The remaining filters retain their learned parameters, whereas the removed filters are permanently eliminated from the compu-tation graph. The resulting network is then fine-tuned using stochastic gradient descent (SGD). This fine-tuning completes the transformation TPSAP defined in Eq. (2) and enables the remaining parameters to compensate for the removed feature representations. 
+
+E. Adaptive Polynomial Degree Optimization 
+
+The pruned network obtained after reliability-aware opti-mization is fully compatible with homomorphic encryption (HE) inference. However, the multiplicative depth required to evaluate the remaining polynomial activations may still exceed the available CKKS level budget. The objective of the adaptive polynomial degree optimization, corresponding to TDeg in Eq. (2), is therefore to minimize the required multiplicative depth while preserving the nonlinear behavior of the most influential activation functions. 
+
+1) Degree Selection Criterion: Following polynomial retrain-ing and reliability-aware pruning, each activation is represented by p(x) = ax 2 + bx + c. The contribution of the quadratic component is quantified through the normalized curvature ratio 
+
+ρ = |a||a| + |b| + |c| , (13) where ρ ∈ [0 , 1] represents the relative contribution of the quadratic term to the overall polynomial. Small values of ρ indicate that the activation behaves almost linearly within its learned operating region, whereas larger values correspond to stronger nonlinear behavior. Because all polynomial coefficients are jointly trained with the network parameters on the same data pipeline, the input scales remain consistent across layers, making the metric stable within a given model despite its theoretical scale dependence. Consequently, activations with low curvature ratios can be approximated by linear functions with limited loss of representational capability. 6
+
+2) Mixed-Degree Assignment: Let P = {p1, p 2, . . . , p M }
+
+denote the set of polynomial activations in the optimized network. Each activation is assigned either a first-order or second-order representation, di ∈ {1, 2}, subject to the available multiplicative depth constraint 
+
+> M
+
+X
+
+> i=1
+
+di + Dconv ≤ L, (14) where Dconv denotes the multiplicative depth consumed by the convolution layers and L is the available CKKS level budget. The activations are ranked according to the curvature ratio defined in Eq. (13). Degree-two polynomials are preserved for the activations exhibiting the largest curvature ratios until the depth constraint is satisfied. The remaining activations are converted into first-order polynomials p(x) = bx + c using the coefficients obtained during polynomial retraining. The resulting optimized model MDeg = TDeg (MPSAP ) satisfies the multiplicative depth constraints required for leveled CKKS inference. 
+
+3) Complexity Analysis: The adaptive degree optimization is performed once during model preparation and therefore introduces no runtime overhead during encrypted inference. For M polynomial activations, computing the curvature ratio in Eq. (13) is O(M ) and a single linear traversal assigns the degrees; the sorting step dominates, giving an overall complexity of O(M log M ), which is negligible compared with network training and encrypted inference. 
+
+F. Quantization-Aware Training 
+
+Following adaptive polynomial degree optimization, the network undergoes a final quantization-aware training (QAT) stage, denoted TQAT in Eq. (2), which produces the final deployable model M∗ = TQAT (MDeg ).During this stage, the parameters are fine-tuned under simulated integer quantization to ensure that the model remains robust against the integer scaling and rounding artifacts intro-duced when weights and polynomial coefficients are encoded into CKKS ciphertexts. Once trained, the final model M∗ is exported directly into the OpenFHE runtime environment for leveled homomorphic evaluation. 
+
+G. Reliability Modeling 
+
+The final optimization stage characterizes the reliability of the optimized network under transient memory faults. This stage does not modify the model parameters but provides a systematic framework for quantifying the effect of the optimization decisions introduced by TPSAP and TDeg on fault propagation, layer vulnerability, and overall inference robustness. The reliability modeling framework consists of three com-ponents. A fault model first defines the transient memory faults considered in this work. A bit-flip injection framework then emulates faults across different numerical representations, including floating-point parameters, integer representations, and encrypted CKKS coefficients. Finally, a set of reliability metrics quantifies the effect of the injected faults on the optimized model. Together, these components establish a con-sistent methodology for comparing the reliability of different optimization strategies under identical fault conditions. The fault model assumes transient hardware faults as independent, uniformly random bit-flips affecting the binary representation of model parameters. The bit error rate (BER) β
+
+specifies the probability that each bit is flipped independently, producing an expected P × b × β flipped bits for a model with P parameters of b-bit length. The scope focuses on silent data corruptions (SDCs) resulting from single-event upsets in memory holding model parameters and ciphertext coefficients. To evaluate reliability under different numerical represen-tations, two flip modes are considered. The int32 flip mode quantizes parameters to 32-bit fixed-point integers before fault injection, where each bit has equal probability of corruption. This mode models CKKS ciphertext coefficient corruption. The 
+
+float32 flip mode perturbs parameters in their native IEEE 754 representation, where exponent-bit flips can cause catastrophic magnitude changes and mantissa flips yield bounded variations. For each fault injection campaign, the corrupted model is generated by independently sampling a binary fault mask from a Bernoulli distribution with probability β and applying it via an exclusive-or operation. 
+
+Reliability Metrics: The optimized models are characterized using complementary metrics that quantify the impact of transient faults at both the network and layer levels. The overall reliability of a model is first quantified through the accuracy degradation under a given bit error rate (BER). Let Aclean 
+
+denote the inference accuracy of the fault-free model and 
+
+Afault (β) the average accuracy obtained after fault injection with BER β. The corresponding accuracy degradation is defined as 
+
+∆A(β) = Aclean − Afault (β), (15) which measures the global impact of transient faults on encrypted inference. To evaluate the contribution of individual layers to the overall fault behavior, memory faults are independently injected into each layer while all remaining layers remain fault free. The resulting layer vulnerability is defined as 
+
+Vℓ = Aclean − Aℓ, (16) where Aℓ denotes the inference accuracy obtained when only layer ℓ is subjected to fault injection. This metric provides a quantitative estimate of the contribution of each layer to the overall fault sensitivity of the network. Beyond aggregate accuracy, the silent data corruption (SDC) rate quantifies output errors that occur without any detectable execution failure. For a test set of N inputs, let ˆyn and ˆyclean 
+
+> n
+
+denote the predicted labels of input n with and without fault injection. The SDC rate is defined as 
+
+SDC( β) = 1
+
+N
+
+> N
+
+X
+
+> n=1
+
+⊮ˆyn̸ = ˆ yclean  
+
+> n
+
+∧ execution completes  ,
+
+(17) 7
+
+where ⊮[·] is the indicator function. By excluding runs that terminate in a detectable execution failure (such as CKKS ciphertext overflow), the SDC rate isolates the silent mispredictions that are most dangerous in practice, since they return a confident but incorrect result with no error signal to the user. Whereas ∆A(β) measures accuracy loss against the ground truth, the SDC rate measures divergence from the fault-free prediction. The analysis additionally considers catastrophic failures, defined as fault configurations whose accuracy degradation exceeds 10 pp, and the distribution of fault sensitivity across layers before and after optimization, which reveals whether the framework merely shifts sensitivity between layers or improves the intrinsic fault tolerance of the complete network. IV. E XPERIMENTAL RESULTS 
+
+A. Experimental Configuration 
+
+Evaluation is performed on ResNet-20 and ResNet-32 [30] across CIFAR-10 and CIFAR-100 [31], yielding four model– dataset configurations. These architectures are the standard benchmarks in the HE-CNN literature [18], [19], [32]. The PSAP hyperparameters were selected empirically and fixed at α=0 .7, λ=0 .3, and γ=0 across all configurations; the γ=0 .5 variant is reported separately as an accuracy-protection alternative (Fig. 2). These choices follow simple design rationales: α is a moderate blending weight that avoids over-reliance on either raw magnitude or polynomial sensitivity, 
+
+λ is kept small so that the rotation-cost term modulates rather than dominates filter ranking, and γ controls sensitivity-aware layer protection ( γ=0 disables sensitivity-aware cap allocation). With γ=0 , the per-layer cap in Eq. (12) reduces to a uniform budget; consequently, the reliability gains reported for the default configuration arise from the filter-importance metric itself, in particular the activation-sensitivity term Si and the depth factor Πℓ in Eq. (10), rather than from sensitivity-aware cap allocation, which is instead exercised by the γ=0 .5
+
+variant. Baseline models are trained with SGD (momentum 0.9, Nesterov, weight decay 5×10 −4) for 100 epochs. Phase 1 retrains with Adam for 50 epochs. Phase 2 fine-tunes with SGD for 50 epochs. Phase 3 retrains with Adam for 50 epochs. Phase 4 applies AdamW with cosine annealing for 80 epochs. All phases use batch size 128 on a single GPU. All HE runs use OpenFHE v1.2.0 [33] (CKKS, N =65 ,536 ,scale bits = 30 , FIXEDAUTO scaling, 128-bit security) operating in leveled mode without bootstrapping (single image per ciphertext). Encrypted inference runs on a shared CPU-only Linux server (dual AMD EPYC 7352, 503 GB RAM) with 
+
+OMP_NUM_THREADS=12 .For the fault injection campaigns, five bit error rates are swept: BER ∈ { 10 −7, 10 −6, 10 −5, 10 −4, 10 −3}. Each (config-uration, BER) point is evaluated over 15 independent trials with a freshly sampled fault mask per trial. Results are reported as the mean over 15 trials with 95% confidence intervals (Student’s 
+
+t, df=14 ), following the statistical fault injection methodology of [34].                                
+
+> TABLE I VALIDATION OF THE PROPOSED OPTIMIZATION PIPELINE . P LAINTEXT CLASSIFICATION ACCURACY (%) AFTER EACH OPTIMIZATION STAGE AT
+> 50% TARGET SPARSITY .
+> Phase R20/C10 R20/C100 R32/C10 R32/C100
+> Baseline (ReLU) 91.34 68.73 93.44 70.09 Polynomial Activation Modeling 86.26 65.44 92.06 67.39 PSAP 84.17 56.28 87.52 58.95 Adaptive Degree Optimization 83.21 55.14 86.23 57.01 Quantization-Aware Training 87.31 59.68 89.58 61.43 Encrypted CKKS Inference 87.31 59.68 89.58 61.43
+
+B. Pipeline Validation 1) Optimization Pipeline: The proposed optimization frame-work was first evaluated to verify that each stage contributes toward producing a computationally efficient and homomorphic encryption (HE)-compatible model while maintaining competi-tive inference accuracy. Table I summarizes the classification accuracy after each optimization stage for all evaluated network and dataset configurations. Replacing ReLU with trainable degree-two polynomial activations introduces the largest single-stage degradation for the CIFAR-10 models (91.34% to 86.26% for ResNet-20), re-flecting the approximation error of satisfying the multiplicative constraints of the Cheon–Kim–Kim–Song (CKKS) scheme; for the CIFAR-100 configurations the polynomial transition is milder and the dominant drop instead occurs during PSAP pruning. Because PSAP removes structurally redundant filters while preserving those with high activation sensitivity, the degradation after 50% pruning remains controlled, and adaptive mixed-degree optimization adds less than two percentage points of further loss while substantially reducing multiplicative depth. The final quantization-aware training stage recovers 3.35– 4.54 percentage points across configurations, yielding plaintext accuracies of 87.31%, 59.68%, 89.58%, and 61.43%. These match the encrypted CKKS accuracies exactly, confirming that the adopted parameterization and quantization introduce no additional prediction error beyond that modeled during training. The four-stage pipeline thus transforms a conventional network into an HE-compatible model while preserving competitive accuracy, validating the framework of Section III. 
+
+2) Computational Efficiency: The computational efficiency of the proposed optimization framework was evaluated by quantifying its impact on the computational and memory requirements of homomorphic encrypted inference. Table II summarizes the resource consumption before and after applying the complete optimization pipeline, while Fig. 2 illustrates the relationship between rotation savings, target sparsity, and prediction accuracy across different pruning strategies. The proposed framework substantially reduces the cost of encrypted inference across both architectures. For ResNet-20, Halevi–Shoup rotations drop by 40.9% (40.8M to 24.1M), lowering estimated latency from 1460 s to 1181 s per image and reducing peak memory, HE context, and ciphertext sizes by 8.5%, 7.1%, and 4.3%, respectively. The benefits are more pronounced for ResNet-32, where rotations fall by 45.2% (69.1M to 37.9M) and, more importantly, the multiplicative 8            
+
+> 20 35 50
+> 0
+> 20
+> 40
+> 83.8%
+> 84.2%
+> 84.2%
+> Rotation Savings (%)
+> (a) ResNet-20 / CIFAR-10
+> Magnitude α=0 , γ =0
+> PSAP α=0 .7, γ =0
+> PSAP α=0 .7, γ =0 .5
+> 20 35 50
+> 0
+> 20
+> 40
+> 50.5%
+> 56.3%
+> 51.5%
+> Rotation Savings (%)
+> (b) ResNet-20 / CIFAR-100
+> Magnitude α=0 , γ =0
+> PSAP α=0 .7, γ =0
+> PSAP α=0 .7, γ =0 .5
+> 20 35 50
+> 0
+> 20
+> 40
+> 88.5%
+> 87.5%
+> 87.2%
+
+Target Sparsity (%)      
+
+> Rotation Savings (%)
+> (c) ResNet-32 / CIFAR-10
+> Magnitude α=0 , γ =0
+> PSAP α=0 .7, γ =0
+> PSAP α=0 .7, γ =0 .5
+> 20 35 50
+> 0
+> 20
+> 40
+> 56.5%
+> 59.0%
+> 57.9%
+
+Target Sparsity (%)    
+
+> Rotation Savings (%)
+> (d) ResNet-32 / CIFAR-100
+> Magnitude α=0 , γ =0
+> PSAP α=0 .7, γ =0
+> PSAP α=0 .7, γ =0 .5
+
+Fig. 2. Rotation savings vs. target sparsity for magnitude pruning, PSAP with uniform layer-wise sparsity, and PSAP with sensitivity-protected layer-wise sparsity across all four configurations. Annotated accuracies are reported at the pruning stage (before quantization-aware fine-tuning). TABLE II COMPUTATIONAL EFFICIENCY OF THE PROPOSED OPTIMIZATION FRAMEWORK . R ESULTS COMPARE THE POLYNOMIAL MODEL BEFORE STRUCTURED PRUNING (P HASE 1) WITH THE FINAL PSAP-OPTIMIZED MODEL .                             
+
+> Model Metric Unpr. (Ph.1) PSAP ∆
+> R-20
+> Rotations (M) 40.8 24.1 −40.9% Latency (s/img) 1,460 1,181 −19.1% Peak Mem. (GB) 43.7 40.0 −8.5% HE Context (GB) 32.4 30.1 −7.1% CT Size (MB) 46.0 44.0 −4.3%
+> R-32
+> Rotations (M) 69.1 37.9 −45.2% Latency (s/img)
+> Infeasible
+> 2,244 —Peak Mem. (GB) 25.7 —HE Context (GB) 19.3 —CT Size (MB) 58.0 —
+
+depth decreases from 66 to 56 levels. This reduces the required ciphertext modulus from 2040 to 1740 bits, fitting within the 1760-bit limit of a ring dimension of 65 536 at 128-bit security and enabling bootstrapping-free encrypted inference; the original polynomial network exceeds the modulus chain and cannot execute under the same configuration. The absolute memory, context, and ciphertext-size values in Table II depend on the modulus-chain length, the rotation key set, and the packing layout, and are therefore not monotonic in depth (the optimized ResNet-32 reports lower peak memory and context size than ResNet-20 despite a larger per-ciphertext size); the per-architecture relative reductions provide the meaningful comparison. Figure 2 compares PSAP against conventional magnitude pruning over target sparsities from 20% to 50%. PSAP consistently achieves larger rotation reductions at comparable or higher accuracy: at 50% sparsity, rotation savings reach 40.9% and 45.2% for ResNet-20/CIFAR-10 and ResNet-32/CIFAR-10, versus 26.9% and 35.3% for magnitude pruning, with similar gains on CIFAR-100 (30.5% to 39.3% for ResNet-20, 40.3% to 44.9% for ResNet-32). Sensitivity-protected layer-wise allocation ( γ = 0 .5) offers an alternative operating point that trades slightly lower rotation savings for higher accuracy at aggressive sparsity, demonstrating PSAP’s flexibility in balancing efficiency and predictive performance. 
+
+C. Reliability Characterization 1) Global Fault Tolerance: Figure 3 presents the classifica-tion accuracy under increasing bit error rates (BERs) for all evaluated model–dataset configurations. The results characterize the global fault tolerance of the optimized models and quantify how transient memory faults affect inference reliability under different network depths and classification complexities. Across all configurations, the models remain highly resilient at low fault rates. For BERs up to 10 −6, the classification accuracy remains close to the fault-free baseline, indicating that isolated memory bit flips are largely absorbed by the inherent redundancy of the network. A noticeable degradation begins at BER = 10 −5, and the most pronounced loss occurs between 
+
+10 −4 and 10 −3, where the probability of simultaneously perturbing multiple critical weights becomes high enough to disrupt the learned representations. The rate of degradation depends on both architecture and task. CIFAR-10 models consistently retain higher accuracy 9    
+
+> 10 −710 −610 −510 −410 −3
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> random
+
+Bit Error Rate (BER) 
+
+> Post-Fault Accuracy (%)
+
+(a) ResNet-20 / CIFAR-10     
+
+> int32 float32 CKKS
+> 10 −710 −610 −510 −410 −3
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> random
+
+Bit Error Rate (BER) 
+
+> Post-Fault Accuracy (%)
+
+(b) ResNet-32 / CIFAR-10     
+
+> int32 float32 CKKS
+> 10 −710 −610 −510 −410 −3
+> 0
+> 20
+> 40
+> 60
+> random
+
+Bit Error Rate (BER) 
+
+> Post-Fault Accuracy (%)
+
+(c) ResNet-20 / CIFAR-100     
+
+> int32 float32 CKKS
+> 10 −710 −610 −510 −410 −3
+> 0
+> 20
+> 40
+> 60
+> random
+
+Bit Error Rate (BER) 
+
+> Post-Fault Accuracy (%)
+
+(d) ResNet-32 / CIFAR-100  
+
+> int32 float32 CKKS
+> Fig. 3. Post-fault accuracy vs. BER for int32, float32, and CKKS bit-flip modes across all four configurations. Error bars on the int32 curves are 95% CIs over 15 trials (Section IV); float32 and CKKS are deterministic.
+
+than their CIFAR-100 counterparts, as the larger output space narrows the classification margin and increases sensitivity to perturbations. A similar dependency holds for depth: the deeper ResNet-32 preserves accuracy over a wider BER range than ResNet-20 at moderate fault rates, since its additional residual blocks distribute isolated perturbations across more feature transformations. Once the BER reaches 10 −3, this redundancy is no longer sufficient and both architectures degrade substantially. Overall, the optimized models degrade gradually rather than abruptly under realistic transient fault rates, establishing the global fault-tolerance baseline used for the layer-wise analyses that follow. 
+
+2) Silent Data Corruption and Logit Stability: While classi-fication accuracy quantifies the final impact of memory faults, it does not capture the evolution of internal numerical errors before misclassification occurs. Silent Data Corruption (SDC) and logit Mean Absolute Error (MAE) are therefore analyzed to characterize fault propagation from parameter perturbation to output corruption. Figure 4 presents the SDC rate [Eq. (17)] versus BER for the three numerical representations. The int32 implementation exhibits a gradual increase in silent failures, closely following the accuracy trends above. At BER = 10 −5, the SDC rate stays below 2% for the ResNet-20 models and reaches 3.31% for ResNet-32/CIFAR-100, rising to 4.73% and 4.47% for the CIFAR-10 models and 14.51% and 10.32% for the CIFAR-100 models at BER = 10 −4, reflecting the smaller classification margins of the more challenging dataset. The most significant increase occurs at BER = 10 −3, where SDC rates reach 37.99% and 43.57% for ResNet-20 and ResNet-32 on CIFAR-10 and exceed 50% for both CIFAR-100 models. The majority of failures at high BER therefore correspond to silent prediction errors rather than detectable execution failures, emphasizing the importance of evaluating reliability beyond classification accuracy alone. The float32 representation behaves differently: a single exponent-bit corruption generates extremely large values that propagate rapidly, so the SDC rate rises sharply at BER = 10 −6
+
+and saturates by 10 −5 (77.49% and 78.47% for CIFAR-10; 57.76% and 58.49% for CIFAR-100) as the network collapses to random prediction. The CKKS implementation shows a binary reliability profile. No measurable SDC increase is observed up to BER = 10 −5,confirming that the ciphertext noise budget absorbs low-rate perturbations; the non-zero CKKS baseline at the lowest BER (e.g., 4% for R20/C10) reflects the numerical gap between the quantized plaintext model and CKKS execution rather than injected faults. During decryption the scaling factor ∆
+
+separates message bits from low-order noise, acting as a built-in error filter as long as the perturbation stays within the noise budget. Once the accumulated error exceeds the modulus at BER = 10 −4, all encrypted executions terminate due to ciphertext overflow, producing a 100% failure rate rather than silent corruption. The logit MAE in Fig. 5 provides additional insight, measuring the numerical deviation of the outputs before the final classification stage. The logit error generally increases with BER, demonstrating continuous accumulation of perturbations through forward propagation; the minor non-monotonicity at the lowest fault rates reflects the variance of the trial-averaged baseline. The magnitude of the logit perturbation spans more than twenty orders of magnitude across the evaluated BER range. For ResNet-32/CIFAR-10, the logit MAE increases from approxi-10     
+
+> 10 −710 −610 −510 −410 −3
+> 0
+> 50
+> 100
+
+Bit Error Rate (BER) 
+
+> SDC Rate (%)
+
+(a) ResNet-20 / CIFAR-10     
+
+> int32 CKKS float32
+> 10 −710 −610 −510 −410 −3
+> 0
+> 50
+> 100
+
+Bit Error Rate (BER) 
+
+> SDC Rate (%)
+
+(b) ResNet-32 / CIFAR-10     
+
+> int32 CKKS float32
+> 10 −710 −610 −510 −410 −3
+> 0
+> 50
+> 100
+
+Bit Error Rate (BER) 
+
+> SDC Rate (%)
+
+(c) ResNet-20 / CIFAR-100     
+
+> int32 CKKS float32
+> 10 −710 −610 −510 −410 −3
+> 0
+> 50
+> 100
+
+Bit Error Rate (BER) 
+
+> SDC Rate (%)
+
+(d) ResNet-32 / CIFAR-100 
+
+> int32 CKKS float32
+
+Fig. 4. Silent Data Corruption (SDC) rate vs. BER for int32, float32, and CKKS modes across all four configurations.     
+
+> 10 −710 −610 −510 −410 −3
+> 10 −1
+> 10 2
+> 10 5
+
+Bit Error Rate (BER) 
+
+> Logit MAE
+
+(a) ResNet-20 / CIFAR-10     
+
+> int32
+> CKKS
+> 10 −710 −610 −510 −410 −3
+> 10 −3
+> 10 13
+> 10 29
+
+Bit Error Rate (BER) 
+
+> Logit MAE
+
+(b) ResNet-32 / CIFAR-10     
+
+> int32
+> CKKS
+> 10 −710 −610 −510 −410 −3
+> 10 −1
+> 10 13
+> 10 27
+
+Bit Error Rate (BER) 
+
+> Logit MAE
+
+(c) ResNet-20 / CIFAR-100     
+
+> int32
+> CKKS
+> 10 −710 −610 −510 −410 −3
+> 10 −2
+> 10 3
+> 10 8
+
+Bit Error Rate (BER) 
+
+> Logit MAE
+
+(d) ResNet-32 / CIFAR-100 
+
+> int32
+> CKKS
+
+Fig. 5. Logit MAE (log scale) vs. BER for int32 and CKKS modes across all four configurations. 
+
+mately 2.3×10 −2 at BER = 10 −7 to 3.3×10 15 at BER = 10 −3.An even larger increase is observed for ResNet-20/CIFAR-100, where the MAE grows from approximately 10 8 to 5.6 × 10 22 .Similar trends are observed for the remaining configurations, indicating that internal numerical errors accumulate much faster than the corresponding degradation observed in prediction accuracy. The absolute logit-MAE values are reported in raw logit units and are therefore model-dependent; in particular, the near-fault-free baselines differ by several orders of magnitude across configurations because they are dominated by the rare high-order-bit flips captured within the averaging across trials. Baseline magnitudes should accordingly be compared within a panel rather than across panels. Float32 results are intentionally omitted from the logit analysis because exponent-bit corruption frequently produces 11 
+
+NaN or Inf values, making the MAE undefined. In contrast, the CKKS implementation maintains a nearly constant baseline error throughout the safe operating region, with MAE values remaining approximately at 238 for ResNet-20/CIFAR-10, 0.33 for ResNet-32/CIFAR-10, and between 0.6 and 0.7 for the CIFAR-100 models. These baselines are reported in raw logit units, so their absolute magnitude is model-dependent; what matters is that each remains flat throughout the safe region. Once BER reaches 10 −4, ciphertext overflow causes an abrupt increase in the measured error, consistent with the execution failures observed during encrypted inference. Figure 6 illustrates the underlying mechanism responsible for this behavior. Small perturbations introduced into ciphertext coefficients are repeatedly transformed through successive polynomial activations. Degree-two activations square the propagated error, whereas degree-one activations introduced by the adaptive mixed-degree optimization are expected to increase the error only linearly. This mechanism suggests that, beyond reducing multiplicative depth, the mixed-degree strategy should also slow the accumulation of ciphertext noise and thereby delay the point at which the available modulus is exhausted. Once the accumulated error exceeds the ciphertext modulus, modular wrap-around corrupts the encrypted computation, leading to deterministic execution failure. The schematic in Fig. 6 is illustrative rather than a fitted model; nevertheless, the observed CKKS behavior, namely a flat error within the safe region followed by an abrupt failure once the modulus is exhausted, is consistent with this error-propagation mechanism. 
+
+3) Architecture-Level Reliability: The impact of transient faults depends not only on the bit error rate but also on the network architecture and task complexity. Under int32 fault injection, the additional depth of ResNet-32 does not increase its sensitivity: its degradation at BER = 10 −4 matches ResNet-20 on CIFAR-10 (about 2.7 versus 2.8 percentage points), as the extra parameters are offset by the representational redundancy of its residual structure. The role of depth becomes clearer under float32 perturbations, where ResNet-32 retains 88.91% accuracy at BER = 10 −6 versus 57.08% for ResNet-20. Network depth alone therefore does not determine reliability; it is the interaction between architectural redundancy, numerical representation, and task complexity that governs the fault response of encrypted neural networks. 
+
+4) Error Propagation Analysis: This subsection relates the external fault manifestations to the underlying propagation mechanism. At low BERs, individual bit flips produce small, localized perturbations that are largely attenuated by network redundancy. As the BER increases, high-order bit corruptions produce larger perturbations that propagate and amplify through successive convolutional layers and polynomial activations, corresponding to the rapid rise in SDC rate and logit MAE between BER = 10 −5 and 10 −4, which marks the practical reliability boundary. The mechanism differs by representation. Under int32 arithmetic, accumulated errors remain bounded, producing gradual accuracy loss. Float32 instead degrades abruptly, as exponent-bit corruption generates extremely large values leading to NaN or Inf activations. In CKKS, small perturbations are initially absorbed by the ciphertext noise budget (no measurable degradation up to BER = 10 −5); as illustrated in Fig. 6, successive homomorphic multiplications accumulate error until the modulus is exhausted, after which modular wrap-around causes deterministic execution failure. The agreement between plaintext injection, direct CKKS experiments, and the overflow behavior confirms that the framework captures the progression from localized bit corruption to system-level failure. 
+
+D. Layer-wise Reliability 1) Layer Criticality: The global fault analysis characterizes overall robustness but does not reveal which components dominate the degradation. To identify the structural origin of fault propagation, transient bit flips are injected into each convolutional layer independently while all others remain fault free, using the int32 representation at BERs of 10 −6, 10 −5,and 10 −4 for all four configurations. Figure 7 summarizes the layer-wise accuracy degradation. Across all configurations, most layers remain insensitive to isolated faults at BERs of 10 −6 and 10 −5, where almost all accuracy losses stay below one percentage point, consistent with the global analysis. A clear transition appears at BER = 10 −4, where only a small subset of layers becomes highly vulnerable while the remaining layers continue to exhibit limited sensitivity. Rather than being uniformly distributed throughout the network, fault criticality is concentrated in specific structural components, indicating that the overall reliability of the network is dominated by a limited number of critical layers. For the CIFAR-10 models, vulnerability is dominated by a few structural layers: in ResNet-20 the Layer-2 downsampling block reaches 20.70 pp and a Layer-1 residual block 7.81 pp, while in ResNet-32 the impact is more evenly distributed (at most 2.73 pp), reflecting the redundancy of its deeper residual structure. The CIFAR-100 models exhibit considerably larger layer-wise vulnerability: for ResNet-20 a Layer-1 residual block dominates (9.96 pp), followed by the downsampling blocks, whereas for ResNet-32 the stem convolution alone produces a 40.82 pp loss and the Layer-2 downsampling block 20.70 pp, with all remaining layers below five percentage points. These observations demonstrate that fault vulnerability is governed primarily by architectural function rather than network depth. Downsampling operations, the stem convolution, and early feature extraction stages consistently exhibit higher sensi-tivity than the remaining residual blocks because perturbations introduced in these layers propagate through all subsequent feature transformations. Later convolutional layers generally exhibit considerably smaller accuracy degradation since their errors affect only a limited portion of the inference pipeline. Table III further ranks the most vulnerable layers for the CIFAR-10 configurations at BER = 10 −4. The identified layers require only a small fraction of the overall model parameters while accounting for the majority of the observed fault sensitivity. For example, the Layer-2 downsampling block of ResNet-20 contains only 512 parameters, corresponding to an expected 1.6 bit flips at BER = 10 −4, yet produces the largest observed accuracy degradation of 20.70 percentage 12          
+
+> Perturbed c′
+> x+ϵ
+> Q
+> Squared c′2
+> O(ϵ2)
+> Q
+> deg-2 layer
+> error squares Scaled c′′
+> O(aϵ 2)
+> Q
+> deg-1 layer
+> error linear Overflow c′4
+> ϵ4> Q
+> Q
+> deg-2 layer
+> error squares
+
+CRASH            
+
+> wrap
+> deg-2 squaring activation — error squares (ϵto ϵ2)deg-1 linear activation (mixed-degree downgrade) — error scales linearly (ϵto aϵ )
+
+Fig. 6. The Overflow Cascade mechanism: scale-bit growth under mixed-degree activation allocation in CKKS. Forward inference: sequential CKKS activations compound the bit-flip error until it exceeds the modulus Q.
+
+ResNet-20 / CIFAR-10                 
+
+> 10 −610 −510 −4
+> stem
+> layer1
+> L2 conv
+> L2 DS
+> L3 conv
+> L3 DS
+> fc
+> 0.00 0.00 0.00
+> 0.00 2.73 7.81
+> 1.17 1.17 0.98
+> 0.00 0.00 20.70
+> 1.37 1.17 0.98
+> 0.00 0.00 0.00
+> 0.00 0.00 2.34
+
+ResNet-32 / CIFAR-10                 
+
+> 10 −610 −510 −4
+> stem
+> layer1
+> L2 conv
+> L2 DS
+> L3 conv
+> L3 DS
+> fc
+> 0.00 0.00 2.73
+> 0.00 0.78 0.78
+> 1.37 0.98 2.73
+> 0.00 0.00 0.00
+> 1.17 0.98 0.98
+> 0.00 0.00 2.34
+> 0.00 0.00 1.76
+
+ResNet-20 / CIFAR-100                 
+
+> 10 −610 −510 −4
+> stem
+> layer1
+> L2 conv
+> L2 DS
+> L3 conv
+> L3 DS
+> fc
+> 0.00 0.00 0.00
+> 0.00 0.00 9.96
+> 0.00 0.59 4.69
+> 0.00 0.00 6.84
+> 0.00 0.78 3.71
+> 0.00 0.00 8.79
+> 0.00 0.00 0.39
+
+ResNet-32 / CIFAR-100                 
+
+> 10 −610 −510 −4
+> stem
+> layer1
+> L2 conv
+> L2 DS
+> L3 conv
+> L3 DS
+> fc
+> 0.00 0.00 40.82
+> 0.00 3.91 4.69
+> 1.95 1.95 4.10
+> 0.00 0.00 20.70
+> 2.15 2.15 2.93
+> 0.00 4.49 4.10
+> 0.00 0.39 0.39
+
+Drop (pp) 
+
+> 0
+> <1
+> 1–3
+> 3–8
+> 8–15
+> >15
+
+Fig. 7. Per-layer-group vulnerability heatmap across three BER levels and all four configurations. Values are per-group worst-case accuracy drops (pp). TABLE III TOP -5 MOST FAULT -SENSITIVE LAYERS PER ARCHITECTURE (INT 32, BER = 10 −4 , CIFAR-10). 
+
+Arch Layer Params Exp. Flips Drop (pp) PSAP R-20 
+
+layer2.0 DS 512 1.6 20.70 12.5% layer1.2.conv2 2,304 7.4 7.81 31.2% fc 640 2.0 2.34 –layer1.1.conv2 2,304 7.4 0.98 31.2% layer3.1.conv1 36,864 118.0 0.98 0.0% 
+
+> R-32
+
+conv1 (stem) 432 1.4 2.73 6.2% layer2.4.conv1 9,216 29.5 2.73 59.4% layer3.0 DS 2,048 6.6 2.34 25.0% fc 640 2.0 1.76 –layer2.3.conv2 9,216 29.5 1.17 50.0% 
+
+points. Similar behavior is observed for the remaining highly ranked layers, indicating that fault sensitivity cannot be inferred solely from parameter count. Direct CKKS fault injection is consistent with the same structural trend. Layers identified as critical through the int32 proxy correspond to the earliest ciphertext overflow locations during encrypted execution, while layers exhibiting negligible int32 degradation remain insensitive under CKKS faults until the ciphertext noise budget is exhausted. This qualitative agreement supports the use of int32 bit-flip injection as a conservative proxy for identifying fault-critical regions in encrypted inference. 
+
+2) Reliability-aware Pruning Validation: The layer-wise analysis demonstrates that transient fault vulnerability is concentrated in a small number of structurally critical layers. Consequently, uniformly removing filters according to weight magnitude alone may inadvertently eliminate the redundancy required to tolerate transient hardware faults. This subsection evaluates whether the proposed Polynomial-Sensitivity-Aware Pruning (PSAP) successfully preserves these critical structures while maintaining the computational benefits of structured pruning. Table IV compares the layer-wise reliability of PSAP and conventional magnitude-based pruning at identical target sparsity. Across all evaluated model–dataset configurations, 13 
+
+PSAP consistently produces fewer fault-sensitive layers and substantially reduces the maximum accuracy degradation caused by localized memory faults. Across all configurations, PSAP sharply reduces both the number of catastrophic layers ( >10 pp drop) and the worst-case degradation. The gain is largest for ResNet-32/CIFAR-10, where magnitude pruning generates 14 catastrophic layers and a 79.30 pp worst-case drop, while PSAP eliminates all catastrophic layers and limits the drop to 2.73 pp—an improvement approaching 29 ×. The same trend holds for the remaining configurations: catastrophic layers fall from 5 to 1 (R-20/C-10), 11 to 0 (R-20/C-100), and 13 to 2 (R-32/C-100), with corresponding reductions in worst-case loss. These improvements directly validate the design objectives of PSAP. Unlike magnitude pruning, which evaluates filters solely according to parameter magnitude, PSAP simultaneously considers structural importance, polynomial activation sensi-tivity, and homomorphic evaluation cost. Consequently, filters located within highly sensitive activation regions receive larger importance scores and are preserved throughout the pruning process, while pruning is concentrated within structurally redundant regions of the network. The distribution of sparsity in Table IV confirms this behav-ior: layers identified as highly vulnerable receive consistently lower pruning ratios under PSAP than under magnitude pruning, while low-sensitivity layers absorb a larger share of the sparsity budget. Importantly, these reliability gains incur no efficiency penalty—PSAP still removes up to 45.2% of Halevi–Shoup rotations (Section IV-B 2). The close agreement between the activation sensitivity model, the allocated sparsity patterns, and the measured layer-wise fault tolerance validates the reliability-aware pruning methodology. 
+
+3) Targeted Hardening Strategy: The concentration of fault risk in a small set of structural layers makes selective hardening attractive. In ResNet-20 the stem convolution and the two 1×1
+
+downsample projections together account for only 3,104 of the 
+
+273 ,258 parameters—roughly 1.1% of the model. Protecting just these layers with triple modular redundancy (TMR) or error-correcting codes would therefore add at most ∼2.3% parameter overhead (TMR, 3× on 1.1% ) and a correspondingly small rotation overhead, since these are 1×1 downsample projections and the 3-channel stem convolution—layers that contribute far fewer Halevi–Shoup rotations than the 3×3 bulk convolutions that dominate the rotation count. The layers that drive the catastrophic CIFAR-100 drops (up to 40 .8 pp) are therefore exactly the layers cheapest to protect. To confirm that this concentration is exploitable and cheaply defensible, a targeted fault campaign was run on the deployed ResNet-20/CIFAR-10 model in the plaintext domain (Table V); the protected condition models an idealized fault-free critical slice (ideal TMR/ECC), and extending this defense to the encrypted ciphertext domain remains future work. For a fixed fault budget of K bit-flips, three conditions are compared, each averaged over 30 independent injection trials: a targeted 
+
+attack that places all K flips inside the 1.1% critical slice, a 
+
+random control that distributes the same K flips across the whole model, and a protected deployment in which the critical layers are kept fault-free (ideal TMR/ECC). Concentrating the budget in the critical layers is far more damaging than spreading it: at K=100 the targeted attack lowers mean accuracy by 13 .9 pp and produces worst-case collapses of up to 44 .5 pp (to 42 .8% ), whereas the identical random budget produces a worst case of only 2.7 pp. Even at 
+
+K=10 a single unlucky placement in the critical slice already costs 19 .1 pp in the worst case, against 0.8 pp for the random control. The non-monotonic worst-case behavior observed in the random control (e.g., 10 .4 pp at K=50 versus 2.7 pp at 
+
+K=100 ) reflects the inherent variance of the worst-case statistic over a finite number of trials; larger trial counts would reduce this variability but are not expected to change the qualitative conclusion. Hardening the 1.1% critical slice restores clean accuracy in every trial, neutralizing the attack at a parameter overhead of at most ∼2.3% (TMR). The layers that PSAP leaves intact are thus both the most fault-critical and the cheapest to protect. 
+
+E. End-to-End Optimization Analysis 1) Reliability versus Efficiency Trade-off: The preceding sections evaluated computational efficiency and reliability separately; this subsection analyzes them jointly to determine whether efficiency gains come at the expense of fault tolerance. Figure 2 summarizes the accuracy–efficiency design space across target sparsities from 20% to 50%. Magnitude pruning follows the expected trade-off: increasing the pruning ratio reduces Halevi–Shoup rotations but removes filters without regard to their contribution to inference or fault tolerance, lowering accuracy and raising layer-wise vulnerability. PSAP instead shifts the operating point toward a more favorable region, achieving larger rotation reductions (Section IV-B 2) while maintaining comparable or higher accuracy on both datasets. This efficiency improvement is accompanied by substantially better fault tolerance: PSAP reduces the number of catastrophic fault-sensitive layers from 5–14 to at most two and the worst-case layer-wise degradation from 51–79 pp to 2.73–40.82 pp. The curvature-aware ( γ=0 .5) variant provides an additional operating point that preserves higher accuracy at aggressive sparsity. Reliability and efficiency are therefore not conflicting objectives when optimization explicitly considers both. 
+
+2) CKKS Deployment Validation: The optimization pipeline transforms all evaluated networks into HE-compatible mod-els deployable under leveled CKKS inference. Polynomial activation replacement, reliability-aware pruning, adaptive mixed-degree allocation, and quantization-aware training reduce the multiplicative depth of ResNet-32 to 56 levels, within the modulus-chain budget of the selected parameters (Sec-tion IV-B2) and thereby eliminating bootstrapping. Direct CKKS fault injection validates the reliability model: encrypted inference remains largely unaffected for BERs up to 10 −5, beyond which ciphertext overflow produces Detected Unrecoverable Errors (DUEs) rather than silent data corruption, matching the predicted overflow mechanism. The int32 representation consistently identifies the same fault-critical layers and provides a conservative reliability estimate, confirming that large-scale layer-wise studies can be performed 14 
+
+TABLE IV PSAP VS . MAGNITUDE PRUNING : HE EFFICIENCY AND FAULT TOLERANCE AT 50% SPARSITY (BER = 10 −4 ).                                                                        
+
+> HE Efficiency Fault Tolerance (BER = 10 −4)Config Method Clean (%) Rot. Red. (%) Rot. (M) Latency (s/img) Worst Drop (pp) Layers >10 pp Worst Layer
+> R-20/C-10 PSAP 87.31 40.9 24.1 1,181 20.70 1layer2.0 DS Magnitude 86.52 26.9 29.8 1,386 76.37 5layer3.0.conv1 R-20/C-100 PSAP 59.68 39.3 24.8 1,216 9.96 0layer1.1.conv2 Magnitude 51.37 30.5 28.4 1,392 51.17 11 layer3.0.conv1 R-32/C-10 PSAP 89.58 45.2 37.9 2,244 2.73 0conv1 (stem) Magnitude 87.11 35.3 44.7 2,647 79.30 14 layer3.0.conv1 R-32/C-100 PSAP 61.43 44.9 38.1 2,256 40.82 2conv1 (stem) Magnitude 58.01 40.3 41.2 2,440 57.62 13 layer2.0.conv2
+
+TABLE V TARGETED FAULT CAMPAIGN ON THE DEPLOYED RES NET -20/CIFAR-10  
+
+> MODEL
+
+(CLEAN ACCURACY 87 .31% ).                     
+
+> K
+> Targeted Mean (pp) Targeted Worst (pp) Random Worst (pp) Protected Acc. (%)
+> 50.7 10.3 0.9 87 .31
+> 10 1.8 19.1 0.8 87 .31
+> 20 1.9 20.6 1.2 87 .31
+> 50 5.7 33.2 10.4 87 .31
+> 100 13.9 44.5 2.7 87 .31
+
+efficiently with int32 injection while reserving direct CKKS experiments for final validation. 
+
+3) Comparison with Prior Methods: Direct reimplementa-tion of prior methods (Hunter, MOSAIC, SpENCNN, PrivCir-Net) is not viable: each is tied to a specific packing layout, ring dimension, and protocol, none provides public code, and porting any one method to the pure-HE leveled pipeline would require reproducing its entire cryptographic back-end. There-fore, magnitude pruning is used as the controlled comparison, modifying only the scoring criterion. Prior HE-aware methods support structured pruning and account for rotation cost, yet none incorporates the polynomial activation landscape into the pruning criterion. The dominant runtime cost in high-degree encrypted pipelines is bootstrap-ping: using the operation-level latency measurements reported by AutoFHE [22] (Table VI), bootstrapping accounts for 76 .3% 
+
+of ResNet-32/CIFAR-10 inference time in MPCNN and still 
+
+46 .5% –69 .4% in the bootstrap-reduced AESPA and AutoFHE solutions. PSAP eliminates this cost entirely. By coupling activation-sensitivity pruning with mixed-degree allocation, PSAP compresses the multiplicative depth from 66 to 56 and keeps the entire network within the leveled budget, so no bootstrapping is ever invoked (Table VI). The zero-bootstrap regime in the last row is therefore not an assumption but a direct outcome of the PSAP pipeline: the same pruning decisions that improve fault tolerance also remove the single largest runtime cost of encrypted inference. Taken together, the experimental results demonstrate that the proposed optimization framework satisfies all design objectives introduced in Section III. The optimized models preserve competitive prediction accuracy, substantially reduce the computational complexity of encrypted inference, improve 
+
+TABLE VI BOOTSTRAPPING COST FOR RES NET -32/CIFAR-10. P RIOR -METHOD DATA FROM AUTO FHE [22] (T ABLES 4–5); PSAP STAYS LEVELED AND PERFORMS NO BOOTSTRAPPING .               
+
+> Method Boots. Time Activation
+> MPCNN [18] 30 76 .3% Minimax AESPA [35] 846 .9% Low-deg poly. AutoFHE [22] 8–19 46 .5% –69 .4% Mixed-deg
+> PSAP 00% Train. deg-1/2
+
+resilience against transient hardware faults through reliability-aware optimization, and remain fully deployable under practical CKKS security parameters without requiring bootstrapping. V. C ONCLUSION 
+
+This work presents a reliability characterization of pruned encrypted neural networks, together with PSAP, a pruning method that is inherently reliability-aware. On reliability, systematic bit-flip injection across 40 full-model and 108 per-layer experiments reveals that PSAP-pruned models are fundamentally more fault-resilient than magnitude-pruned baselines. PSAP limits catastrophic ( >10 pp drop) layers to at most two versus 5–14 for magnitude pruning, with up to 29 ×
+
+worst-case vulnerability reduction on ResNet-32/CIFAR-10. Direct CKKS encrypted fault injection indicates a safe operating boundary near BER = 10 −5, supporting int32 injection as a conservative reliability proxy. The fault-critical structural layers account for only 1.1% of parameters, enabling selective hardening at minimal overhead. On efficiency, PSAP eliminates up to 45.2% of Halevi–Shoup rotations on ResNet-32, while adaptive mixed-degree allocation enables leveled inference without bootstrapping (depth 66 to 56). These results show that reliability and efficiency are not competing objectives and can be improved together, providing actionable deployment guidelines for reliable encrypted AI in safety-critical domains. ACKNOWLEDGMENT 
+
+This work was supported in part by the Estonian Research Council grant PUT PRG1467 “CRASHLESS”, EU Grant Project 101160182 “TAICHIP”, and by the Federal Ministry of Research, Technology and Space of Germany (BMFTR) for supporting Edge-Cloud AI for DIstributed Sensing and COmputing (AI-DISCO) project (Project-ID “16ME1127”). 15 
+
+REFERENCES [1] J. H. Cheon, A. Kim, M. Kim, and Y. Song, “Homomorphic encryption for arithmetic of approximate numbers,” in Advances in Cryptology – ASIACRYPT 2017 . Springer International Publishing, 2017, pp. 409–437. [2] S. Halevi and V. Shoup, “Algorithms in HElib,” in Advances in Cryptology – CRYPTO 2014 . Springer Berlin Heidelberg, 2014, pp. 554–571. [3] Y. Cai, Q. Zhang, R. Ning, C. Xin, and H. Wu, “Hunter: HE-friendly structured pruning for efficient privacy-preserving deep learning,” in 
+
+Proceedings of the 2022 ACM on Asia Conference on Computer and Communications Security . Association for Computing Machinery, 2022, pp. 931–945. [4] R. Ran, X. Luo, W. Wang, T. Liu, G. Quan, X. Xu, C. Ding, and W. Wen, “SpENCNN: Orchestrating encoding and sparsity for fast homomorphically encrypted neural network inference,” in Proceedings of the 40th International Conference on Machine Learning , vol. 202. PMLR, 2023, pp. 28 718–28 728. [5] Y. Cai, Q. Zhang, R. Ning, C. Xin, and H. Wu, “MOSAIC: A prune-and-assemble approach for efficient model pruning in privacy-preserving deep learning,” in Proceedings of the 19th ACM Asia Conference on Computer and Communications Security . Association for Computing Machinery, 2024, pp. 1034–1048. [6] T. Xu, L. Wu, R. Wang, and M. Li, “PrivCirNet: Efficient private inference via block circulant transformation,” in Advances in Neural Information Processing Systems , vol. 37. Curran Associates, Inc., 2024, pp. 111 802– 111 831. [7] S. S. Mukherjee, J. Emer, and S. K. Reinhardt, “The soft error problem: An architectural perspective,” Proceedings of the 11th International Symposium on High-Performance Computer Architecture , pp. 243–247, 2005. [8] R. C. Baumann, “Radiation-induced soft errors in advanced semiconduc-tor technologies,” IEEE Transactions on Device and Materials Reliability ,vol. 5, no. 3, pp. 305–316, 2005. [9] B. Reagen, U. Gupta, L. Pentecost, P. Whatmough, S. K. Lee, N. Mulhol-land, D. Brooks, and G.-Y. Wei, “Ares: A framework for quantifying the resilience of deep neural networks,” in Proceedings of the 55th Annual Design Automation Conference , 2018, pp. 17:1–17:6. [10] G. Li, S. K. S. Hari, M. Sullivan, T. Tsai, K. Pattabiraman, J. Emer, and S. W. Keckler, “Understanding error propagation in deep learning neural network (DNN) accelerators and applications,” in Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis , 2017, pp. 1–12. [11] A. Mahmoud, S. K. S. Hari, C. W. Fletcher, S. V. Adve, C. Sakr, N. Shanbhag, P. Molchanov, M. B. Sullivan, T. Tsai, and S. W. Keckler, “Optimizing selective protection for CNN resilience,” in 2021 IEEE 32nd International Symposium on Software Reliability Engineering (ISSRE) ,2021, pp. 127–138. [12] Z. Chen, G. Li, K. Pattabiraman, and N. DeBardeleben, “BinFI: An efficient fault injector for safety-critical machine learning systems,” in 
+
+Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis , 2019, pp. 1–23. [13] R. A. Rajagede and Y. Solihin, “Reliability analysis of fully homo-morphic encryption systems under memory faults,” arXiv preprint arXiv:2509.20686 , 2025. [14] J. Mu, G. Yu, Z. Kan, S. Bian, L. Kong, Z. Liu, C. Liu, J. Ye, and H. Li, “On the vulnerability of FHE computation to silent data corruption,” arXiv preprint arXiv:2603.23253 , 2026. [15] R. Gilad-Bachrach, N. Dowlin, K. Laine, K. Lauter, M. Naehrig, and J. Wernsing, “CryptoNets: Applying neural networks to encrypted data with high throughput and accuracy,” in Proceedings of The 33rd International Conference on Machine Learning , vol. 48, 2016, pp. 201– 210. [16] C. Juvekar, V. Vaikuntanathan, and A. Chandrakasan, “GAZELLE: A low latency framework for secure neural network inference,” in 27th USENIX Security Symposium (USENIX Security 18) , 2018, pp. 1651–1669. [17] Z. Ghodsi, A. K. Veldanda, B. Reagen, and S. Garg, “CryptoNAS: Private inference on a ReLU budget,” in Advances in Neural Information Processing Systems , vol. 33, 2020, pp. 16 961–16 971. [18] J.-W. Lee, H. Kang, Y. Lee, W. Choi, J. Eom, M. Deryabin, E. Lee, J. Lee, D. Yoo, Y.-S. Kim, and J.-S. No, “Privacy-preserving machine learning with fully homomorphic encryption for deep neural networks,” 
+
+IEEE Access , vol. 10, pp. 30 039–30 054, 2022. [19] D. Kim, J. Park, J. Kim, S. Kim, and J. H. Ahn, “HyPHEN: A hybrid packing method and its optimizations for homomorphic encryption-based neural networks,” IEEE Access , vol. 12, pp. 3024–3038, 2024. [20] E. Aharoni, M. Baruch, P. Bose, A. Buyuktosunoglu, N. Drucker, S. Pal, T. Pelleg, K. Sarpatwar, H. Shaul, O. Soceanu, and R. Vaculin, “Efficient pruning for machine learning under homomorphic encryption,” in Computer Security – ESORICS 2023 . Springer Nature Switzerland, 2024, pp. 204–225. [21] P. Ghazvinian, R. Podschwadt, P. Panzade, M. H. Rafiei, and D. Takabi, “MOFHEI: Model optimizing framework for fast and efficient homomor-phically encrypted neural network inference,” in IEEE 6th International Conference on Trust, Privacy and Security in Intelligent Systems, and Applications (TPS-ISA) , 2024, pp. 233–244. [22] W. Ao and V. N. Boddeti, “AutoFHE: Automated adaption of CNNs for efficient evaluation over FHE,” in 33rd USENIX Security Symposium (USENIX Security 24) . USENIX Association, 2024, pp. 2173–2190. [23] H. Li, A. Kadav, I. Durdanovic, H. Samet, and H. P. Graf, “Pruning filters for efficient convnets,” in 5th International Conference on Learning Representations, ICLR 2017,Toulon, France, April 24-26, 2017, Conference Track Proceedings . OpenReview.net, 2017. [24] Y. He, X. Zhang, and J. Sun, “Channel pruning for accelerating very deep neural networks,” in 2017 IEEE International Conference on Computer Vision (ICCV) , 2017, pp. 1398–1406. [25] I. Chillotti, N. Gama, M. Georgieva, and M. Izabach `ene, “TFHE: Fast fully homomorphic encryption over the torus,” Journal of Cryptology ,vol. 33, no. 1, pp. 34–91, 2020. [26] L. L. Mankali, M. Nabeel, F. Raees, M. Maniatakos, O. Sinanoglu, and J. Knechtel, “GlitchFHE: Attacking fully homomorphic encryption using fault injection,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 8481–8500. [27] B. Pulido-Gaytan and A. Tchernykh, “Self-learning activation functions to increase accuracy of privacy-preserving convolutional neural networks with homomorphic encryption,” PLOS ONE , vol. 19, no. 7, p. e0306420, 2024. [28] T. Ishiyama, T. Suzuki, and H. Yamana, “Highly accurate cnn inference using approximate activation functions over homomorphic encryption,” in 
+
+2020 IEEE International Conference on Big Data , 2020, pp. 3989–3995. [29] J.-P. Bossuat, C. Mouchet, J. Troncoso-Pastoriza, and J.-P. Hubaux, “Efficient bootstrapping for approximate homomorphic encryption with non-sparse keys,” in Advances in Cryptology – EUROCRYPT 2021 .Springer International Publishing, 2021, pp. 587–617. [30] K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning for image recognition,” in 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR) , 2016, pp. 770–778. [31] A. Krizhevsky and G. Hinton, “Learning multiple layers of features from tiny images,” University of Toronto, Tech. Rep., 2009. [32] N. K. Jha, Z. Ghodsi, S. Garg, and B. Reagen, “DeepReDuce: ReLU reduction for fast private inference,” in Proceedings of the 38th Interna-tional Conference on Machine Learning , vol. 139. PMLR, 2021, pp. 4839–4849. [33] A. Al Badawi, J. Bates, F. Bergamaschi, D. B. Cousins, S. Erabelli, N. Genise, S. Halevi, H. Hunt, A. Kim, Y. Lee, Z. Liu, D. Miccian-cio, I. Quah, Y. Polyakov, R. V. Saraswathy, K. Rohloff, J. Saylor, D. Suponitsky, M. Triplett, V. Vaikuntanathan, and V. Zucca, “OpenFHE: Open-source fully homomorphic encryption library,” in Proceedings of the 10th Workshop on Encrypted Computing and Applied Homomorphic Cryptography (WAHC) , 2022, pp. 53–63. [34] R. Leveugle, A. Calvez, P. Maistri, and P. Vanhauwaert, “Statistical fault injection: Quantified error and confidence,” in Design, Automation & Test in Europe Conference & Exhibition , 2009, pp. 502–506. [35] J. Park, M. J. Kim, W. Jung, and J. H. Ahn, “AESPA: Accuracy preserving low-degree polynomial activation for fast private inference,” 
+
+arXiv preprint arXiv:2201.06699 , 2022.
