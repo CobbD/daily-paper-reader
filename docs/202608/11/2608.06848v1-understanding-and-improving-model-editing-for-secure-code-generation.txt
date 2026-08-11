@@ -1,0 +1,706 @@
+Title: Understanding and Improving Model Editing for Secure Code Generation
+
+URL Source: https://arxiv.org/pdf/2608.06848v1
+
+Published Time: Mon, 10 Aug 2026 00:31:38 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Understanding and Improving Model Editing for Secure Code Generation 
+
+WEIFENG SUN, Singapore Management University, Singapore 
+
+QUANJUN ZHANG ∗, Nanjing University of Science and Technology, China 
+
+YUCHEN CHEN, Nanjing University, China 
+
+CHENGRAN YANG, Singapore Management University, Singapore 
+
+GOU TAN, Sun Yat-sen University, China 
+
+DAVID LO, Singapore Management University, Singapore Large language models (LLMs) are widely used for code generation, yet they can reproduce vulnerable code implementations learned from insecure patterns in training data. Prior work has primarily explored 
+
+inference-time hardening to reduce insecure generations without updating the target model. While effective, this paradigm couples security behavior to the auxiliary component and incurs additional runtime overhead. This paper presents the first systematic empirical study of applying model editing as the model-level hardening mechanism for secure code generation. Unlike inference-time interventions, model editing updates a small subset of parameters to inject security-relevant knowledge directly into the target LLM. We evaluate 3 state-of-the-art editing methods across diverse LLM families and compare them with CoSec, a representative inference-time hardening approach, focusing on: (i) security effectiveness and robustness, (ii) generalization to unseen vulnerabilities, and (iii) functional correctness on general programming tasks. Our results show that model editing yields substantially larger security gains than CoSec on seen vulnerability types, improving security ratios by 15%–25% over vanilla models, and these gains remain stable under prompt perturbations. However, security improvements do not always transfer reliably to unseen vulnerabilities and induce functional regressions on general programming tasks, even for UltraEdit, the best-performing editing method in our evaluation. To mitigate this side effect, we propose SafeEdit, a post-edit refinement method that combines functional tuning with edit-aware regularization. Across eight target LLMs, SafeEdit improves Pass@1 over UltraEdit by +11.73/+13.70/+15.50 percentage points at 𝑇 = 0.1/0.4/0.8, while largely preserving security. Compared with CoSec, it achieves relative security-ratio gains of +7.54%–12.04%. Additional evaluation on CodeGuard+ confirms that SafeEdit improves joint secure-and-correct generation. Importantly, SafeEdit and CoSec are complementary: combining them can improve security under stochastic decoding while maintaining strong functional correctness. Finally, we analyze efficiency and key design factors, showing that model editing is more efficient than CoSec and sensitive to editing depth, parameter location, and injected context. Overall, our work provides evidence-backed guidance for applying model editing to secure code generation. CCS Concepts: • Software and its engineering → Source code generation .Additional Key Words and Phrases: Large Language Models, Empirical Study, Model Editing, Code Security 
+
+> ∗
+
+corresponding author. Authors’ Contact Information: Weifeng Sun, Singapore Management University, Singapore, Singapore, wfsun@smu.edu.sg; Quanjun Zhang, Nanjing University of Science and Technology, Nanjing, China, quanjunzhang@njust.edu.cn; Yuchen Chen, Nanjing University, Nanjing, China, yuc.chen@smail.nju.edu.cn; Chengran Yang, Singapore Management University, Singapore, Singapore, cryang@smu.edu.sg; Gou Tan, Sun Yat-sen University, Guangzhou, China, tang29@mail2.sysu.edu.cn; David Lo, Singapore Management University, Singapore, Singapore, davidlo@smu.edu.sg. 
+
+This work is licensed under a Creative Commons Attribution 4.0 International License. © 2026 Copyright held by the owner/author(s). ACM 2994-970X/2026/10-ARTISSTA163 https://doi.org/10.1145/3832254 Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. arXiv:2608.06848v1 [cs.CR] 7 Aug 2026 ISSTA163:2 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo   
+
+> ACM Reference Format:
+> Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo. 2026. Understanding and Improving Model Editing for Secure Code Generation. Proc. ACM Softw. Eng. 3, ISSTA, Article ISSTA163 (October 2026), 23 pages. https://doi.org/10.1145/3832254
+
+1 Introduction 
+
+The rapid progress of large language models (LLMs), e.g., GPT-3 [1], LLaMA [50], and GLM [9], has reshaped software practices [55, 63]. Their ability to understand natural language and generate code facilitates various code-related tasks [10, 29, 30, 48], such as code translation [47, 49, 56], code completion [23, 53], test generation [61], and program repair [45, 62, 64]. Consequently, LLM-powered assistants, including GitHub Copilot [12] and CodeGeeX [58], have been widely adopted in development environments. However, prior studies show that LLMs can generate insecure code [25, 35, 41], since training corpora contain vulnerable implementations that can be reproduced at inference time [4, 8, 24]. Therefore, mitigating insecure code generation has become a pressing practical concern. To address this challenge, previous work has explored inference-time hardening strategies that modify decoding behavior without updating the target model parameters, with the aim of minimizing insecure code generation while preserving functional correctness , i.e., ensuring that the generated code still implements the intended requirements. A representative approach is CoSec [27, 28], which steers decoding by incorporating an auxiliary security model to bias token selection toward safer continuations. Although effective, such designs introduce two inherent limitations: 1) their effectiveness is closely tied to the capacity and generalization of the auxiliary model, and 2) they introduce additional runtime overhead due to multi-model decoding, which is non-negligible in latency-sensitive and resource-constrained environments. A natural alternative is model-level updating , e.g., retraining or fine-tuning the target LLM, to improve security behavior without relying on auxiliary models at inference time, such as SVEN [19] and SafeCoder [20]. However, such methods are computationally expensive, and previous work [43] has shown that their broad parameter updates significantly disturb general coding behavior, causing regressions on unrelated tasks. Notably, model editing has been proposed as a targeted form of model-level update [57], performing localized parameter changes to enforce specific behavioral updates while largely preserving the original capabilities of the model. Model editing has recently attracted increasing attention, but its potential for secure code generation remains largely unexplored. Existing studies apply model editing to token-level code correction [14] or API-update-oriented code tasks [33], without considering vulnerability-oriented scenarios or security criteria. Thus, it remains unclear whether model editing can effectively strengthen the security of LLM-generated code . To fill this gap, we conduct the first systematic empirical study of model editing for secure code generation, examining its feasibility, effectiveness, limitations, and comparison with CoSec, a SOTA inference-time hardening approach. We attempt to address the following research questions: 
+
+• Security Effectiveness. We assess whether model editing improves secure code generation under vulnerability-relevant contexts, relative to CoSec, and whether these improvements are robust to prompt perturbations. Results : Model editing achieves substantially higher security improvements than CoSec, often improving the security ratio by 15–25% over vanilla (original) models. Moreover, these improvements remain largely stable under prompt perturbations. In contrast, CoSec provides limited improvements and even reduces security when the auxiliary model is much smaller than the target LLM. 
+
+• Security Generalization. We evaluate how well security improvements from model editing transfer to unseen vulnerability types. Results: Strong security improvements on seen vulner-abilities do not necessarily translate to good generalization. Most editing methods retain part  
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:3
+
+of their improvements on unseen CWE categories, whereas CoSec typically stays close to (or slightly above) the vanilla model on unseen cases. 
+
+• Functional Correctness. We evaluate how security hardening affects the functional correctness of base models. Results: Both model editing methods and CoSec introduce non-negligible degradation in functional correctness. However, model editing tends to incur larger regressions, especially under cumulative edits. In comparison, CoSec achieves limited security improvements but better preserves functional correctness under high-temperature decoding conditions. 
+
+• Enhanced Approach. Motivated by our empirical findings, we propose SafeEdit, a post-edit refinement method. SafeEdit combines functional tuning with edit-aware regularization to mitigate functional regressions while preserving the injected security behavior. Results: 
+
+Compared to UltraEdit, which achieves the most favorable security–correctness trade-off among the evaluated editing methods, SafeEdit restores functional correctness without sacrificing security effectiveness. Compared to CoSec, SafeEdit improves both security (up to 26.04% security ratio) and correctness on average. We further find that SafeEdit and CoSec offer complementary advantages when combined. Furthermore, we conduct extended experiments to provide additional discussions about secure code generation via model editing from different aspects: 
+
+• Efficiency. We compare training overhead and inference latency. Results: Model editing is consistently more efficient than CoSec: UltraEdit completes editing within 50–100 seconds even for 8B-scale models, whereas CoSec requires hundreds to thousands of seconds to train an auxiliary security model and increases inference latency by 2–3 ×.
+
+• Design Choices. We ablate editing depth, editing dataset size, parameter location, and injected context. Results: Editing performance is sensitive to these factors; overly shallow or aggressive edits may improve security but often cause larger correctness degradation. Overall, model editing is not a plug-and-play solution: careful design choices are needed to avoid overfitting to security cues at the expense of general code generation. 
+
+Novelty & Contributions. The main contributions of this paper are as follows: (1) New Empirical Perspective. We present the first systematic empirical study on applying model editing to secure code generation, investigating whether directly modifying LLM parameters can mitigate insecure code generation and how such approaches compare with CoSec, the state-of-the-art method of secure code generation. (2) Comprehensive Evaluation. We evaluate multiple LLM families and hardening methods across security effectiveness, functional correctness, generalization, robustness, and efficiency, revealing a clear security–correctness trade-off. (3) Effective Technique. We propose SafeEdit, a post-edit refinement method that combines func-tional tuning with edit-aware regularization to improve functional correctness while retaining security gains. (4) Design Insights for Security Editing. Through targeted ablation studies, we analyze how editing depth, editing dataset size, parameter location, and injected context size affect security and correctness, providing concrete insights into the design of effective model editing strategies. 
+
+2 Study Design 2.1 Overall Framework 
+
+Figure 1 illustrates our experimental pipeline. We first construct security editing instances covering multiple CWE categories, and apply model editing to obtain edited LLMs via localized parameter updates. We compare model editing with CoSec, a representative inference-time hardening baseline. We then evaluate each method from three perspectives: (i) security effectiveness on seen CWEs, including robustness to prompt perturbations; (ii) security generalization on unseen CWEs with 
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026.
+
+ISSTA163:4 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo Target LLMs    
+
+> Raw Security Dataset
+> Data Processing
+> & Splitting
+> Editing Instance Construction
+> Raw Vulnerable/Fixed
+> Pairs
+> (1) Data Pregaration
+> & Inputs
+> Model-Level Updating
+> Techniques:
+> UltraEdit,
+> DINM,
+> DEFER*
+> Parameter Modification
+> Algorithm
+> 𝒜(𝑓, ℰ)
+> Edited LLM
+> (𝑓 𝑐 )
+> Inference-Time Hardening (CoSec)
+> Train Auxiliary Security Model
+> CoSec
+> Inference
+> System
+> Co-Decoding Mechanism
+> Baseline LLM
+> (Unmodified, Control Group)
+> (2) Comparative Hardening Approaches (3) Multi-Dimensional Evaluation
+> 𝑫 𝒔𝒆𝒄 & 𝑫 𝒑𝒆𝒓
+> (Seen CWEs &Perturbations)
+> 17 Unseen CWE Scenarios
+> HumanEval Benchmark
+> (163 Tasks)
+> CodeQL
+> Static Analysis
+> CodeQL
+> Static Analysis
+> Execution-based Unit Testing
+> Security Effectiveness
+> Security
+> Generalization
+> Functional Correctness
+> (4) Empirical-Driven Refinement
+> L2 Regularization
+> Functional Tuning
+> 𝝁||𝜽 − 𝜽 𝒆 || 𝟐
+> (𝜃 𝑒 =edited params )
+> Edited LLM
+> Instruction
+> Create a valid python
+> code that can be
+> used……
+> Function Code
+> Loss
+> Tuning
+
+Fig. 1. Overview of our experimental pipeline for secure code generation hardening, comparing model editing with inference-time hardening (CoSec) across security, generalization, functional correctness. 
+
+CodeQL-based static analysis; and (iii) functional correctness on HumanEval with execution-based testing. Finally, motivated by the observed security–correctness trade-off, we propose a post-edit refinement method that combines functional tuning with edit-aware regularization to recover functional correctness while preserving injected security behavior. 
+
+2.2 Task Definition 
+
+Definition 1 (Security Editing Instance). Let 𝑓 denote a target LLM. A security-driven editing instance is defined as 𝑀 𝑖 = (𝑋 𝑖 , ˆ𝑌 𝑖 , 𝑌 𝑖 , CWE 𝑖 ), where (i) 𝑋 𝑖 is a vulnerability-relevant code prefix; (ii) 
+
+ˆ𝑌 𝑖 = 𝑓 (𝑋 𝑖 ) is the completion produced by 𝑓 (reflecting the pre-editing behavior); (iii) 𝑌 𝑖 is a secure suffix (or completion) that removes the CWE 𝑖 under the same context 𝑋 𝑖 ; and (iv) CWE 𝑖 denotes the vulnerability category associated with 𝑀 𝑖 .
+
+Definition 2 (Security Editing Dataset). A security editing dataset is a collection of editing instances E = {𝑀 1, 𝑀 2, . . . , 𝑀 𝑛 }, covering multiple CWEs, where each 𝑀 𝑖 follows Definition 1. 
+
+Definition 3 (Security Hardening via Model Editing). Given a target model 𝑓 and a security editing dataset E, a model editing algorithm A produces an edited model 𝑓 𝑒 = A ( 𝑓 , E) where the objective is to update the model such that it generates secure code for vulnerability-relevant inputs while preserving its general coding capability. 
+
+Let T𝑠𝑒𝑒𝑛 denote all CWE categories in E and T𝑢𝑛𝑠𝑒𝑒𝑛 be the remaining CWE categories in evaluation, where T𝑠𝑒𝑒𝑛 ∩ T 𝑢𝑛𝑠𝑒𝑒𝑛 = ∅. Let U denote a set of representative programming problems for functional evaluation. The edited model 𝑓 𝑒 is assessed along the following evaluation objectives: Definition 4 (Evaluation Objectives). (1) Security Effectiveness. 𝑓 𝑒 improves secure code generation on vulnerability-relevant inputs whose CWE belongs to T𝑠𝑒𝑒𝑛 , including but not limited to instances in E. (2) Security Generalization. 𝑓 𝑒 improves secure code generation on inputs whose CWE belongs to T𝑢𝑛𝑠𝑒𝑒𝑛 . (3) Functional Correctness. 𝑓 𝑒 preserves general coding capability on standard programming tasks: 𝑓 𝑒 (𝑈 ) ≈ 𝑓 (𝑈 ), ∀𝑈 ∈ U .
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:5 
+
+Following established practice in model editing research [36, 60, 65], we apply each editing technique to the full editing set E regardless of whether the target LLM already produces an insecure completion for 𝑋 𝑖 , for two reasons: (i) filtering E to model-specific failures would make the editing set model-dependent and hinder fair cross-model comparison; (ii) including all instances allows us to quantify editing side effects such as functional regressions on already-secure contexts. 
+
+2.3 Compared Methods 
+
+We evaluate three representative model editing methods from different editing families and one SOTA secure code generation method. Each model editing method receives the same security editing dataset E and produces an edited model 𝑓 𝑒 = A ( 𝑓 , E) via localized parameter updates; they differ in where and how these updates are applied. (1) UltraEdit [15] is a local-modification method that computes a closed-form parameter shift from hidden states and output gradients at editable layers, avoiding iterative training. A lifelong normalization mechanism stabilizes feature distributions under sequential edits. (2) DINM [51] is a local-modification method that identifies domain-informative neurons via gradient-based attribution and applies targeted parameter shifts to steer outputs, achieving high specificity with limited impact on non-target behavior. (3) DEFER ∗
+
+adapts DEFER [18, 52], an external-memorization method that stores edited knowledge in an adapter [21] with a router selecting between edited and base model predictions. Since sequence-level routing is less suitable for code generation where security cues appear at arbitrary token positions, we adopt the token-wise method that computes a routing score per token hidden state. (4) CoSec [27, 28] is an inference-time hardening method that pairs a target LLM with a lightweight auxiliary model trained to distinguish secure from insecure next-token predictions, applying a gating rule to bias decoding toward safer continuations without modifying model parameters. 
+
+2.4 Target LLMs 
+
+We select six publicly available LLMs varying in scale, pretraining objectives, and model families: two general-purpose models, LLaMA-3.1-8B and LLaMA-3.2-3B [13], and four code-specialized models, DeepSeek-Coder-6.7B [16], CodeGen-6B [40], Qwen2.5-Coder-7B/3B [22], covering parameter scales from 3B to 8B across distinct model families. 
+
+2.5 Dataset 
+
+2.5.1 Hardening Dataset. Following prior work [19, 27, 28], we adopt the security-relevant dataset of He and Vechev [19], comprising 710 vulnerable/fixed function pairs across 9 CWE categories in Python and C/C++ (see Table 1). For CoSec , we follow the official implementation [39] directly and use the original pairs of vulnerable and fixed functions to train the auxiliary security model. For model editing , each pair is converted into an editing instance 𝑀 𝑖 = (𝑋 𝑖 , ˆ𝑌 𝑖 , 𝑌 𝑖 , CWE 𝑖 ) through three steps: (1) compute the syntactic diff using difflib [44] to locate the modified region; (2) extract a vulnerability-relevant prefix 𝑋 𝑖 (up to 150 tokens before the diff start) and a secure suffix 
+
+𝑌 𝑖 (𝐿 tokens from the fixed function at the diff start); (3) generate the original model’s completion ˆ 𝑌 𝑖 
+
+by prompting the target LLM with 𝑋 𝑖 . The full dataset yields |E| = 710 editing instances, covering 
+
+Table 1. CWE categories in the dataset [19] and seen/unseen separation statistics. Severity is indicated by superscripts: C=Critical, H=High, M=Medium. The severity levels are based on MITRE CWE data [38].         
+
+> Split CWE Types Lang. Size
+> Seen (T𝑠𝑒𝑒𝑛 )CWE-089 C, CWE-125 M, CWE-078 C, CWE-476 M, CWE-416 C, CWE-022 C,CWE-787 C, CWE-079 C, CWE-190 H
+> Python & C/C++ 710 train pairs + 24 eval prompts Unseen (T𝑢𝑛𝑠𝑒𝑒𝑛 )CWE-119 C, CWE-502 H, CWE-732 H, CWE-798 C, CWE-020 C, CWE-094 C,CWE-116 C, CWE-117 H, CWE-209 M, CWE-215 M, CWE-312 M, CWE-327 M,CWE-377 M, CWE-611 C, CWE-643 H, CWE-777 M, CWE-918 C
+> Python & C/C++ 29 eval prompts
+> Seen/Unseen Separation: # CWEs: 9 vs. 17 (Jaccard = 0.0) CodeQL rules: 17 vs. 24 (Jaccard = 0.0) Avg. prompt embedding similarity: 0.209 (seen) / 0.244 (unseen) / 0.167 (cross-set)
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:6 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo
+
+all 9 CWE categories in T𝑠𝑒𝑒𝑛 . Each editing method consumes E in a single pass: instances are processed sequentially, and the cumulative effect of all edits produces the final edited model 𝑓 𝑒 .
+
+2.5.2 Evaluation Dataset. Our study follows the three evaluation objectives defined in Section 2.2: Security Effectiveness, Security Generalization, and Functional Correctness. We detail the selected datasets for each dimension. 
+
+• Security Effectiveness. We adopt 𝐷 𝑠𝑒𝑐 [19, 28], a CWE-based evaluation suite covering nine categories in T𝑠𝑒𝑒𝑛 , each instantiated into three fully specified prompts (including package decla-rations, variable definitions, and function signatures) designed to compile successfully. For each scenario, the security-hardened model freely generates code completions. Valid completions (dupli-cates and non-compiling outputs removed) are analyzed by CodeQL [7] to detect vulnerabilities. To examine robustness to realistic prompt variations [3, 46, 59], we construct a perturbation set 
+
+𝐷 𝑝𝑒𝑟 based on the CWE-089 0-Py scenario used in CoSec [28]. The perturbations cover metadata changes, documentation rewrites, and context-code edits, such as modifying import metadata, rewriting or removing comments, moving hard-coded parameters to environment variables, and switching database APIs. These perturbations preserve the intended functionality while changing surface forms and surrounding context. For each perturbed prompt, the model generates completions that are validated using CodeQL. The full perturbation list is included in our replication package. 
+
+• Security Generalization . To assess security generalization, we further evaluate the security-hardened models on unseen CWE categories. Specifically, we use the 17 CWE types that do not appear in the training set (listed in Table 1), denoted as T𝑢𝑛𝑠𝑒𝑒𝑛 . This evaluation comprises 29 testing scenarios in total. We verify that T𝑠𝑒𝑒𝑛 and T𝑢𝑛𝑠𝑒𝑒𝑛 are distinct: their CWE sets and corresponding CodeQL rules are disjoint (Jaccard similarity = 0.0). CodeBERT-based prompt embeddings further show higher intra-set similarity (0.209/0.244) than cross-set similarity (0.167), suggesting semantic separation between the two splits. 
+
+• Functional Correctness . To investigate that model edits do not impair the LLM’s coding ability, we evaluate on the HumanEval benchmark [5]. HumanEval contains 164 Python programming tasks, each with a function signature, natural-language description, and unit tests. For each task, the model generates multiple completions that are then executed against the tests. 
+
+2.6 Evaluation Metrics 
+
+We adopt two standard evaluation metrics widely used in secure code generation research [19, 27, 31] to assess both the security and functional correctness of model outputs. 
+
+• Security Ratio (SR) . Let 𝑁 𝑡 , 𝑁 𝑑 , and 𝑁 𝑛𝑝 denote the numbers of total completions, dupli-cates, and non-compilable samples, respectively; among the valid completions, 𝑁 𝑠𝑒𝑐 denotes those classified as secure by CodeQL. The security ratio is defined as:       
+
+> 𝑆𝑅 =𝑁 𝑠𝑒𝑐
+> 𝑁 𝑡 −𝑁 𝑛𝑝 −𝑁 𝑑
+> (1)
+
+• Pass@k . To measure functional correctness, we use the Pass@k metric following prior work [5]. Given 𝑛 completions sampled for each task (with 𝑛 > 𝑘 ), Pass@k estimates the probability that at least one of the model’s 𝑘 selected samples passes all reference tests:    
+
+> Pass@ 𝑘 :=EProblems
+> "
+> 1−
+>  𝑛 −𝑐 𝑘
+>  𝑛 𝑘
+> #
+> (2)
+
+where 𝑐 denotes the number of completions (out of 𝑛 ) that successfully pass the unit tests.  
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:7
+
+2.7 Evaluation Pipeline 
+
+Our study aims to investigate whether model editing can serve as an effective model-level hardening mechanism for secure code generation. To this end, we design a unified evaluation pipeline that assesses each hardening method along security effectiveness, generalization, functional correctness: 
+
+① Code Generation. For each prompt, the target LLM or its hardened variant generates 25 completions with nucleus sampling (Top-P = 0.95), a maximum of 256 new tokens, and temperatures 
+
+𝑇 ∈ { 0.1, 0.4, 0.8}. All experiments are repeated across 10 random seeds. ② Output Filtering. 
+
+We remove exact duplicates and syntactically invalid outputs that fail to compile; only valid completions are evaluated. ③ Security Evaluation. Valid completions are analyzed by CodeQL with CWE-specific queries. A completion is classified as secure if no query is triggered, and as 
+
+vulnerable otherwise. SR is computed over valid completions following Equation 1. ④ Functional Correctness Evaluation. For HumanEval, completions are executed against the reference unit tests, and functional correctness is measured by Pass@ 𝑘 (𝑘 ∈ { 1, 5, 10 }) following Equation 2. 
+
+2.8 Implementation Details 
+
+All target LLMs and tokenizers are loaded from the official HuggingFace repositories. We configure each hardening method as follows. • CoSec. Following Li et al. [28], we select the smallest model within each LLM family as the auxiliary security model: LLaMA-3.2-1B (for LLaMA-3.2-3B), LLaMA-3.1-8B (for LLaMA-3.1-8B), DeepSeek-Coder-1.3B (for DeepSeek-Coder-6.7B), CodeGen-350M (for CodeGen-6B), and Qwen2.5-Coder-0.5B (for Qwen-family models). The auxiliary model is trained with LoRA (rank 8, 𝛼 = 16, max length 1024, lr 5 ×10 −5, up to 8 epochs), with the best validation checkpoint selected. • UltraEdit. Following [15], we apply UltraEdit to the second-to-last 
+
+Transformer layer via a single forward–backward pass. • DINM. We attach DINM to the fifth-to-last 
+
+Transformer layer with lr 5 ×10 −4, zero weight decay, and KL regularization factor 0 .05. • DEFER ∗.
+
+We adapt DEFER to a token-wise variant inserted at the second-to-last Transformer layer, optimized for 10 iterations (lr 7 ×10 −5). At inference time, tokens with routing score above 0 .5 use the edited prediction; otherwise the original prediction is used. For all editing methods, we set the target suffix length to 𝐿 = 50 unless otherwise specified. All experiments are conducted on a single NVIDIA Tesla A800 80GB GPU with Intel 2.8GHz CPUs. 
+
+2.9 Research Questions 
+
+In this work, we attempt to address the following Research Questions (RQs): 
+
+RQ1: Security Effectiveness. To what extent do edits improve the security of generated code? 
+
+RQ1.1 To what extent do edited models improve security on seen CWEs? 
+
+RQ1.2 Are the security improvements robust to prompt perturbations? 
+
+RQ2: Security Generalization. Do model edits improve security for unseen vulnerability types? 
+
+RQ3: Functional Correctness. Do the edits preserve the target model’s functional correctness? 
+
+RQ4: Enhanced Approach. How can we further improve the model editing techniques for better performances on secure code generation? 
+
+3 Results and Analysis 3.1 RQ1: Security Effectiveness 
+
+3.1.1 Answer to RQ1.1. Table 2 reports the SRs of all methods on the seen CWE scenarios ( 𝐷 𝑠𝑒𝑐 )under three decoding temperatures (0.1, 0.4, and 0.8), where vanilla denotes the target model without any security hardening. Three key observations can be drawn from the results. (1) Model editing methods generally provide larger and more stable security gains than CoSec .Across all models and temperatures, DINM delivers the strongest overall improvement (+11.27% on average), followed by UltraEdit (+6.54%), whereas CoSec improves security by only +1.46% on 
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026.
+
+ISSTA163:8 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo 
+
+Table 2. Overall Security Ratio (%) evaluation. The left section reports results on 𝐷 𝑠𝑒𝑐 (RQ1.1), and the right section reports results under prompt perturbations (RQ1.2). 
+
+Model Method 𝐷 𝑠𝑒𝑐 (RQ1.1) Perturbations (RQ1.2) 
+
+𝑇 = 0.1 𝑇 = 0.4 𝑇 = 0.8 Avg. 𝑇 = 0.1 𝑇 = 0.4 𝑇 = 0.8 Avg. LLaMA3.1-8B Vanilla 68.6 68.8 65.8 67.7 94.1 91.1 76.6 87.3 CoSec 73.0 (+6.41%) 77.4 (+12.50%) 73.9 (+12.31%) 74.8 77.2 (-17.96%) 80.4 (-11.75%) 75.6 (-1.31%) 77.7 DEFER* 71.8 (+4.66%) 69.5 (+1.02%) 63.9 (-2.89%) 68.4 94.1 (+0.00%) 84.4 (-7.35%) 71.6 (-6.53%) 83.4 DINM 81.2 (+18.37%) 81.2 (+18.02%) 75.2 (+14.29%) 79.2 85.5 (-9.14%) 94.0 (+3.18%) 94.9 (+23.89%) 91.5 
+
+UltraEdit 71.9 (+4.81%) 78.3 (+13.81%) 70.4 (+6.99%) 73.5 97.6 (+3.72%) 88.3 (-3.07%) 79.4 (+3.66%) 88.4 LLaMA3.2-3B Vanilla 61.3 62.2 64.8 62.8 100.0 93.5 81.5 91.7 CoSec 65.7 (+7.18%) 67.4 (+8.36%) 63.6 (-1.85%) 65.6 75.7 (-24.30%) 81.4 (-12.94%) 77.9 (-4.42%) 78.3 DEFER* 61.3 (+0.00%) 64.3 (+3.38%) 63.5 (-2.01%) 63.0 100.0 (+0.00%) 93.3 (-0.21%) 77.2 (-5.28%) 90.2 DINM 70.6 (+15.17%) 76.2 (+22.51%) 77.2 (+19.14%) 74.7 100.0 (+0.00%) 100.0 (+6.95%) 97.8 (+20.00%) 99.3 
+
+UltraEdit 70.8 (+15.50%) 70.0 (+12.54%) 65.9 (+1.70%) 68.9 100.0 (+0.00%) 95.1 (+1.71%) 88.4 (+8.47%) 94.5 DeepSeek-6.7B Vanilla 77.8 71.3 70.6 73.2 94.1 92.9 84.1 90.4 CoSec 77.8 (+0.00%) 73.5 (+3.09%) 74.5 (+5.52%) 75.3 93.3 (-0.85%) 94.4 (+1.61%) 92.8 (+10.34%) 93.5 DEFER* 83.7 (+7.58%) 83.5 (+17.11%) 82.2 (+16.43%) 83.1 94.1 (+0.00%) 94.1 (+1.29%) 94.6 (+12.49%) 94.3 DINM 82.0 (+5.40%) 81.2 (+13.88%) 77.4 (+9.63%) 80.2 94.1 (+0.00%) 95.2 (+2.48%) 94.4 (+12.25%) 94.6 
+
+UltraEdit 81.0 (+4.11%) 76.7 (+7.57%) 70.2 (-0.57%) 76.0 94.1 (+0.00%) 91.4 (-1.61%) 76.5 (-9.04%) 87.3 Qwen2.5-C-7B Vanilla 76.4 79.5 80.5 78.8 94.1 94.1 92.0 93.4 CoSec 75.7 (-0.92%) 76.6 (-3.65%) 76.7 (-4.72%) 76.3 88.9 (-5.53%) 87.7 (-6.80%) 88.0 (-4.35%) 88.2 DEFER* 68.9 (-9.82%) 83.9 (+5.53%) 90.7 (+12.67%) 81.2 88.2 (-6.27%) 94.1 (+0.00%) 91.6 (-0.43%) 91.3 DINM 83.2 (+8.90%) 83.9 (+5.53%) 80.5 (+0.00%) 82.5 91.2 (-3.08%) 96.3 (+2.34%) 96.2 (+4.57%) 94.6 
+
+UltraEdit 82.9 (+8.51%) 80.3 (+1.01%) 82.4 (+2.36%) 81.9 94.1 (+0.00%) 94.1 (+0.00%) 93.1 (+1.20%) 93.8 CodeGen-6B Vanilla 67.0 65.4 68.0 66.8 93.3 78.5 63.2 78.3 CoSec 71.3 (+6.42%) 69.8 (+6.73%) 71.6 (+5.29%) 70.9 76.5 (-18.01%) 80.8 (+1.91%) 83.6 (+32.28%) 80.0 DEFER* 22.2 (-66.87%) 53.7 (-17.89%) 82.8 (+21.76%) 52.9 41.2 (-55.84%) 67.7 (-13.76%) 81.2 (+28.48%) 63.4 DINM 80.6 (+20.30%) 84.0 (+28.44%) 76.7 (+12.79%) 80.4 98.0 (+5.04%) 96.2 (+22.55%) 90.6 (+43.35%) 94.9 UltraEdit 75.8 (+13.13%) 71.0 (+8.56%) 76.5 (+12.50%) 74.4 100.0 (+7.18%) 98.3 (+25.22%) 99.1 (+56.80%) 99.1 
+
+Qwen2.5-C-3B Vanilla 80.3 75.0 67.1 74.1 94.1 93.7 83.8 90.5 CoSec 64.9 (-19.18%) 62.0 (-17.33%) 65.8 (-1.94%) 64.2 68.8 (-26.89%) 68.5 (-26.89%) 70.5 (-15.87%) 69.3 DEFER* 79.0 (-1.62%) 71.5 (-4.67%) 66.9 (-0.30%) 72.5 88.2 (-6.27%) 92.3 (-1.49%) 87.2 (+4.06%) 89.2 DINM 71.9 (-10.46%) 70.2 (-6.40%) 72.1 (+7.45%) 71.4 96.1 (+2.13%) 96.2 (+2.67%) 97.2 (+15.99%) 96.5 
+
+UltraEdit 79.4 (-1.12%) 77.9 (+3.87%) 68.8 (+2.53%) 75.4 94.1 (+0.00%) 94.1 (+0.43%) 91.6 (+9.31%) 93.3 
+
+average. For instance, DINM raises LLaMA3.1-8B from 67.7% to 79.2% and CodeGen-6B from 66.8% to 80.4%, with improvements observed consistently across temperatures. UltraEdit also outperforms vanilla models without harming performance. Overall, these results suggest that injecting security-relevant knowledge into internal representations is more effective than inference-time guidance for improving code security. (2) CoSec’s improvements are limited and even negative . CoSec delivers less consistent security improvements than model editing, and in several settings even underperforms the vanilla model. We attribute this limitation to three factors. ❶ CoSec often relies on a much smaller auxiliary model ( e.g., CodeGen-350M for CodeGen-6B and Qwen2.5-Coder-0.5B for Qwen models), which limits its ability to capture fine-grained vulnerability cues in complex contexts; this is particularly evident on Qwen-family models, where CoSec consistently lags behind vanilla across temperatures. CoSec produces meaningful improvements mainly when the auxiliary model is close to the target in architecture/scale ( e.g., LLaMA3.1-8B →LLaMA3.1-8B), but this also increases latency due to dual-model decoding. ❷ CoSec does not modify the security-relevant knowledge of the target model; it only reweights token probabilities at inference time, so unsafe generation tendencies can persist. ❸ Token-level biasing may suppress obviously insecure tokens, but can also penalize benign or security-neutral continuations. (3) Security improvements are not always guaranteed, especially at low decoding temperatures . At low temperatures ( e.g., 𝑇 = 0.1), both model editing and CoSec can occasionally reduce security, especially on Qwen2.5-Coder-3B. Low-temperature decoding may resurface vulnerable patterns when security-relevant representations are only partially corrected, suggesting that smaller models may lack sufficient capacity to reliably absorb injected security knowledge. 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:9 
+
+Answer to RQ1.1: Across all target LLMs, model editing consistently outperforms CoSec in security improvement. DINM achieves the largest average gain (+11.27%), followed by UltraEdit (+6.54%), while CoSec yields smaller and sometimes negative gains, suggesting that parameter-level updates are more effective than inference-time steering. 
+
+3.1.2 Answer to RQ1.2. Table 2 reports the SRs of all methods under a suite of prompt perturbations. These perturbations emulate realistic variations in developer-written prompts that often destabilize the security behavior of LLMs. The results reveal several noteworthy observations. (1) Model editing remains more effective and stable than CoSec under perturbations . UltraEdit and DINM maintain high SR across perturbed prompts, indicating that their security gains are not tied to specific prompt patterns. (2) CoSec is brittle . It often degrades SR across LLMs, because its parameter-free co-decoding guidance can be weakened by small context changes, causing models to revert to insecure code. (3) Editing robustness varies by method and model . DINM and UltraEdit are consistently strong on CodeGen-6B and LLaMA3.2-3B, whereas DEFER* is less stable. (4) Perturbation robustness aligns with RQ1.1 . Models that gain more security from editing in the original CWE scenarios also tend to remain robust under prompt perturbations. 
+
+Answer to RQ1.2: Most model editing methods preserve the effectiveness of security harden-ing under prompt perturbations. In contrast, CoSec exhibits inconsistent behavior and often performs worse than the vanilla model when small perturbations are applied. 
+
+3.2 RQ2: Security Generalization 
+
+Table 3. Security ratio (%) on unseen CWE types (RQ2). Each cell reports absolute performance and relative change over the vanilla model at the same temperature.                                                                                                                                                            
+
+> Model Method 𝑇 =0.1𝑇 =0.4𝑇 =0.8Avg. Model Method 𝑇 =0.1𝑇 =0.4𝑇 =0.8Avg.
+> LLaMA 3.1-8B Vanilla 51.0 54.9 54.9 53.6 LLaMA 3.2-3B Vanilla 45.5 49.4 53.1 49.3 CoSec 58.1 (+13.92%) 60.4 (+10.02%) 59.3 (+8.01%) 59.3 CoSec 53.8 (+18.24%) 55.1 (+11.54%) 55.7 (+4.90%) 54.9 DEFER* 57.0 (+11.76%) 58.9 (+7.29%) 62.6 (+14.03%) 59.5 DEFER* 50.3 (+10.55%) 50.1 (+1.42%) 55.0 (+3.58%) 51.8 DINM 61.3 (+20.20%) 59.7 (+8.74%) 60.8 (+10.75%) 60.6 DINM 48.9 (+7.47%) 57.2 (+15.79%) 64.0 (+20.53%) 56.7
+> UltraEdit 51.1 (+0.20%) 54.9 (+0.00%) 55.2 (+0.55%) 53.7 UltraEdit 44.9 (-1.32%) 49.9 (+1.01%) 51.7 (-2.64%) 48.8 DeepSeek -6.7B Vanilla 55.8 58.1 58.3 57.4 Qwen2.5 -Coder-7B Vanilla 57.4 59.4 59.1 58.6 CoSec 62.2 (+11.47%) 58.0 (-0.17%) 56.1 (-3.77%) 58.8 CoSec 56.5 (-1.57%) 56.1 (-5.56%) 57.0 (-3.55%) 56.5 DEFER* 53.7 (-3.76%) 56.9 (-2.07%) 59.1 (+1.37%) 56.6 DEFER* 33.8 (-41.11%) 62.4 (+5.05%) 59.6 (+0.85%) 51.9 DINM 57.9 (+3.76%) 59.0 (+1.55%) 57.7 (-1.03%) 58.2 DINM 56.6 (-1.39%) 60.8 (+2.36%) 61.4 (+3.89%) 59.6
+> UltraEdit 65.3 (+17.03%) 64.1 (+10.33%) 65.6 (+12.52%) 65.0 UltraEdit 57.0 (-0.70%) 58.5 (-1.52%) 58.5 (-1.02%) 58.0 CodeGen -6B Vanilla 43.4 51.0 54.9 49.8 Qwen2.5 -Coder-3B Vanilla 64.2 62.2 57.2 61.2 CoSec 51.5 (+18.66%) 54.3 (+6.47%) 54.5 (-0.73%) 53.4 CoSec 63.2 (-1.56%) 62.6 (+0.64%) 60.5 (+5.77%) 62.1 DEFER* 28.7 (-33.87%) 46.1 (-9.61%) 68.1 (+24.04%) 47.6 DEFER* 48.3 (-24.77%) 52.7 (-15.27%) 54.1 (-5.42%) 51.7 DINM 42.9 (-1.15%) 46.9 (-8.04%) 60.2 (+9.65%) 50.0 DINM 64.4 (+0.31%) 66.2 (+6.43%) 66.6 (+16.43%) 65.7
+> UltraEdit 53.0 (+22.12%) 64.1 (+25.69%) 78.9 (+43.72%) 65.3 UltraEdit 62.7 (-2.34%) 62.3 (+0.16%) 55.4 (-3.15%) 60.1
+
+Table 3 reports the security ratios on 17 unseen CWE categories under three temperatures, evaluating whether security improvements can transfer beyond the vulnerability types used for training or editing. Overall, most methods, including CoSec, improve over vanilla models, suggesting that vulnerability knowledge can generalize to some extent. Interestingly, unlike its limited and unstable gains on seen CWEs in RQ1, CoSec improves on unseen CWEs, indicating that its auxiliary model may capture vulnerability-agnostic signals rather than specific CWE patterns. Model editing methods exhibit more varied transferability. DINM remains strong across most LLMs, whereas DEFER* achieves lower SR, showing that not all editing mechanisms produce transferable security knowledge. This suggests that generalization depends on both the editing mechanism and the editing data. For example, UltraEdit’s sparse up-projection edits can effec-tively suppress seen vulnerable patterns but may bind the injected behavior to edited contexts, limiting transfer to structurally different CWEs. In contrast, DINM’s gradient-attribution-based neuron updates may capture broader security-related semantics, leading to more consistent transfer. 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:10 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo 
+
+Nevertheless, the improvements over vanilla models indicate that model editing is not merely memorization and can transfer part of the injected security knowledge to unseen CWE scenarios. 
+
+Answer to RQ2: RQ2 shows that strong security improvements on seen vulnerabilities do not necessarily transfer to unseen ones. Model editing often yields larger improvements on seen CWEs, but these gains may diminish on unseen categories. On the other hand, CoSec improves less on seen CWEs yet often stays close to or slightly above the vanilla model on unseen cases. 
+
+3.3 RQ3: Functional Correctness 
+
+Table 4. Functional correctness measured by Pass@1 (P@1), Pass@5 (P@5), and Pass@10 (P@10) under different decoding temperatures (RQ3). Best results are highlighted in bold with gray background, and second-best results are underlined (ties are marked accordingly). Method abbreviations: Van.=Vanilla, CoS.=CoSec, DEF.=DEFER*, UE=UltraEdit.                                                                                                                                                                                                                                                                                                           
+
+> Model Met. 𝑇 =0.1𝑇 =0.4𝑇 =0.8Model Met. 𝑇 =0.1𝑇 =0.4𝑇 =0.8
+> P@1 P@5 P@10 P@1 P@5 P@10 P@1 P@5 P@10 P@1 P@5 P@10 P@1 P@5 P@10 P@1 P@5 P@10 LLaMA3.1-8B Van. 38.1 47.9 51.1 36.7 57.9 66.2 31.9 57.3 67.0 Qwen2.5-C-7B Van. 82.7 86.3 87.0 82.2 90.9 92.7 79.3 93.7 95.9 CoS. 35.4 57.8 66.0 36.1 59.4 68.0 33.8 60.3 70.6 CoS. 75.3 94.6 96.7 75.2 94.7 96.7 75.1 94.6 96.6
+> DEF. 34.9 42.2 44.1 31.4 48.4 53.5 26.3 50.0 59.7 DEF. 74.5 79.0 79.8 72.2 86.8 89.5 65.7 89.0 92.6 DINM 24.0 28.0 29.0 20.1 32.2 37.2 12.6 28.4 36.1 DINM 76.2 80.7 82.0 75.5 89.1 91.7 64.6 90.4 94.3 UE 38.9 46.4 48.7 35.7 54.3 61.1 30.3 55.5 65.5 UE 83.0 86.6 87.3 81.9 90.9 92.7 79.1 93.4 95.7 LLaMA3.2-3B Van. 26.7 31.5 33.1 26.7 40.1 46.5 24.0 43.1 52.4
+> CodeGen-6B Van. 18.6 20.7 21.2 18.1 24.8 27.6 14.0 25.1 29.7
+> CoS. 24.1 40.2 47.7 22.8 38.4 45.6 19.8 36.8 45.1 CoS. 12.4 22.5 27.0 12.3 22.2 26.4 10.6 20.3 24.7 DEF. 26.4 31.3 33.1 26.9 40.0 45.0 20.8 39.4 48.0 DEF. 11.2 15.1 16.1 10.6 17.4 19.7 9.3 18.2 21.7 DINM 12.8 15.5 16.7 10.2 18.2 21.5 6.3 14.9 19.3 DINM 12.9 15.1 16.1 12.7 17.7 19.9 10.2 18.4 22.0 UE 27.1 31.4 33.3 26.5 39.7 46.0 22.9 42.0 51.2 UE 10.4 14.5 16.4 8.6 17.4 21.1 2.5 7.9 11.2 DeepSeek-6.7B Van. 46.7 54.6 57.1 43.6 64.2 70.8 39.0 66.7 75.1
+> Qwen2.5-C-3B Van. 59.6 67.5 70.1 58.2 78.5 83.3 53.3 80.2 86.1
+> CoS. 38.8 65.2 73.7 39.2 64.9 73.2 35.2 63.5 73.0 CoS. 43.1 77.0 86.4 42.7 76.3 85.7 42.5 76.0 85.6 DEF. 37.2 47.2 50.0 38.9 60.3 66.5 36.1 65.5 74.6 DEF. 51.4 59.3 61.6 49.3 71.4 77.5 43.7 73.6 80.7 DINM 44.3 52.3 54.4 42.4 62.2 68.6 36.0 63.8 72.1 DINM 51.5 60.7 63.0 51.0 72.3 77.8 43.4 73.9 81.8 UE 31.1 41.0 44.5 32.4 56.2 65.2 25.0 54.3 65.9 UE 60.3 67.4 69.5 58.2 77.5 81.4 53.7 80.1 85.4
+
+Table 4 reports functional correctness under different decoding temperatures. Overall, both model editing and CoSec introduce non-trivial side effects, revealing an inherent tension between security hardening and functional correctness. (1) Model editing generally induces larger correctness degradation than CoSec . DINM consistently reduces Pass@1/Pass@5 across most models and temperatures ( e.g., on LLaMA3.1-8B at 𝑇 = 0.1, Pass@1 drops from 38.1% to 24.0%), suggesting that parameter modification may disrupt shared representations needed for general code synthesis. (2) UltraEdit exhibits a different correctness profile . Unlike DINM, UltraEdit can slightly improve Pass@1 at low temperatures ( e.g., LLaMA3.1-8B: 38.9% vs. 38.1%), yet these gains diminish at higher temperatures where it often trails CoSec on Pass@5/Pass@10. (3) At higher temperatures, CoSec tends to preserve correctness better . When decoding is more stochastic ( 𝑇 = 0.4/0 .8), CoSec frequently achieves the best or second-best Pass@5/Pass@10, particularly on larger models. This is consistent with inference-time steering: reshaping token probabilities without permanently altering internal representations keeps correct solutions accessible under diverse sampling. 
+
+Connecting RQ1 and RQ3. Since security and correctness can trade off against each other, reporting either metric in isolation risks misleading conclusions, as a method may appear superior by sacrificing the other dimension. We therefore compute a harmonic-mean trade-off score TradeOff =
+
+2 × SR × Pass@1 /( SR + Pass@1 ), analogous to F1-score, which jointly rewards both dimensions and penalizes methods excelling in only one. Table 5 shows that model editing methods often sacrifice correctness for security gains. This effect is particularly evident for aggressive editing strategies such as DINM, whose parameter modifications substantially distort representations reused for general code synthesis, especially under cumulative edits. CoSec, by contrast, better preserves 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:11 
+
+Table 5. The trade-off score aggregated from security ratio and functional correctness across decoding temperatures. Bold indicates the best score among the three editing methods for each model and temperature.                                                                                                                                           
+
+> Model Method 𝑇 =0.1𝑇 =0.4𝑇 =0.8Model Method 𝑇 =0.1𝑇 =0.4𝑇 =0.8Model Method 𝑇 =0.1𝑇 =0.4𝑇 =0.8
+> LLaMA 3.1-8B Vanilla 48.99 47.87 42.97 LLaMA 3.2-3B Vanilla 37.20 37.36 35.03 DeepSeek 6.7B Vanilla 58.37 54.11 50.24 CoSec 47.68 49.24 46.38 CoSec 35.26 34.07 30.20 CoSec 51.78 51.13 47.81 DEFER* 46.97 43.26 37.26 DEFER* 36.91 37.93 31.34 DEFER* 51.51 53.07 50.17
+> DINM 37.05 32.22 21.58 DINM 21.67 17.99 11.65 DINM 57.52 55.71 49.14 UltraEdit 50.49 49.04 42.37 UltraEdit 39.20 38.45 33.99 UltraEdit 44.94 45.56 36.87 Qwen2.5 Cod-7B Vanilla 79.43 80.83 79.90 CodeGen 6B Vanilla 29.12 28.35 23.22 Qwen2.5 Cod-3B Vanilla 68.42 65.54 59.41 CoSec 75.50 75.89 75.89 CoSec 21.13 20.91 18.47 CoSec 51.80 50.57 51.64 DEFER* 71.59 77.61 76.20 DEFER* 14.89 17.71 16.72 DEFER* 62.28 58.36 52.87 DINM 79.55 79.48 71.68 DINM 22.24 22.06 18.01 DINM 60.01 59.08 54.18 UltraEdit 82.95 81.09 80.72 UltraEdit 18.29 15.34 4.84 UltraEdit 68.54 66.62 60.32
+
+correctness through inference-time steering at the cost of limited peak security improvements. Among all editing approaches, UltraEdit often achieves the highest or near-highest trade-off scores across most models and temperatures, ranking best in 12 out of 18 configurations (66.7%). 
+
+Answer to RQ3: Overall, security hardening is not free: model editing typically yields larger security gains but risks greater correctness regressions, whereas CoSec offers more conservative gains with better functional preservation. Among editing methods, UltraEdit achieves the best balance, ranking first in 12/18 configurations. 
+
+3.4 RQ4: Performance Improvement 
+
+Approach. UltraEdit achieves the most favorable trade-off in our evaluation and remains highly efficient (Section 4.6). Yet its edits still impair general programming capability, motivating us to refine UltraEdit to better preserve functional correctness without weakening its security benefits. To this end, we propose SafeEdit, a post-edit refinement method for models edited by UltraEdit. The key challenge is that standard fine-tuning for functional recovery can overwrite the security-relevant parameter changes introduced by editing, since both processes modify overlapping regions of the model. We refer to this as the security edit preservation problem: how to restore functional correctness without erasing injected security knowledge. To address this, SafeEdit combines: (1) 
+
+functional tuning on instruction-style code generation data, and (2) edit-aware regularization 
+
+that constrains the edited parameters to stay close to their post-edit values. Formally, let 𝑓 denote the target LLM and 𝑓 𝑒 be the model produced by UltraEdit. Let 𝜃 𝑒𝑑𝑖𝑡 denote the subset of parameters modified by UltraEdit and 𝜃 𝑒 𝑒𝑑𝑖𝑡 their post-edit values; unlike standard regularization approaches that anchor task-performance-critical parameters [26], SafeEdit anchors precisely 𝜃 𝑒𝑑𝑖𝑡 , ensuring that functional recovery does not overwrite the injected security behavior. Given an instruction–code pair (𝑖, 𝑐 ) ∈ D 𝑠𝑡𝑑 , we perform standard next-token training: 
+
+L𝑠𝑡𝑑 (𝑖, 𝑐 ) = − 
+
+> |𝑐 |
+
+∑︁ 
+
+> 𝑡 =1
+
+log 𝑃 (𝑐 𝑡 | 𝑐 <𝑡 , 𝑖 ). (3) 
+
+To preserve the injected security behavior, we add an edit-aware regularization term: 
+
+L𝑟𝑒𝑔 = ∥𝜃 𝑒𝑑𝑖𝑡 − 𝜃 𝑒 𝑒𝑑𝑖𝑡 ∥22, (4) 
+
+The final loss function is: 
+
+L = L𝑠𝑡𝑑 + 𝜇 L𝑟𝑒𝑔 . (5) 
+
+where 𝜇 controls the regularization strength (default 𝜇 = 1 × 10 −3; sensitivity analysis in Section 4.5). For functional tuning, we use Code Evol-Instruct [34] as the supervision source, which provides diverse instruction-style code generation pairs covering general programming tasks without overlap with E, thereby avoiding contamination of the security evaluation. We fine-tune 𝑓 𝑒 for 2 epochs with a learning rate of 2 × 10 −5, batch size 1, and 16-step gradient accumulation. We use AdamW 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:12 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo 
+
+Table 6. Security effectiveness (left) and functional correctness (right). We report Security Ratio (SR) with 95% confidence intervals across CWE scenarios (in subscript) and Pass@1. Parentheses indicate relative change of SafeEdit compared to the respective baseline. 
+
+Model Method Security Ratio (%) [95% CI] Pass@1 (%) 
+
+𝑇 =0.1 𝑇 =0.4 𝑇 =0.8 𝑇 =0.1 𝑇 =0.4 𝑇 =0.8
+
+Llama3.1-8B 
+
+Vanilla 68.6 [44 .0,93 .2] (↑2.92%) 68.8 [51 .3,86 .3] (↑1.31%) 65.8 [50 .4,81 .1] (↑5.32%) 38.1 ( ↑19.95%) 36.7 ( ↑24.52%) 31.9 ( ↑31.66%) CoSec 73.0 [56 .2,89 .9] (↓3.29%) 77.4 [61 .7,93 .2] (↓9.95%) 73.9 [59 .5,88 .2] (↓6.22%) 35.4 ( ↑29.10%) 36.1 ( ↑26.59%) 33.8 ( ↑24.26%) SafeEdit 70.6 [45 .8,91 .7] 69.7 [44 .7,86 .4] 69.3 [51 .2,85 .4] 45.7 45.7 42.0 
+
+Llama3.2-3B 
+
+Vanilla 61.3 [38 .6,83 .9] (↑33.12%) 62.2 [44 .3,80 .1] (↑24.12%) 64.8 [51 .6,78 .0] (↑11.27%) 26.7 ( ↑10.86%) 26.7 ( ↑14.61%) 24.0 ( ↑17.50%) CoSec 65.7 [49 .2,82 .1] (↑24.20%) 67.4 [52 .8,81 .9] (↑14.54%) 63.6 [48 .4,78 .7] (↑13.36%) 24.1 ( ↑22.82%) 22.8 ( ↑34.21%) 19.8 ( ↑42.42%) SafeEdit 81.6 [64 .2,99 .0] 77.2 [62 .6,91 .8] 72.1 [59 .1,85 .1] 29.6 30.6 28.2 
+
+DeepSeek-6.7B 
+
+Vanilla 77.8 [56 .5,99 .1] (↓7.20%) 71.3 [51 .6,91 .0] (↑2.66%) 70.6 [53 .6,87 .6] (↑4.53%) 46.7 ( ↑26.55%) 43.6 ( ↑31.88%) 39.0 ( ↑41.03%) CoSec 77.8 [60 .8,94 .9] (↓7.20%) 73.5 [55 .1,91 .9] (↓0.41%) 74.5 [58 .4,90 .6] (↓0.94%) 38.8 ( ↑52.32%) 39.2 ( ↑46.68%) 35.2 ( ↑56.25%) SafeEdit 72.2 [49 .3,95 .1] 73.2 [51 .9,94 .6] 73.8 [55 .5,92 .2] 59.1 57.5 55.0 
+
+Qwen2.5-C-7B 
+
+Vanilla 76.4 [55 .3,97 .5] (↑11.65%) 79.5 [65 .6,93 .4] (↑7.92%) 80.5 [68 .7,92 .2] (↑2.11%) 82.7 ( ↓10.40%) 82.2 ( ↓9.61%) 79.3 ( ↓9.21%) CoSec 75.7 [62 .9,88 .6] (↑12.68%) 76.6 [64 .8,88 .3] (↑12.01%) 76.7 [64 .7,88 .7] (↑7.17%) 75.3 ( ↓1.59%) 75.2 ( ↓1.20%) 75.1 ( ↓4.13%) SafeEdit 85.3 [62 .0,99 .7] 85.8 [70 .3,99 .6] 82.2 [70 .6,96 .9] 74.1 74.3 72.0 
+
+CodeGen-6B 
+
+Vanilla 67.0 [45 .3,88 .8] (↑8.81%) 65.4 [47 .4,83 .4] (↑14.68%) 68.0 [54 .1,81 .9] (↑6.62%) 18.6 ( ↑35.48%) 18.1 ( ↑35.91%) 14.0 ( ↑50.00%) CoSec 71.3 [55 .9,86 .7] (↑2.24%) 69.8 [55 .0,84 .7] (↑7.45%) 71.6 [56 .7,86 .5] (↑1.26%) 12.4 ( ↑103.23%) 12.3 ( ↑100.00%) 10.6 ( ↑98.11%) SafeEdit 72.9 [52 .0,93 .8] 75.0 [57 .2,92 .8] 72.5 [57 .0,88 .1] 25.2 24.6 21.0 
+
+Qwen2.5-C-3B 
+
+Vanilla 80.3 [61 .6,99 .0] (↓0.87%) 75.0 [59 .1,91 .0] (↑3.33%) 67.1 [53 .8,80 .3] (↑11.18%) 59.6 ( ↑19.46%) 58.2 ( ↑19.76%) 53.3 ( ↑24.58%) CoSec 64.9 [53 .1,76 .6] (↑22.65%) 62.0 [50 .0,74 .1] (↑25.00%) 65.8 [55 .3,76 .3] (↑13.37%) 43.1 ( ↑65.20%) 42.7 ( ↑63.23%) 42.5 ( ↑56.24%) SafeEdit 79.6 [59 .8,99 .4] 77.5 [58 .8,96 .3] 74.6 [59 .5,89 .8] 71.2 69.7 66.4 
+
+StarCoder-3B 
+
+Vanilla 63.9 [40 .1,87 .7] (↑23.47%) 66.1 [47 .1,85 .1] (↑19.06%) 65.8 [51 .2,80 .4] (↑13.37%) 16.2 ( ↑81.48%) 14.2 ( ↑104.93%) 11.2 ( ↑139.29%) CoSec 62.6 [52 .2,73 .1] (↑26.04%) 63.3 [52 .9,73 .7] (↑24.33%) 61.9 [51 .2,72 .6] (↑20.52%) 13.5 ( ↑117.78%) 14.4 ( ↑102.08%) 12.7 ( ↑111.02%) SafeEdit 78.9 [58 .6,99 .2] 78.7 [61 .7,95 .7] 74.6 [58 .3,90 .9] 29.4 29.1 26.8 
+
+StarCoder-7B 
+
+Vanilla 72.5 [52 .4,92 .6] (↑16.83%) 69.5 [51 .9,87 .0] (↑19.71%) 70.0 [56 .6,83 .3] (↑16.71%) 22.2 ( ↑65.77%) 19.2 ( ↑91.15%) 16.3 ( ↑109.82%) CoSec 71.2 [55 .0,87 .4] (↑18.96%) 67.9 [51 .9,84 .0] (↑22.53%) 73.1 [61 .0,85 .2] (↑11.76%) 17.3 ( ↑112.72%) 17.7 ( ↑107.34%) 17.2 ( ↑98.84%) SafeEdit 84.7 [67 .1,102 .4] 83.2 [66 .1,100 .4] 81.7 [67 .3,96 .1] 36.8 36.7 34.2 
+
+(𝜖 = 1 × 10 −8, weight decay 1 × 10 −2) with gradient norm clipping at 1. All parameters are updated while regularizing the UltraEdit-modified subset 𝜃 𝑒𝑑𝑖𝑡 via L𝑟𝑒𝑔 .
+
+Table 7. Statistical analysis of SafeEdit improvements over baselines across 8 LLMs, using Wilcoxon signed-rank test (𝑝 -value) and Cliff’s 𝛿 effect size. Effect size: |𝛿 | < 0.147 
+
+negligible, [0.147 , 0.330 ) small, [0.330 , 0.474 ) medium, ≥
+
+0.474 large. 
+
+Metric Comparison Stat. 𝑇 =0.1 𝑇 =0.4 𝑇 =0.8
+
+SR 
+
+SafeEdit vs Vanilla 𝑝 0.027 0.004 0.004 Cliff’s 𝛿 0.594 (large) 0.703 (large) 0.750 (large) SafeEdit vs CoSec 𝑝 0.039 0.027 0.027 Cliff’s 𝛿 0.656 (large) 0.688 (large) 0.438 (medium) 
+
+Pass@1 
+
+SafeEdit vs Vanilla 𝑝 0.027 0.020 0.020 Cliff’s 𝛿 0.250 (small) 0.297 (small) 0.344 (medium) SafeEdit vs CoSec 𝑝 0.008 0.008 0.008 Cliff’s 𝛿 0.406 (medium) 0.406 (medium) 0.375 (medium) 
+
+3.4.1 Performance Comparison with Base-lines. We follow the empirical study setup and adopt the same six target LLMs un-der three decoding temperatures ( 𝑇 ∈{0.1, 0.4, 0.8}), measuring both security ef-fectiveness (Security Ratio via CodeQL) and functional correctness (Pass@1 on HumanEval). To further assess the gen-eralizability of SafeEdit, we additionally introduce two LLMs: StarCoder-3B and StarCoder-7B [31]. We compare SafeEdit against the vanilla model and CoSec to assess whether it improves the security– correctness trade-off over the unhardened baseline and the state-of-the-art inference-time hardening method. Table 6 reports the security effectiveness and functional correctness of SafeEdit across eight target LLMs under three decoding temperatures. Overall, SafeEdit consistently restores functional utility while largely preserving the security behavior injected by UltraEdit. (1) Compared to CoSec, SafeEdit improves both security and correctness . Across all models, SafeEdit achieves higher security ratios than CoSec, with mean relative gains of +12.04%, +11.94%, and +7.54% 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:13 
+
+at 𝑇 = 0.1, 0 .4, and 0 .8, respectively. For example, on StarCoder-3B, SafeEdit increases the security ratio by 26.04% at 𝑇 = 0.1. More importantly, SafeEdit obtains substantially stronger functional correctness, improving average Pass@1 over CoSec by +62.70%, +59.87%, and +60.38% under the three temperatures. (2) Compared to UltraEdit, SafeEdit mitigates functional regressions with minimal security loss . Relative to UltraEdit, SafeEdit largely preserves security effectiveness, with average absolute SR changes of +7.44, -0.28, and -3.48 percentage points at 
+
+𝑇 = 0.1, 0 .4, and 0 .8, respectively. Meanwhile, it substantially restores functional correctness, improving Pass@1 by +11.73, +13.70, and +15.50 percentage points under the three temperatures. This shows that edit-aware regularization effectively prevents functional recovery from overwriting the injected security behavior, while substantially reducing the correctness degradation caused by direct security editing. Table 7 further reports Wilcoxon signed-rank tests [54] and Cliff’s 𝛿 [6] over the eight LLMs at each temperature. SafeEdit significantly improves SR over CoSec at all temperatures ( 𝑝 ≤ 0.039, 𝛿 = 0.438–0 .688) and Pass@1 over CoSec ( 𝑝 = 0.008, 𝛿 = 0.375–0 .406). It also significantly improves over Vanilla in both SR and Pass@1. These results indicate that SafeEdit provides statistically reliable improvements in both security and functional correctness. 
+
+3.4.2 Evaluation on CodeGuard+. To further strengthen our evaluation, we conduct an additional experiment on CodeGuard+ [11], a recent benchmark that jointly evaluates the security and func-tional correctness of LLM-generated code. CodeGuard+ contains 91 prompts covering 34 CWE categories in Python and C/C++, provides unit tests, and uses a CodeQL–SonarQube ensemble for vulnerability detection. Following its protocol, a generated program is considered vulnerable if either analyzer reports a vulnerability, and secure only if both regard it as secure. Thus, Code-Guard+ complements our original evaluation by broadening CWE coverage, adding unit-test-based correctness checks, and reducing reliance on CodeQL alone. We evaluate the same models and hardening methods under the default decoding configuration. We report four metrics: security ratio, pass@1, secure@1-Pass, and secure-pass@1. The first two measure security and functional correct-ness separately, secure@1-Pass measures security among functionally correct generations, and secure-pass@1 measures whether a generation is both secure and correct. We use secure-pass@1 as the primary evaluation metric because it best reflects the practical goal of secure code generation. From Table 8, in general SafeEdit achieves the best joint security–correctness performance across all evaluated models. Compared with vanilla models, SafeEdit improves the average P@1 from 76.03 to 79.36, S-Rate from 59.32 to 63.89. The gain is most consistent on SP@1, the strictest metric requiring generated code to be both secure and functionally correct: SafeEdit improves over vanilla on all eight models, with relative gains from 5.41% to 20.29%. SafeEdit also consistently 
+
+Table 8. Performance on CodeGuard+ [11]. P@1: Pass@1 (functional correctness); S-Rate: Security ratio; S@1P: Secure@1-Pass (secure among correct completions); SP@1: Secure-Pass@1 (jointly secure and correct). Parentheses show relative change of SafeEdit over each baseline. Best per model in bold . Model abbreviations: L3.1=LLaMA3.1-8B, L3.2=LLaMA3.2-3B, DS=DeepSeek-6.7B, Q2.5-7B=Qwen2.5-Coder-7B, Q2.5-3B=Qwen2.5-Coder-3B, CG=CodeGen-6B, SC=StarCoder.                                                                      
+
+> Model Met. P@1 S-Rate S@1P SP@1 Model Met. P@1 S-Rate S@1P SP@1 L3.1-8B
+> Van. 79.03 ( ↑7.49%) 60.04 ( ↑2.47%) 54.16 ( ↑15.01%) 45.92 ( ↑15.22%)
+> CG-6B
+> Van. 59.61 ( ↑8.96%) 57.63 ( ↑7.46%) 49.11 ( ↑0.31%) 33.50 ( ↑13.61%) CoS. 46.80 ( ↑81.52%) 59.29 ( ↑3.76%) 50.32 ( ↑23.79%) 27.28 ( ↑93.95%) CoS. 45.05 ( ↑44.17%) 59.79 ( ↑3.58%) 45.86 ( ↑7.41%) 24.76 ( ↑53.72%) SafeEdit 84.95 61.52 62.29 52.91 SafeEdit 64.95 61.93 49.26 38.06 L3.2-3B
+> Van. 75.63 (↓11.94%)55.78 ( ↑19.34%) 53.94 ( ↑5.38%) 40.29 ( ↑7.00%)
+> DS-6.7B
+> Van. 82.62 ( ↑7.06%) 57.86 ( ↑9.25%) 56.92 ( ↑3.20%) 47.67 ( ↑19.34%) CoS. 40.68 ( ↑63.72%) 59.92 ( ↑11.10%)42.44 ( ↑33.93%)21.26 ( ↑102.78%) CoS. 82.04 ( ↑7.81%) 58.62 ( ↑7.83%) 57.53 ( ↑2.10%) 48.64 ( ↑16.96%) SafeEdit 66.60 66.57 56.84 43.11 SafeEdit 88.45 63.21 58.74 56.89 Q2.5-3B
+> Van. 80.00 ( ↑5.10%) 60.54 ( ↑5.68%) 56.70 ( ↑6.10%) 45.24 ( ↑18.26%)
+> Q2.5-7B
+> Van. 83.59 ( ↑2.44%) 65.99 ( ↑2.24%) 65.25 ( ↑1.27%) 55.63 ( ↑5.41%) CoS. 75.53 ( ↑11.32%) 59.59 ( ↑7.37%) 57.60 ( ↑4.44%) 43.50 ( ↑22.99%) CoS. 83.88 ( ↑2.09%) 62.49 ( ↑7.97%) 60.94 ( ↑8.43%) 52.23 ( ↑12.27%) SafeEdit 84.08 63.98 60.16 53.50 SafeEdit 85.63 67.47 66.08 58.64 SC-3B
+> Van. 69.13 ( ↑9.40%) 59.49 ( ↑3.09%) 54.31 ( ↓1.91%) 40.49 ( ↑11.02%)
+> SC-7B
+> Van. 78.64 ( ↑7.53%) 57.21 ( ↑13.86%)55.35 ( ↑11.02%)45.44 ( ↑20.29%) CoS. 60.39 ( ↑25.24%) 60.90 ( ↑0.71%) 53.42 ( ↓0.28%) 35.44 ( ↑26.83%) CoS. 67.48 ( ↑25.31%)58.61 ( ↑11.14%)54.81 ( ↑12.11%)39.42 ( ↑38.66%) SafeEdit 75.63 61.33 53.27 44.95 SafeEdit 84.56 65.14 61.45 54.66
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:14 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo 
+
+outperforms CoSec. On average, it improves SP@1 from 36.57 to 50.34, and achieves higher P@1, S-Rate, and S@1P as well. These results provide additional evidence that under CodeGuard+’s stricter CodeQL–SonarQube ensemble and unit-test-based functional validation, SafeEdit still improves the probability of generating code that is both secure and correct. 
+
+Answer to RQ4: SafeEdit restores functional correctness while largely preserving UltraEdit’s injected security behavior. Compared to CoSec, it improves SR by +12.04%/+11.94%/+7.54% and Pass@1 by +62.70%/+59.87%/+60.38% at 𝑇 = 0.1/0.4/0.8. CodeGuard+ further confirms these gains under joint security–correctness validation. 
+
+4 Discussion 4.1 Complementary Advantages 
+
+Table 9. Complementary advantages of SafeEdit and CoSec. We report SR (left) and Pass@1 (right).                                                                                 
+
+> Model Method Security Ratio (%) Pass@1 (%)
+> 𝑇 =0.1𝑇 =0.4𝑇 =0.8𝑇 =0.1𝑇 =0.4𝑇 =0.8
+> LLaMA 3.1-8B CoSec 73.0 ( ↓3.01%) 77.4 ( ↓7.11%) 73.9 ( ↑0.41%) 35.4 ( ↑31.64%) 36.1 ( ↑24.93%) 33.8 ( ↑28.40%) SafeEdit 70.6 ( ↑0.28%) 69.7 ( ↑3.16%) 69.3 ( ↑7.07%) 45.7 ( ↑1.97%) 45.7 ( ↓1.31%) 42.0 ( ↑3.33%) SafeEdit+CoSec 70.8 71.9 74.2 46.6 45.1 43.4 LLaMA 3.2-3B CoSec 65.7 ( ↑21.77%) 67.4 ( ↑18.69%) 63.6 ( ↑24.84%) 24.1 ( ↑47.30%) 22.8 ( ↑44.30%) 19.8 ( ↑46.46%) SafeEdit 81.6 ( ↓1.96%) 77.2 ( ↑3.63%) 72.1 ( ↑10.12%) 29.6 ( ↑19.93%) 30.6 ( ↑7.52%) 28.2 ( ↑2.94%) SafeEdit+CoSec 80.0 80.0 79.4 35.5 32.9 29.0
+
+Although SafeEdit and CoSec adopt fundamentally different hardening mechanisms, they pro-vide complementary strengths: SafeEdit improves model-level security and functional correctness via edit-aware refinement, while CoSec provides runtime adaptability through inference-time token steering. To validate this complementarity, we apply CoSec on top of SafeEdit-refined models and compare three settings on LLaMA3.1-8B and LLaMA3.2-3B: (i) CoSec alone, (ii) SafeEdit alone, and (iii) SafeEdit+CoSec. Table 9 reports the SR and Pass@1 when combining SafeEdit with CoSec on two representative backbones. Overall, the results confirm that the combined setting can yield strictly stronger security than either method alone under stochastic decoding. On LLaMA3.2-3B at 𝑇 = 0.8, SafeEdit+CoSec reaches an SR of 79.4%, substantially higher than CoSec (63.6%) and also higher than SafeEdit alone (72.1%), showing that inference-time steering and model-level refinement reinforce each other rather than overlapping. Importantly, this security boost does not sacrifice utility: across both backbones, SafeEdit+CoSec consistently achieves higher Pass@1 than either SafeEdit or CoSec alone across almost all decoding temperatures. 
+
+4.2 Generalization of SafeEdit to Unseen CWEs 
+
+Table 10. Security Ratio (%) on unseen CWEs for SafeEdit, Vanilla, and UltraEdit.                                 
+
+> Model Method 𝑇 =0.1𝑇 =0.4𝑇 =0.8Avg.
+> LLaMA3.2-3B Vanilla 45.5 49.4 53.1 49.3 UltraEdit 44.9 49.9 51.7 48.8 SafeEdit 51.2 54.6 58.5 54.8
+> LLaMA3.1-8B Vanilla 51.0 54.9 54.9 53.6 UltraEdit 51.1 54.9 55.2 53.7 SafeEdit 52.7 53.9 56.3 54.3
+
+Since SafeEdit refines UltraEdit to recover func-tional correctness, we further examine whether it weakens security generalization on unseen CWEs. Table 10 reports the results on LLaMA3.1-8B and LLaMA3.2-3B. SafeEdit preserves and of-ten improves UltraEdit’s unseen-CWE security: on LLaMA3.2-3B, it raises average SR from 49.3%/48.8% for Vanilla/UltraEdit to 54.8%, with consistent gains across all temperatures; on LLaMA3.1-8B, it also achieves the best average SR, improving from 53.6%/53.7% to 54.3%. These results indicate that SafeEdit’s functional recovery does not erase the transferable security behavior introduced by editing, and can even improve unseen-CWE generalization in some settings. 
+
+4.3 Cross-language Functional Correctness. 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:15 
+
+Table 11. MultiPL-E Pass@1 (%) at 𝑇 =0.4, aver-aged over C++, JavaScript, and TypeScript. Best per model in bold .                                       
+
+> Model Met. 𝑇 =0.4Model Met. 𝑇 =0.4
+> L3.1-8B
+> Van. 33.85 ( ↑18.32%)
+> CG-6B
+> Van. 12.98 ( ↑46.07%) CoSec 12.93 ( ↑209.74%) CoSec 6.49 ( ↑192.14%) SafeEdit 40.05 SafeEdit 18.96 L3.2-3B
+> Van. 23.83 ( ↑10.49%)
+> DS-6.7B
+> Van. 45.86 ( ↑25.95%) CoSec 8.01 ( ↑228.71%) CoSec 36.95 ( ↑56.32%) SafeEdit 26.33 SafeEdit 57.76 Q2.5-3B
+> Van. 48.87 ( ↑26.01%)
+> Q2.5-7B
+> Van. 64.95 ( ↑3.46%) CoSec 39.84 ( ↑54.57%) CoSec 56.22 ( ↑19.53%) SafeEdit 61.58 SafeEdit 67.20 SC-3B
+> Van. 19.87 ( ↑31.61%)
+> SC-7B
+> Van. 25.37 ( ↑35.75%) CoSec 16.13 ( ↑62.12%) CoSec 19.75 ( ↑74.38%) SafeEdit 26.15 SafeEdit 34.44
+
+To address the concern that HumanEval only in-volves Python, we further evaluate functional cor-rectness on MultiPL-E [2]. We select C++, JavaScript, and TypeScript, and run the same models and hard-ening methods under the three decoding setups with 
+
+𝑇 ∈ { 0.1, 0.4, 0.8}. Due to space limits, Table 11 re-ports the average Pass@1 over the three languages at 𝑇 =0.4, while full results are included in our repli-cation package. SafeEdit achieves the best Pass@1 on all eight models, improving over vanilla by 3.46%– 46.07% and over CoSec by 19.53%–228.71%. Overall, the MultiPL-E results further support the generality of SafeEdit’s functional preservation. 
+
+4.4 SafeEdit vs. Fine-tuning 
+
+Table 12. TradeOff score and MultiPL-E Pass@1 (avg. over JS/TS/C++) for SafeEdit vs. LoRA.                                         
+
+> Model Method TradeOff MultiPL-E P@1
+> 𝑇 =0.1𝑇 =0.4𝑇 =0.8𝑇 =0.1𝑇 =0.4𝑇 =0.8
+> LLaMA3.1-8B LoRA 52.9 52.7 48.8 34.92 33.71 27.76 SafeEdit 55.4 55.2 52.3 41.48 40.05 37.29
+> LLaMA3.2-3B LoRA 45.4 42.8 37.1 25.62 23.27 17.91 SafeEdit 43.4 43.8 40.6 26.58 26.33 23.75
+
+SafeEdit addresses a problem orthogonal to standard fine-tuning: preserving security-injected knowledge during functional recov-ery. Its edit-aware regularization anchors 
+
+𝜃 𝑒𝑑𝑖𝑡 , the exact parameter subset modified by UltraEdit, preventing functional tuning from overwriting injected security behavior, an ob-jective absent from both the model editing and secure code generation literature. More-over, model editing operates under few-shot, low-cost constraints (50–100 seconds), whereas fine-tuning assumes large-scale security-annotated corpora and full retraining infrastructure. Em-pirically, Table 12 reports both the TradeOff score and MultiPL-E Pass@1 averaged over JavaScript, TypeScript, and C++. On LLaMA3.1-8B, SafeEdit consistently outperforms LoRA across all tem-peratures on both metrics ( e.g., TradeOff: 55.4 vs. 52.9 at 𝑇 = 0.1; MultiPL-E Pass@1: 41.48 vs. 34.92). On LLaMA3.2-3B, SafeEdit leads at higher temperatures (40.6 vs. 37.1 at 𝑇 = 0.8) and consistently achieves better cross-lingual generalization on MultiPL-E across all temperatures. 
+
+4.5 Sensitivity Analysis of Regularization Strength 𝜇 
+
+Table 13. Sensitivity analysis of 𝜇 in SafeEdit.                                 
+
+> Model 𝜇 Security Ratio (%) Pass@1 (%)
+> 𝑇 =0.1𝑇 =0.4𝑇 =0.1𝑇 =0.4
+> LLaMA3.1-8B 10 −370.6 69.7 45.7 45.7
+> 10 −467.5 66.2 43.5 43.1 Qwen2.5-Coder-7B 10 −385.3 85.8 74.1 74.3
+> 10 −481.2 80.5 74.0 74.0
+
+To examine the sensitivity of SafeEdit to the reg-ularization strength 𝜇 , we compare 𝜇 ∈ { 10 −3, 10 −4 }
+
+on LLaMA3.1-8B and Qwen2.5-Coder-7B, reporting SR and Pass@1 at 𝑇 ∈ { 0.1, 0.4}. Table 13 shows that 
+
+𝜇 = 10 −3 consistently outperforms 𝜇 = 10 −4 on both models. On LLaMA3.1-8B, the stronger regulariza-tion improves SR by up to +3.5 points and Pass@1 by up to +2.6 points at 𝑇 = 0.4. On Qwen2.5-Coder-7B, SR gains reach +5.3 points at 𝑇 = 0.4 while Pass@1 remains largely unaffected. A smaller 𝜇 weakens the edit-aware regularization, allowing functional tuning to drift the edited parameters away from their post-edit values, which in turn degrades both security retention and functional correctness. 
+
+4.6 Efficiency 
+
+We investigate the efficiency of different security hardening strategies, focusing on both offline hardening cost and online inference overhead. Specifically, we report (i) hardening time (training 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:16 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo 
+
+Table 14. Efficiency comparison of various methods. We report hardening (training) time and per-query inference latency (in seconds). Lower is better for both metrics.                                                                                          
+
+> LLaMA3.1-8B LLaMA3.2-3B DeepSeek-6.7B Qwen2.5-Coder-7B CodeGen-6B Qwen2.5-Coder-3B Method Train Infer Train Infer Train Infer Train Infer Train Infer Train Infer Vanilla —0.52 —0.31 —0.97 —1.01 —1.20 —0.15 CoSec 6,087.00 1.68 1,391.00 0.84 986.00 1.87 582.00 1.61 831.00 1.72 582.00 0.27 UltraEdit 94.52 0.44 56.88 0.29 83.96 1.19 86.45 0.98 102.80 1.29 56.51 0.15 DINM 178.57 1.28 85.88 0.79 228.88 1.06 150.04 1.14 168.19 1.16 84.79 0.16 DEFER* 1,735.49 0.81 833.00 0.36 1,531.47 0.99 1,608.50 0.98 1,804.28 1.32 861.69 0.17 SafeEdit 25,719.00 0.45 10,210.00 0.30 176,055.00 0.95 96,387.00 0.94 57,014.00 1.25 30,785.00 0.15
+
+or editing time required) and (ii) per-query inference latency for HumanEval, measured in seconds. All methods are evaluated under the same hardware and decoding configuration as previous RQs. Table 14 shows a clear separation between model editing methods and CoSec. Model editing methods incur a one-time hardening cost but introduce little or no inference overhead, whereas CoSec shifts most of the cost to inference time. UltraEdit achieves the best efficiency–effectiveness balance. Among editing methods, UltraEdit achieves the best efficiency: hardening completes within 50–100 seconds even for 8B-scale models, and inference overhead is negligible ( e.g., LLaMA3.1-8B: 0.44s vs. 0.52s for vanilla), owing to its localized, lightweight updates on a small subset of projection matrices. SafeEdit follows a different efficiency profile. Because it performs an additional post-edit functional refinement stage after UltraEdit, its offline hardening time is substantially larger than UltraEdit alone ( e.g., 25,719s vs. 94.52s on LLaMA3.1-8B). However, this cost is paid only once before deployment. At inference time, SafeEdit behaves like a standard refined model and does not require an auxiliary model, routing module, or co-decoding. As a result, its per-query latency remains comparable to vanilla and UltraEdit across all models ( e.g., 0.45s vs. 0.52s/0.44s on LLaMA3.1-8B). CoSec avoids offline training on the target model, but consistently increases inference latency by 1.4–3 .2× across all evaluated models ( e.g., LLaMA3.1-8B: 1.68s vs. 0.52s for vanilla). This persistent overhead stems from co-decoding with an auxiliary model at every inference step, which remains unavoidable regardless of auxiliary model size. Therefore, SafeEdit is more suitable when an offline refinement budget is acceptable and low-latency deployment is important, whereas CoSec is preferable when parameter access or offline model updating is unavailable. 
+
+4.7 Editing Depth 
+
+We conduct a layer-wise ablation by injecting security edits at three depths: close to the input (layer-10), moderately deep (layer-20), and at the default setting used in prior experiments. Due to space constraints, we focus on LLaMA3.1-8B and CodeGen-6B, which have comparable model depths. Results are reported under three decoding temperatures. 0.1 0.4 0.8             
+
+> Temperature
+> 70 80 90 100
+> Security Ratio (%)
+> (a) UltraEdit: Security
+> 0.1 0.4 0.8
+> Temperature
+> 70 75 80 85
+> Security Ratio (%)
+> (b) DINM: Security
+> 0.1 0.4 0.8
+> Temperature
+> 010 20 30 40
+> Pass@1 (%)
+> (c) UltraEdit: Correctness
+> 0.1 0.4 0.8
+> Temperature
+> 0510 15 20 25
+> Pass@1 (%)
+> (d) DINM: Correctness
+> Model: LLaMA3.1 CodeGen Setting: Default 10 20
+
+Fig. 2. Impact of editing depth on security effectiveness and functional correctness for UltraEdit and DINM. 
+
+Figure 2 reveals two consistent patterns. Security effectiveness is sensitive to injection depth, and the optimal depth varies across methods. UltraEdit benefits from earlier injection, with layer-10 achieving the highest SR on CodeGen-6B across temperatures. DINM, however, does not consistently benefit from early-layer edits; on LLaMA3.1-8B, moving edits toward layer-10 even degrades security at low temperatures, suggesting that neuron-level updates require deeper contextual 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:17 
+
+representations to be effective. Functional correctness degrades markedly with earlier-layer edits for both methods. DINM nearly collapses Pass@1 at layer-10 across both models, indicating severe disruption to foundational synthesis representations. UltraEdit remains relatively stable but still incurs a noticeable correctness drop at early layers. Overall, intermediate or later layers strike a better balance, supporting our design choice of injecting security knowledge near the output layers. 
+
+4.8 Editing Suffix Length 
+
+To investigate how the length of the target suffix 𝐿 affects the effectiveness, we ablate the target suffix length 𝐿 ∈ { 10 , 50 , 100 } on UltraEdit and DINM across LLaMA3.1-8B and Qwen2.5-Coder-7B under three decoding temperatures, where 𝐿 = 50 is the default. 10 50 100             
+
+> Suffix Length (L)
+> 70.0 72.5 75.0 77.5 80.0 82.5
+> Security Ratio (%)
+> (a) LLaMA: Security
+> 10 50 100
+> Suffix Length (L)
+> 78 80 82 84 86
+> Security Ratio (%)
+> (b) Qwen: Security
+> 10 50 100
+> Suffix Length (L)
+> 010 20 30 40
+> Pass@1 (%)
+> (c) LLaMA: Pass@1
+> 10 50 100
+> Suffix Length (L)
+> 40 50 60 70 80
+> Pass@1 (%)
+> (d) Qwen: Pass@1
+> Method: UltraEdit DINM Temp: T=0.1 T=0.4 T=0.8
+
+Fig. 3. Effect of target suffix length 𝐿 on security effectiveness and functional correctness. 
+
+Figure 3 shows that security effectiveness is sensitive to the target suffix length 𝐿 , and the optimal 𝐿 depends on the editing method and model. Shorter suffixes ( e.g., 𝐿 = 10) can sharpen security-relevant updates, particularly for DINM on Qwen2.5-Coder-7B, yet no single 𝐿 dominates consistently on LLaMA3.1-8B. Functional correctness exhibits a clearer trend: DINM degrades substantially under short suffixes, as partial supervision weakens parameter update grounding and overemphasizes superficial security cues; Pass@1 nearly collapses at 𝐿 = 10 on LLaMA3.1-8B under low-temperature decoding. UltraEdit, by contrast, remains robust across all 𝐿 values owing to its localized, lightweight update mechanism. 
+
+4.9 Knowledge Injection Location 
+
+To study how the location of parameter modification affects security editing, we conduct a targeted ablation on where security knowledge is injected within the transformer architecture. Modern decoder-only LLMs ( e.g., LLaMA and Qwen2.5-Coder) employ a standard transformer block, where each feed-forward network (FFN) consists of: 1) an up-projection that expands hidden states, 2) a gating mechanism that modulates feature activation, and 3) a down-projection that compresses representations back to the model dimension. In this section, we focus on UltraEdit based on its empirical performance observed in earlier RQs. In UltraEdit, we compare three injection strategies: 1) up-proj (default), 2) down-proj, 3) gate-proj, evaluated on LLaMA3.1-8B and Qwen2.5-Coder-7B under three decoding temperatures. Figure 4 shows that up-proj consistently yields the best security–correctness balance. Down-proj causes the most severe functional degradation: on LLaMA3.1-8B at 𝑇 = 0.1, Pass@1 drops from 38.9% to 20.5%, as edits near the residual stream directly corrupt representations reused by subsequent layers. Gate-proj falls between the two but still underperforms up-proj. The advantage of up-proj is consistent across both models, though the gap narrows on Qwen2.5-Coder-7B. Up-projection operates where features are expanded and re-composed, allowing security-relevant distinctions to be introduced without overwriting core representations. 
+
+4.10 Editing Dataset Size 
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026.
+
+ISSTA163:18 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo T=0.1 T=0.4 T=0.8                               
+
+> Up Down Gate
+> 71.9 78.3 70.4 66.0 76.5 78.5 70.4 70.0 71.7
+> LLaMA: Security
+> T=0.1 T=0.4 T=0.8
+> Up Down Gate
+> 82.9 80.3 82.4 81.5 80.4 85.6 80.0 80.3 81.1
+> Qwen: Security
+> T=0.1 T=0.4 T=0.8
+> Up Down Gate
+> 38.9 35.7 30.3 20.5 20.7 15.8 38.8 36.7 31.8
+> LLaMA: Pass@1
+> T=0.1 T=0.4 T=0.8
+> Up Down Gate
+> 83.0 81.9 79.1 81.5 81.4 78.3 82.0 81.9 78.6
+> Qwen: Pass@1
+
+Fig. 4. Impact of parameter injection location on security effectiveness and Pass@1. Table 15. Impact of editing dataset size on LLaMA3.2-3B.                                            
+
+> Method Security Ratio (%) Pass@1 (%)
+> 𝑇 =0.1𝑇 =0.4𝑇 =0.8𝑇 =0.1𝑇 =0.4𝑇 =0.8
+> UltraEdit-50 64.0 62.5 63.8 26.8 26.0 23.8 UltraEdit-full 70.8 70.0 65.9 27.1 26.5 22.9
+> DINM-50 63.1 59.5 61.7 23.1 23.2 21.5
+> DINM-full 70.6 76.2 77.2 12.8 10.2 6.3
+
+We investigate the impact of editing dataset scale by comparing models edited on 50 samples ( -50 ) versus the full dataset of 710 pairs ( -full ) on LLaMA3.2-3B, evaluating Ul-traEdit and DINM under three decoding tem-peratures 𝑇 ∈ { 0.1, 0.4, 0.8}. Table 15 shows that larger editing datasets consistently im-prove security ratios for both methods. However, the two methods diverge sharply in how dataset scale affects functional correctness. UltraEdit-full achieves stronger security while largely preserv-ing Pass@1 (27.1 vs. 26.8 at 𝑇 = 0.1), indicating that its localized parameter updates can absorb more security knowledge without disrupting general coding representations. In contrast, DINM-full achieves substantially higher SR across all temperatures, but at a severe functional cost: Pass@1 drops from 23.1 to 12.8 at 𝑇 = 0.1, suggesting that cumulative neuron-level updates increasingly interfere with representations shared by general code synthesis. 
+
+4.11 Validity of Static-Analysis-Based Security Evaluation 
+
+Our security evaluation uses CodeQL as a scalable and reproducible static-analysis oracle for CWE-specific vulnerability detection. This design allows us to compare a large number of generated programs across different hardening methods under the same evaluation protocol. However, we do not treat CodeQL as a complete semantic oracle or a formal proof of security. Like other static analyzers, CodeQL may produce false positives when it conservatively over-approximates risky patterns, and false negatives when a vulnerability requires more precise path-, value-, or runtime-sensitive reasoning. Therefore, the reported security ratio should be interpreted as a static-analysis-based security proxy rather than an absolute guarantee of security. To reduce this validity threat, we use a validated query setup rather than an ad-hoc set of checks. Our evaluation uses 41 CodeQL rules, including 29 official queries and 12 scenario-specific queries inherited from prior secure code generation benchmarks [19, 28]. In the original benchmark, the queries were manually inspected, and one false positive and one false negative were reported to the CodeQL team and subsequently fixed. 1 We directly use the corrected query set. We also manually inspected 40 generated outputs balanced between CodeQL-positive and CodeQL-negative cases. CodeQL agrees with manual inspection on 37 out of 40 cases, yielding 92.5% accuracy, 95.0% precision, and 90.5% recall. The three disagreements include one false positive and two false negatives. Figure 5 illustrates the two main disagreement patterns. In the false-positive case, CodeQL flags a risky formatting pattern, but the formatted value is bounded and the destination buffer is sufficiently large, making the reported overflow infeasible in this context. In the false-negative case, the code allocates memory and immediately dereferences the returned pointer without checking whether allocation succeeds, leading to a potential NULL dereference that is missed by the applied 
+
+> 1
+
+https://github.com/github/codeql/issues/12770, https://github.com/github/codeql/issues/12753. Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:19 
+
+query. These examples show that CodeQL is useful for detecting CWE-relevant insecure patterns, but its results still require careful interpretation. Listing 1a: FP example       
+
+> 1/* FP: infeasible overflow. */
+> 2char buf[100];
+> 3double x = (( double ) rand()) / RAND_MAX;
+> 4sprintf(buf, "%.2f", x);
+
+Listing 1b: FN example    
+
+> 1/* FN: missing allocation-failure check. */
+> 2person *p = (person *) malloc( sizeof (person)) ;
+> 3p->status = 0;
+
+Fig. 5. Simplified examples illustrating CodeQL false-positive and false-negative cases. 
+
+We further complement the original CodeQL-based evaluation with CodeGuard+ [11], a recent secure code generation benchmark that uses both CodeQL and SonarQube for vulnerability de-tection. This complementary evaluation reduces the risk that our conclusions are an artifact of a single static-analysis tool. Finally, we clarify that we do not treat arbitrary output differences as faults. Differences in variable names, code organization, library choices, or semantically equivalent implementations are considered benign variability. We regard a difference as an actual fault only when it corresponds to a verifiable security or functional problem, such as triggering a relevant static-analysis rule or failing task-level tests. 
+
+5 Threats to Validity 
+
+Representativeness of Vulnerability Scenarios. Our experiments focus on high-impact CWE categories from widely used secure code generation datasets and prior benchmarks [19, 20, 27, 28], improving comparability with existing work and covering commonly studied vulnerability patterns [17, 38, 42]. To reduce benchmark-specific bias, we include multiple CWE categories and separate seen and unseen settings, where T𝑠𝑒𝑒𝑛 ∩ T 𝑢𝑛𝑠𝑒𝑒𝑛 = ∅. Nevertheless, no fixed benchmark can exhaustively cover real-world vulnerabilities, and our findings may not fully transfer to emerging or underrepresented CWE types. Validity of Evaluation Oracles and Metrics. Following prior studies [19, 27, 28], we measure security using static-analysis-based vulnerability detection and functional correctness using execution-based tests. CodeQL provides a scalable and reproducible CWE-specific signal, but it is not a complete semantic oracle and may produce false positives or false negatives. We mitigate this threat with a validated query setup and manual inspection of 40 generated outputs, where CodeQL agrees with manual inspection on 37 cases. Thus, we interpret Security Ratio as a static-analysis-based proxy rather than an absolute security guarantee. We also emphasize that CodeQL is used only as an evaluation oracle, not as a defense: it detects vulnerabilities after generation, whereas model editing aims to prevent insecure patterns before generation. HumanEval is used to measure relative functional regressions, and we further include MultiPL-E and CodeGuard+ to complement the evaluation with multi-language functional tests and an additional static analyzer. Therefore, our conclusions rely on relative trends across methods rather than any single metric as a complete measure of security or correctness. Scope of Model Editing and Baselines. Our study focuses on open-weight models because model editing requires access to parameters, leaving API-only proprietary models outside our editing scope, where inference-time defenses such as CoSec remain more applicable. Thus, our results compare two complementary paradigms rather than replacing one with the other. SafeEdit is not conceptually restricted to UltraEdit: its edit-aware regularization can anchor any parameter subset modified by a base editing method and could in principle be applied to other editors such as DINM. We instantiate SafeEdit on UltraEdit because it achieves the best security–correctness trade-off among the evaluated editing methods; applying it to more aggressive editors such as DINM may require stronger regularization and is left for future work. Although we evaluate multiple model families, temperatures, and random seeds, implementation choices may affect absolute results. We release the data, scripts, outputs, and manual validation records to support reproducibility.  
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:20 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo
+
+6 Related Work 
+
+Security Hardening for LLM-Generated Code. Recent studies have shown that LLMs can generate insecure or vulnerable code under certain contexts, motivating a growing body of work on security-aware code generation and hardening. Existing approaches include vulnerability-aware data curation, security-constrained decoding, and post-hoc filtering or repair. Among them, CoSec [27, 28] represents the state-of-the-art, introducing a supervised co-decoding framework that leverages an auxiliary security model to steer generation at inference time. While effective, CoSec relies on additional models, incurs non-trivial inference overhead, and its performance depends on the capacity and generalization ability of the auxiliary model. Beyond CoSec, GitHub Copilot [12] incorporates an LLM-based vulnerability prevention mechanism that mimics the behavior of static analysis tools, enabling real-time detection and suppression of insecure coding patterns during code completion. He and Vechev [19] propose SVEN, a prefix-tuning-based hardening approach that freezes the base model and injects security signals through learnable prefix modules, demonstrating improved security across a range of real-world applications. Model Editing for LLMs. Model editing modifies specific LLM behaviors or knowledge without full retraining. Existing techniques and benchmarks [32, 36, 37, 57, 60, 65] mainly target factual correction and knowledge updates in general-purpose LLMs. In the code domain, Gu et al. [14] use neuron-level editing to correct next-token errors, and CLMEEval [33] evaluates editing on code generation and summarization. However, these studies focus on syntactic or semantic correctness, leaving security-relevant behaviors and vulnerability mitigation largely unexplored. Different from the above studies, our study presents the first systematic empirical study on ap-plying model editing to secure code generation. We focus on sequence-level secure code generation, and conduct a comprehensive comparison between model editing techniques and CoSec. Beyond security effectiveness, we analyze generalization, functional correctness, robustness, and efficiency. 
+
+7 Conclusion and Future Work 
+
+This paper presents the first comprehensive empirical study of using model editing to harden LLM-based code generation, with a systematic comparison to the state-of-the-art inference-time hardening method, CoSec. We find that model editing often achieves stronger security on seen CWEs and avoids CoSec’s dual-model inference overhead, but it can also introduce functional regressions, revealing a clear security–correctness trade-off. To further improve the best-performing editing baseline, UltraEdit, we propose SafeEdit, a post-edit refinement strategy that combines functional tuning with edit-aware regularization to mitigate functional regressions while preserving the injected security behavior. In addition, our ablation results show that editing outcomes are highly sensitive to key design choices, including injection depth, parameter location, and suffix context length. Future work will investigate hybrid hardening mechanisms that better balance security generalization and functional preservation. 
+
+Data Availability 
+
+All datasets and code used in this study are available in our replication package at https://github. com/swf1996120/SafeEdit. 
+
+Acknowledgments 
+
+This research is supported by Natural Science Foundation of Jiangsu Province (BK20251458). This research is also supported by the Ministry of Education, Singapore under its Academic Research Fund Tier 3 (Award ID: MOET32020-0004). Any opinions, findings and conclusions or recommendations expressed in this material are those of the author(s) and do not reflect the views of the Ministry of Education, Singapore. We would also like to thank the anonymous reviewers for their valuable feedback and suggestions. 
+
+> Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026.
+
+Understanding and Improving Model Editing for Secure Code Generation ISSTA163:21 
+
+References 
+
+[1] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. 2020. Language models are few-shot learners. Advances in neural information processing systems 33 (2020), 1877–1901. [2] Federico Cassano, John Gouwar, Daniel Nguyen, Sydney Nguyen, Luna Phipps-Costin, Donald Pinckney, Ming-Ho Yee, Yangtian Zi, Carolyn Jane Anderson, Molly Q Feldman, et al. 2023. Multipl-e: A scalable and polyglot approach to benchmarking neural code generation. IEEE Transactions on Software Engineering 49, 7 (2023), 3675–3691. [3] Junkai Chen, Li Zhenhao, Hu Xing, and Xia Xin. 2024. Nlperturbator: Studying the robustness of code llms to natural language variations. ACM Transactions on Software Engineering and Methodology (2024). [4] Jiachi Chen, Qingyuan Zhong, Yanlin Wang, Kaiwen Ning, Yongkun Liu, Zenan Xu, Zhe Zhao, Ting Chen, and Zibin Zheng. 2024. Rmcbench: Benchmarking large language models’ resistance to malicious code. In Proceedings of the 39th IEEE/ACM International Conference on Automated Software Engineering . 995–1006. [5] Mark Chen. 2021. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 (2021). [6] Norman Cliff. 1993. Dominance statistics: Ordinal analyses to answer ordinal questions. Psychological bulletin 114, 3 (1993), 494. [7] CodeQL Team. 2026. CodeQL: The Libraries and Queries That Power Security Researchers Around the World. https://github.com/github/codeql. accessed 2026-07. [8] Shihan Dou, Haoxiang Jia, Shenxi Wu, Huiyuan Zheng, Weikang Zhou, Muling Wu, Mingxu Chai, Jessica Fan, Caishuang Huang, Yunbo Tao, et al. 2024. What’s wrong with your code generated by large language models? an extensive study. arXiv preprint arXiv:2407.06153 (2024). [9] Zhengxiao Du, Yujie Qian, Xiao Liu, Ming Ding, Jiezhong Qiu, Zhilin Yang, and Jie Tang. 2022. Glm: General language model pretraining with autoregressive blank infilling. In Proceedings of the 60th annual meeting of the association for computational linguistics (volume 1: long papers) . 320–335. [10] Lishui Fan, Jiakun Liu, Zhongxin Liu, David Lo, Xin Xia, and Shanping Li. 2025. Exploring the capabilities of llms for code-change-related tasks. ACM Transactions on Software Engineering and Methodology 34, 6 (2025), 1–36. [11] Yanjun Fu, Ethan Baker, Yu Ding, and Yizheng Chen. 2024. Constrained decoding for secure code generation. arXiv preprint arXiv:2405.00218 (2024). [12] GitHub. 2025. The world’s most widely adopted AI developer tool . Accessed: 2025. https://github.com/features/copilot [13] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 (2024). [14] Jian Gu, Aldeida Aleti, Chunyang Chen, and Hongyu Zhang. 2023. Neuron Patching: Semantic-based Neuron-level Language Model Repair for Code Generation. arXiv preprint arXiv:2312.05356 (2023). [15] Xiaojie Gu, Ziying Huang, Jia-Chen Gu, and Kai Zhang. 2025. UltraEdit: Training-, Subject-, and Memory-Free Lifelong Editing in Language Models. arXiv:2505.14679 [cs.CL] https://arxiv.org/abs/2505.14679 [16] Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Yu Wu, YK Li, et al. 2024. DeepSeek-Coder: When the Large Language Model Meets Programming–The Rise of Code Intelligence. 
+
+arXiv preprint arXiv:2401.14196 (2024). [17] Hossein Hajipour, Keno Hassler, Thorsten Holz, Lea Schönherr, and Mario Fritz. 2024. CodeLMSec benchmark: Systematically evaluating and finding security vulnerabilities in black-box code language models. In 2024 IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) . IEEE, 684–709. [18] Tom Hartvigsen, Swami Sankaranarayanan, Hamid Palangi, Yoon Kim, and Marzyeh Ghassemi. 2023. Aging with grace: Lifelong model editing with discrete key-value adaptors. Advances in Neural Information Processing Systems 36 (2023), 47934–47959. [19] Jingxuan He and Martin Vechev. 2023. Large language models for code: Security hardening and adversarial testing. In 
+
+Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security . 1865–1879. [20] Jingxuan He, Mark Vero, Gabriela Krasnopolska, and Martin Vechev. 2024. Instruction tuning for secure code generation. 
+
+arXiv preprint arXiv:2402.09497 (2024). [21] Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin De Laroussilhe, Andrea Gesmundo, Mona Attariyan, and Sylvain Gelly. 2019. Parameter-efficient transfer learning for NLP. In International conference on machine learning . PMLR, 2790–2799. [22] Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang, Tianyu Liu, Jiajun Zhang, Bowen Yu, Keming Lu, et al. 2024. Qwen2. 5-coder technical report. arXiv preprint arXiv:2409.12186 (2024). [23] Maliheh Izadi, Jonathan Katzy, Tim Van Dam, Marc Otten, Razvan Mihai Popescu, and Arie Van Deursen. 2024. Language models for code completion: A practical evaluation. In Proceedings of the IEEE/ACM 46th International Conference on Software Engineering . 1–13. Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. ISSTA163:22 Weifeng Sun, Quanjun Zhang, Yuchen Chen, Chengran Yang, Gou Tan, and David Lo 
+
+[24] Ziwei Ji, Nayeon Lee, Rita Frieske, Tiezheng Yu, Dan Su, Yan Xu, Etsuko Ishii, Ye Jin Bang, Andrea Madotto, and Pascale Fung. 2023. Survey of hallucination in natural language generation. ACM computing surveys 55, 12 (2023), 1–38. [25] Raphaël Khoury, Anderson R Avila, Jacob Brunelle, and Baba Mamadou Camara. 2023. How secure is code generated by chatgpt?. In 2023 IEEE international conference on systems, man, and cybernetics (SMC) . IEEE, 2445–2451. [26] James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, et al. 2017. Overcoming catastrophic forgetting in neural networks. Proceedings of the national academy of sciences 114, 13 (2017), 3521–3526. [27] Dong Li, Shanfu Shu, Meng Yan, Zhongxin Liu, Chao Liu, Xiaohong Zhang, and David Lo. 2025. Improving co-decoding based security hardening of code llms leveraging knowledge distillation. IEEE Transactions on Software Engineering 
+
+(2025). [28] Dong Li, Meng Yan, Yaosheng Zhang, Zhongxin Liu, Chao Liu, Xiaohong Zhang, Ting Chen, and David Lo. 2024. CoSec: On-the-Fly security hardening of code LLMs via supervised co-decoding. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis . 1428–1439. [29] Hongyan Li, Weifeng Sun, and Meng Yan. 2026. Retrieval-Augmented Unit Test Suggestion Generation. ACM Transactions on Software Engineering and Methodology (2026). [30] Hongyan Li, Weifeng Sun, Meng Yan, Ling Xu, Qiang Li, Xiaohong Zhang, and Hongyu Zhang. 2025. Retrieval-Augmented Fine-Tuning for Improving Retrieve-and-Edit Based Assertion Generation. IEEE Transactions on Software Engineering (2025). [31] Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas Muennighoff, Denis Kocetkov, Chenghao Mou, Marc Marone, Christopher Akiki, Jia Li, Jenny Chim, et al. 2023. Starcoder: may the source be with you! arXiv preprint arXiv:2305.06161 
+
+(2023). [32] Xiaopeng Li, Shasha Li, Shezheng Song, Jing Yang, Jun Ma, and Jie Yu. 2024. Pmet: Precise model editing in a transformer. In Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 38. 18564–18572. [33] Xiaopeng Li, Shangwen Wang, Shasha Li, Jun Ma, Jie Yu, Xiaodong Liu, Jing Wang, Bin Ji, and Weimin Zhang. 2024. Model editing for llms4code: How far are we? arXiv preprint arXiv:2411.06638 (2024). [34] Ziyang Luo, Can Xu, Pu Zhao, Qingfeng Sun, Xiubo Geng, Wenxiang Hu, Chongyang Tao, Jing Ma, Qingwei Lin, and Daxin Jiang. 2023. Wizardcoder: Empowering code large language models with evol-instruct. arXiv preprint arXiv:2306.08568 (2023). [35] Vahid Majdinasab, Michael Joshua Bishop, Shawn Rasheed, Arghavan Moradidakhel, Amjed Tahir, and Foutse Khomh. 2024. Assessing the security of github copilot’s generated code-a targeted replication study. In 2024 IEEE International Conference on Software Analysis, Evolution and Reengineering (SANER) . IEEE, 435–444. [36] Kevin Meng, David Bau, Alex Andonian, and Yonatan Belinkov. 2022. Locating and editing factual associations in gpt. 
+
+Advances in neural information processing systems 35 (2022), 17359–17372. [37] Kevin Meng, Arnab Sen Sharma, Alex Andonian, Yonatan Belinkov, and David Bau. 2022. Mass-editing memory in a transformer. arXiv preprint arXiv:2210.07229 (2022). [38] MITRE Corporation. 2024. 2024 CWE Top 25 Most Dangerous Software Weaknesses. https://cwe.mitre.org/top25/. Accessed: October 29, 2025. [39] Nero0113 and contributors. 2025. CoSec: On-the-Fly security hardening of code LLMs via supervised co-decoding. https://github.com/Nero0113/CoSec. Accessed: 2025-06-15. [40] Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Lifu Tu, Huan Wang, Yingbo Zhou, Silvio Savarese, and Caiming Xiong. 2022. Codegen: An open large language model for code with multi-turn program synthesis. arXiv preprint arXiv:2203.13474 
+
+(2022). [41] Hammond Pearce, Baleegh Ahmad, Benjamin Tan, Brendan Dolan-Gavitt, and Ramesh Karri. 2025. Asleep at the keyboard? assessing the security of github copilot’s code contributions. Commun. ACM 68, 2 (2025), 96–105. [42] Hammond Pearce, Benjamin Tan, Baleegh Ahmad, Ramesh Karri, and Brendan Dolan-Gavitt. 2023. Examining zero-shot vulnerability repair with large language models. In 2023 IEEE Symposium on Security and Privacy (SP) . IEEE, 2339–2356. [43] Jinjun Peng, Leyi Cui, Kele Huang, Junfeng Yang, and Baishakhi Ray. 2025. Cweval: Outcome-driven evaluation on functionality and security of llm code generation. In 2025 IEEE/ACM International Workshop on Large Language Models for Code (LLM4Code) . IEEE, 33–40. [44] Python Software Foundation. 2025. difflib: Helpers for Computing Deltas. https://docs.python.org/3/library/difflib.html. [45] André Silva, Sen Fang, and Martin Monperrus. 2025. Repairllama: Efficient representations and fine-tuned adapters for program repair. IEEE Transactions on Software Engineering (2025). [46] Weifeng Sun, Naiqi Huang, Meng Yan, Li Huang, Zhongxin Liu, Xiao Liu, and David Lo. 2026. Cost-Effective Adversarial Attacks Against Code LLM with Model Attention. IEEE Transactions on Software Engineering (2026). [47] Weifeng Sun, Naiqi Huang, Meng Yan, Zhongxin Liu, Hongyan Li, Yan Lei, and David Lo. 2025. On-the-fly Generation-Quality Enhancement of Deep Code Models via Model Collaboration. ACM Transactions on Software Engineering and 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026. Understanding and Improving Model Editing for Secure Code Generation ISSTA163:23 
+
+Methodology (2025). [48] Weifeng Sun, Hongyan Li, Meng Yan, Yan Lei, and Hongyu Zhang. 2023. Revisiting and improving retrieval-augmented deep assertion generation. In 2023 38th IEEE/ACM International Conference on Automated Software Engineering (ASE) .IEEE, 1123–1135. [49] Ali Tehrani, Arijit Bhattacharjee, Le Chen, Nesreen K Ahmed, Amir Yazdanbakhsh, and Ali Jannesari. 2024. Coderosetta: Pushing the boundaries of unsupervised code translation for parallel programming. Advances in Neural Information Processing Systems 37 (2024), 100965–100999. [50] Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. 2023. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 (2023). [51] Mengru Wang, Ningyu Zhang, Ziwen Xu, Zekun Xi, Shumin Deng, Yunzhi Yao, Qishen Zhang, Linyi Yang, Jin-dong Wang, and Huajun Chen. 2024. Detoxifying large language models via knowledge editing. arXiv preprint arXiv:2403.14472 (2024). [52] Peng Wang, Zexi Li, Ningyu Zhang, Ziwen Xu, Yunzhi Yao, Yong Jiang, Pengjun Xie, Fei Huang, and Huajun Chen. 2024. Wise: Rethinking the knowledge memory for lifelong model editing of large language models. Advances in Neural Information Processing Systems 37 (2024), 53764–53797. [53] Yanlin Wang, Yanli Wang, Daya Guo, Jiachi Chen, Ruikai Zhang, Yuchi Ma, and Zibin Zheng. 2024. Rlcoder: Reinforce-ment learning for repository-level code completion. arXiv preprint arXiv:2407.19487 (2024). [54] Frank Wilcoxon. 1992. Individual comparisons by ranking methods. In Breakthroughs in statistics: Methodology and distribution . Springer, 196–202. [55] Frank F Xu, Uri Alon, Graham Neubig, and Vincent Josua Hellendoorn. 2022. A systematic evaluation of large language models of code. In Proceedings of the 6th ACM SIGPLAN international symposium on machine programming . 1–10. [56] Zhen Yang, Fang Liu, Zhongxing Yu, Jacky Wai Keung, Jia Li, Shuo Liu, Yifan Hong, Xiaoxue Ma, Zhi Jin, and Ge Li. 2024. Exploring and unleashing the power of large language models in automated code translation. Proceedings of the ACM on Software Engineering 1, FSE (2024), 1585–1608. [57] Yunzhi Yao, Peng Wang, Bozhong Tian, Siyuan Cheng, Zhoubo Li, Shumin Deng, Huajun Chen, and Ningyu Zhang. 2023. Editing large language models: Problems, methods, and opportunities. arXiv preprint arXiv:2305.13172 (2023). [58] Z. AI. 2025. Powerful AI assistant for developers . Accessed: 2025. https://codegeex.cn/en-US [59] Pengwei Zhan, Zhen Xu, Qian Tan, Jie Song, and Ru Xie. 2024. Unveiling the lexical sensitivity of LLMs: Combinatorial optimization for prompt enhancement. arXiv preprint arXiv:2405.20701 (2024). [60] Ningyu Zhang, Yunzhi Yao, Bozhong Tian, Peng Wang, Shumin Deng, Mengru Wang, Zekun Xi, Shengyu Mao, Jintian Zhang, Yuansheng Ni, et al. 2024. A comprehensive study of knowledge editing for large language models. arXiv preprint arXiv:2401.01286 (2024). [61] Quanjun Zhang, Chunrong Fang, Siqi Gu, Ye Shang, Zhenyu Chen, and Liang Xiao. 2025. Large language models for unit testing: A systematic literature review. arXiv preprint arXiv:2506.15227 (2025). [62] Quanjun Zhang, Chunrong Fang, Yang Xie, Yuxiang Ma, Weisong Sun, Yun Yang, and Zhenyu Chen. 2026. A Systematic Literature Review on Large Language Models for Automated Program Repair. (2026). Just Accepted. doi:10.1145/3799693 [63] Quanjun Zhang, Chunrong Fang, Yang Xie, Yaxin Zhang, Shengcheng Yu, Weisong Sun, Yun Yang, and Zhenyu Chen. 2026. A Survey on Large Language Models for Software Engineering. Science China Information Sciences 69, 4 (2026), 141102. [64] Quanjun Zhang, Chunrong Fang, Tongke Zhang, Bowen Yu, Weisong Sun, and Zhenyu Chen. 2023. Gamma: Revisiting Template-based Automated Program Repair via Mask Prediction. In Proceedings of the 38th IEEE/ACM International Conference on Automated Software Engineering . 535–547. [65] Chen Zhu, Ankit Singh Rawat, Manzil Zaheer, Srinadh Bhojanapalli, Daliang Li, Felix Yu, and Sanjiv Kumar. 2020. Modifying memories in transformer models. arXiv preprint arXiv:2012.00363 (2020). 
+
+Received 2026-01-30; accepted 2026-06-25 
+
+Proc. ACM Softw. Eng., Vol. 3, No. ISSTA, Article ISSTA163. Publication date: October 2026.

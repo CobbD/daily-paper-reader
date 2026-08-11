@@ -1,0 +1,990 @@
+Title: DeepInvert: Semi-Supervised Embedding Inversion Against Obfuscated Language Models
+
+URL Source: https://arxiv.org/pdf/2608.04477v1
+
+Published Time: Thu, 06 Aug 2026 00:32:30 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# DeepInvert: Semi-Supervised Embedding Inversion Against Obfuscated Language Models 
+
+Zhicong Huang 
+
+Ant Group 
+
+Cheng Hong 
+
+Ant Group 
+
+Tao Wei 
+
+Ant Group 
+
+Abstract —Cloud-based language model services routinely pro-cess prompts containing sensitive personal or business informa-tion. Obfuscation-based defenses—including ObfusLM (ACL 2025), SentinelLMs (AAAI 2024), TextObfuscator (ACL 2023), and DPNR (EMNLP 2020)—mitigate this risk by transform-ing prompt representations before transmission, offering alightweight alternative to heavyweight cryptographic solutions. We show that these defenses provide far less protection than previously believed. We present DeepInvert , a semi-supervised embedding in-version attack that recovers original tokens from obfuscated representations with substantially higher accuracy than prior methods. The key insight is that unlabeled obfuscated em-beddings, despite perturbation, retain exploitable semantic structure. DeepInvert combines supervised training on labeled shadow data with a novel unsupervised consistency objective over unlabeled target embeddings, and alternates between the two via a mixed training pipeline that enables mutual reinforcement. Defense-aware adaptations further extend the attack to diverse obfuscation mechanisms across both encoder-based and autoregressive architectures. Experiments on nine defenses, five tasks, and four model architectures show that DeepInvert outperforms prior attacks on most defenses and tasks. Against the state-of-the-art Ob-fusLM, DeepInvert achieves 73.5% top-1 token recovery ver-sus 26.2% for the previous best attack. On token-level and generation tasks, our results reveal a task-dependent tension: obfuscation schemes that preserve enough signal for down-stream utility also retain sufficient structure for accurate inversion, while schemes that resist inversion collapse task utility. On simpler sentence-level classification, some DP-based defenses can simultaneously maintain utility and limit recovery, suggesting the tension is task-dependent. We call for a re-evaluation of this class of defenses. 
+
+## 1. Introduction 
+
+Recent advances in language models (LMs)—from encoder-based models such as BERT [1] to large decoder-only models such as OpenAI’s GPT family [2], Meta’s Llama series [3], [4], and Alibaba’s Qwen series [5]—have delivered state-of-the-art performance across a wide range of NLP tasks. However, these models are often extremely large, computationally demanding, or partially closed-source, which makes self-hosted deployment impractical for many users. As a result, LM functionality is frequently accessed via cloud services, where clients either upload datasets to adapt a model to a downstream task ( fine-tuning )or send prompts to query an existing model ( inference ). This cloud-based paradigm raises significant privacy and secu-rity concerns [6], [7]. Client inputs, either fine-tuning data or inference-time prompts, may contain sensitive personal information, proprietary business data, or other confidential content that should not be exposed to the service provider or potential attackers with access to the provider’s infras-tructure. A series of works propose mechanisms to mitigate these risks. Obfuscation-based defenses are particularly attractive because they can be integrated into existing pipelines with minimal changes and relatively low computational overhead. Some methods rely on heuristic techniques (e.g., vocabulary permutation [8], [9], data mixing [10]), while others aim for more principled designs with formal privacy guarantees, most commonly via differential privacy (DP) [11], [12], [13]. The core idea is to transform or perturb prompt rep-resentations on the client side before transmitting them to the server. A well-known limitation of these approaches is the inevitable degradation in utility caused by perturbation. However, as we show in this work, the more critical issue is that many proposed defenses can be effectively broken under standard, recommended privacy parameters (we revisit this point in Section 6.5). An alternative research line seeks stronger protection from heavyweight cryptographic prim-itives that support computation over encrypted data—such as homomorphic encryption and secure multiparty computa-tion [14], [15], [16], [17]—but these often incur substantial computational and communication costs. Prior work has shown that information can be recov-ered from obfuscation-based defenses, but existing attacks remain relatively shallow and not consistently effective. For instance, the KNN attack [20] demonstrates that directly computing similarities between obfuscated embeddings and public word embeddings can re-identify a fraction of tokens, yet some defenses [9], [21] can largely thwart this approach. The InvBert attack [19] trains a model to predict token IDs from obfuscated embeddings, but its fully supervised training paradigm cannot exploit the rich information con-tained in unlabeled obfuscated embeddings. We close this gap with a semi-supervised attack that allows the adversary arXiv:2608.04477v1 [cs.CR] 5 Aug 2026 TABLE 1: Attacking examples on two settings, obfuscated by ObfusLM [9]. 
+
+Setting: ObfusLM ( ϵ = 0 .1) + RoBERTa + SST-2 
+
+Original Prompt Inv. (TBS [18]) (Top-1: 0.164) InvBert [19] (Top-1: 0.262) DeepInvert (Top-1: 0.735) although laced with humor and a few fanciful touches , the film is a refreshingly serious look at young women . named though intertwined as quizz To’s bunch crazensus moving,,,,,,,,,Film they’s refreshality grimLooks as poorest ladies. . . . asthough tied as challenging to abunch craziar moving ii. film i’re im-personality grim looks as wealthiest ladies : though combined with humor and a few funniful moving , the movie is a refreshingly grim look at young women . 
+
+Setting: ObfusLM ( ϵ = 1 .0) + LLaMA3-8B + Medical QA 
+
+Original Prompt Inv. (TBS [18]) 
+
+Top-1: 0.216, S-Top1: 0.205 
+
+InvBert [19] 
+
+Top-1: 0.457, S-Top1: 0.345 
+
+DeepInvert 
+
+Top-1: 0.804, S-Top1: 0.769 A 32-year-old woman comes to the emergency department because of a 3-hour history of severe nausea, vomiting, tremor, and anxiety. She recently started a new medication but does not remember its name. She has a history of major de-pressive disorder treated with flu-oxetine. Her temperature is 38.9 C (102.1 F), pulse is 132/min, res-pirations are 22/min, and blood pressure is 152/94 mm Hg. She is confused. Physical examination shows diaphoresis and an ataxic gait. Patellar reflexes are 4+ bilat-erally. E’s34ann´ ee outdated woman domi-nanceTo The emergency department daß ofs das’s VIII hours History ofs ***** nausea**, nausea**, tremblin-gARB*, AND Autism %. elle Recent restarted das new drug but does** com-memorate their name %. elle exists das History ofs minor depression deficiency tratawith plaguedonavir %. Her temper-atures mill’s**%.****289++. One cf), pulse mill’s130/min**, respir affilia-tion are’s20/min**, and BloodPressure mill’s153()/88 inches K Rw%. elle mill confusing%. Physical examine show diaphphereis AND An Ataxvic(d Jill%.Natural stellar.adv*** are’s*+ bi-later morally%. A934-year detailed woman domi-nates to the emergency engineer whereas of de-o VIII hours history of potent nausea, nausea, tremorb, and autism%. She recently started de new drug but does not realize her name%. She got a history of minor depression deficiency treated with diseaseoxetine%. His tempera-ture mill s cresc%.8 B },290%. One cf), pulse mar d130 min, respirflation are in25emin, and blood-pressure mill’154%%98 inches Bg+. She mill confusing % Physical examination showed diaphferis and an ataxc nait % Natellar advives are in4+ bilter phys % A 32-year-old woman comes to the emergency department because of a 3-hour history of potential diarrhea, vomiting, andor, and depression. She has started a new medication but does not remember their name. She has a history of minor depres-sive disorder treated with fluoxe-tine. Her temperature is 99°C8°C (289.7 ft), pulse is 110/min, respira-tions are 20/min, and blood pressure is 155/95 mm Hg. She is confused. Her examination shows diapheresis, an ataxic gait. Herellar reflexus are 5+ bilaterally.  
+
+> †
+
+Blue text marks correctly recovered tokens; red text marks sensitive tokens annotated via GPT-5.6. S-Top1 is the top-1 recovery rate restricted to sensitive tokens (see Section 6.1.5).  
+
+> ‡
+
+In the Prompt Inv. column, asterisks ( *) replace non-ASCII characters produced by the inversion that cannot be properly rendered. 
+
+to leverage both labeled and unlabeled obfuscated embed-dings, recover finer-grained semantic structure, and thereby expose a markedly larger fraction of the original tokens in obfuscation-based defenses. 
+
+Contributions. We propose DeepInvert , a semi-supervised embedding inversion attack that, to our knowledge, is the first to exploit unlabeled target embeddings for prompt recovery—a capability that prior supervised or optimization-based attacks lack. The core innovation is a consistency-based unsupervised objective that extracts invariant semantic structure from noisy obfuscated embeddings, combined with a mixed training pipeline that alternates supervised and unsupervised optimization for mutual reinforcement. While individual building blocks (pseudo-labeling, EMA teachers) originate from semi-supervised learning, applying them to embedding inversion poses non-trivial challenges—large-vocabulary prediction, defense-induced distribution shift, and defense-specific noise characteristics—that require tai-lored solutions. Our main contributions are:  
+
+> •
+
+DeepInvert improves token recovery by extracting deeper semantic structure from both labeled and un-labeled obfuscated embeddings, addressing the overfit-ting to the shadow distribution that limits prior super-vised attacks.  
+
+> •
+
+We identify and validate specific adaptations critical for inversion: soft top-k labels, masked augmented views at the embedding level, and an EMA teacher for stable self-training.  
+
+> •
+
+We tailor DeepInvert to different defenses via multi-ple shadow models (to mitigate distribution shift) and renormalization/denoising (for DP-based defenses).  
+
+> •
+
+We systematically evaluate DeepInvert on nine de-fenses, five tasks, and four model architectures. 
+
+DeepInvert breaks ObfusLM with 73.5% top-1 recov-ery (vs. 26.2% for the previous best). Our results reveal a task-dependent tension: for token-level and genera-tion tasks, current schemes fail to achieve meaningful privacy-utility trade-off, while some DP-based defenses can maintain both on simpler sentence-level tasks. 
+
+## 2. Background 
+
+2.1. Language Models 
+
+Language models estimate the probability distribution over token sequences, typically by predicting missing or fu-ture tokens from their context. They are either bidirectional (e.g., masked language models like BERT) or autoregressive (e.g., GPT-style next-token predictors). Large language mod-els (LLMs) are such models scaled to billions of parameters and trained on massive text corpora [22]. Below, we briefly review the Transformer architectures underlying both BERT-like models and autoregressive LLMs. 
+
+Transformer backbone. Modern language models are built on the Transformer architecture [23], [24]. Encoder-only TABLE 2: Defenses and their obfuscation techniques                     
+
+> Defense Tech. Defense Tech. SentinelLMs †[8] VP Datamix [10] CM Santext [11] TS Custext [25] TS TextObf. [21] CM, NA TextMixer ‡[26] VP, CM ObfusLM [9] VP, CM DPNR [12] NA CAPE [27] NA DP-Forward [13] NA
+> †: VP is applied with a transformation named glide-reflection in SentinelLMs. ‡: TextMixer relies on data multiplexing (MUX-PLMs) and is archi-tecturally incompatible with the standard obfuscation pipeline evaluated in this work; we list it for completeness but do not include it in our experiments.
+
+models (e.g., BERT) use bidirectional self-attention for classification tasks, while decoder-only models (e.g., GPT, LLaMA, Qwen) use causal masking for autoregressive gen-eration. 
+
+LM-based downstream tasks. BERT-style models are widely used for downstream classification tasks, in part because their parameter scales are moderate while still suf-ficient for many applications, including sentence-level clas-sification (e.g., sentiment analysis) and token-level classifi-cation (e.g., named entity recognition). In contrast, autore-gressive LLMs are typically fine-tuned to support generative tasks, where the model produces free-form text by iteratively predicting the next token. 
+
+2.2. Obfuscation-Based Defenses 
+
+To protect clients’ prompt privacy, existing approaches can be broadly categorized into obfuscation-based defenses and cryptographic defenses. In this paper, we focus on obfuscation-based methods and defer a discussion of cryp-tographic techniques to Section 6.5. Below, we summarize several representative obfuscation techniques (also listed in Table 2). 
+
+Vocabulary permutation (VP). Several defenses permute the vocabulary (and correspondingly the rows of the em-bedding matrix) so the server no longer knows which token each index represents. On its own, this offers limited protec-tion, as permuted embeddings can often be re-identified by matching them to a public embedding space. Consequently, vocabulary permutation is usually paired with additional obfuscation mechanisms. 
+
+Clustering/Mixing (CM). Another strategy aims to confuse an adversary by mixing the embeddings of multiple tokens. Depending on how this mixing is implemented, the client may first cluster similar tokens and then use a cluster-level representation, or directly mix (e.g., average or linearly combine) embeddings across tokens or sentences to obscure the contribution of any single token. 
+
+Token substitution (TS). In token substitution, each token is randomly replaced by another token, where substitution probabilities are derived from a token similarity measure (e.g., in embedding space). This sampling is often imple-mented via the exponential mechanism from differential privacy [28] (usually a relaxed or informal variant), making similar tokens more likely substitutes. 
+
+Noise adding (NA). Noise can be added directly to token or sentence embeddings to achieve differential privacy, of-ten termed embedding-level DP . The client sends only the perturbed embeddings to the server. 
+
+2.2.1. Attacks. Embedding inversion attacks aim to recover the original tokens from obfuscated hidden states. Existing approaches can be broadly categorized into three classes based on their attack strategies. 
+
+Hidden state comparison (KNN [20], EDNN [29]). The simplest attack strategy compares obfuscated hidden states against a public embedding space using distance metrics. 
+
+Direct prompt embedding optimization (ER, TBS [18], DEML [30]). These methods formulate token recovery as an optimization problem that minimizes the distance between the hidden states produced by candidate embeddings and the observed obfuscated states. 
+
+Model-based inversion (InvBert [19], MLC [6]). The most sophisticated approach trains an explicit inversion model to map obfuscated representations back to tokens. Our work advances this category by introducing a new inversion paradigm for highly accurate token recovery. 
+
+## 3. Problem Setting and Motivation 
+
+3.1. System and Threat Model 
+
+We provide an overview of existing obfuscated LM defense systems and the associated threat model in Figure 1. A language model is partitioned into two components: a small prefix Fc (layers 1 through k) deployed on the client side, and the remaining, much larger suffix Fs deployed on the server side. There are typically two phases in which privacy must be preserved: (i) the fine-tuning phase and (ii) the inference phase. In both phases, only obfuscated embed-dings are transmitted from client to server. Notably, this also covers the basic setting with k = 0 , where only shuffled token IDs are transmitted [8], [9]; in this case, the client hosts no layer and incurs no computational overhead. The obfuscation procedure is identical across phases; the only difference is that, during fine-tuning, model parameters on both the client and server are updated via backpropagation. Our work is agnostic to how the task model is optimized and does not consider information leakage via gradient updates, which constitutes a separate attack surface that has been extensively studied [6], [31]. The client aims to protect its sensitive dataset or prompts from the server, which we treat as an adversary. This threat model captures the scenario where a client outsources model hosting to the cloud: the model itself need not be confiden-tial, but the client’s prompts (e.g., medical queries, financial records) must remain private. The adversary observes all transmitted obfuscated embeddings, which are not labeled with their original token IDs. Moreover, the adversary is assumed to know the architecture of the task model and Fine-tuning Inference    
+
+> …
+> Data A
+> Obfuscate Layer 1…k
+> Obfuscated Embeddings
+> Add Noise Fine-tuning Layer k+1…n
+> …Labels
+> Loss
+> …
+> Data B
+> Obfuscate Layer 1…k
+> Add Noise
+> Gradients
+> Obfuscated Embeddings
+> Inference Layer k+1…n
+> …
+> Labels / (Obfuscated) Text
+> …
+> Layer 1…k
+> Shadow Model(s)
+> Shadow Data
+> Simulated Obfuscation
+> …
+> Inversion Model
+> Unlabeled
+> Obfuscated Embeddings
+> Labeled Obfuscated Embeddings
+> Recovered Token IDs of
+> Unlabeled Obfuscated Embeddings
+> Client Server
+
+Figure 1: Obfuscated LM Defense and Threat Model. Obfuscated embeddings (without original token IDs) are sent from client to server. The adversary simulates the obfuscation on shadow data to obtain labeled obfuscated embeddings, which are then used to train an inversion model in a supervised manner. can train shadow models on a shadow dataset. The shadow dataset may be drawn from the same distribution as the client’s data or, under a more constrained setting, from an unrelated public out-of-distribution corpus. Importantly, the shadow dataset need not be task-related; for the attack, it suffices that the adversary can generate labeled obfuscated embeddings, which requires only text prompts, not ground-truth task labels. Because the adversary does not have access to all obfuscation information retained locally by the client, it can only approximate or simulate the obfuscation mecha-nism when generating labeled obfuscated embeddings. The adversary’s goal is to recover the original token IDs corre-sponding to the observed unlabeled obfuscated embeddings. 
+
+3.2. Problem Formulation 
+
+Security and utility goals. Following prior works, the client’s security goal is confidentiality of prompt content :the server should not reconstruct original tokens from ob-fuscated embeddings. The utility goal is that obfuscated em-beddings remain sufficiently informative for the downstream task. We adopt token-level recovery accuracy (top-1) as the primary security metric: if the attacker recovers individual tokens, it can potentially extract sensitive entities, topics, or phrases. This is a strict, conservative measure—a defense that fails under this metric also fails under any weaker notion of confidentiality. 
+
+Attack formulation. A client holds a sensitive prompt 
+
+x = ( x1, x 2, . . . , x n) consisting of n tokens. To protect prompt privacy, the client applies an obfuscation mechanism 
+
+O(Fc, x ) before transmitting them to the server. Given an obfuscated hidden state A = O(Fc, x ) received from the client, the server aims to reconstruct a prompt 
+
+x′ = ( x′
+
+> 1
+
+, x ′
+
+> 2
+
+, . . . , x ′
+
+> n
+
+) such that x′ ≈ x. The fundamental challenge stems from the information loss introduced by obfuscation. Formally, the server seeks to solve: 
+
+min  
+
+> x′∈V n
+
+∥O ′(Fc, x ′) − A∥22 , (1) where V is the vocabulary set and O′ represents the server’s simulation of the obfuscation mechanism. However, this discrete optimization is computationally intractable with a naive searching technique due to the combinatorial search space |V| n, which grows exponentially in the sequence length. Prior work such as InvBert [19] relaxes this problem by training a supervised inversion model on labeled data, but suffers from distribution shift between shadow and target data. Direct embedding optimization methods (e.g., ER, TBS [18], DEML [30]) optimize continuous embeddings but lack structural robustness to obfuscation noise. 
+
+Obfuscation mechanisms. The defenses we evaluate instan-tiate O in four main ways (Table 2): (1) Vocabulary permutation (VP). The client applies a secret bijection π : V → V to token IDs and correspondingly permutes the rows of the embedding matrix E: E′ = Eπ ,where Eπ [i] = E[π(i)] . The server observes permuted IDs (or their embeddings) but not π.(2) Clustering/Mixing (CM). Tokens are grouped into clus-ters C = {C1, . . . , C M }. Given a token xi belonging to cluster C(xi), its embedding is replaced by a fused repre-sentation, e.g., h′ 
+
+> i
+
+= mix  {hj : xj ∈ C(xi)}, which may be a cluster centroid or a weighted combination of member embeddings. (3) Token substitution (TS). Each token xi is replaced by a substitute x′ 
+
+> i
+
+∈ V sampled with probability 
+
+Pr[ x′ 
+
+> i
+
+= v | xi] ∝ exp 
+
+ u(xi, v )2∆ u
+
+
+
+,
+
+where u(·, ·) is a utility function (e.g., embedding distance) and ∆u is the sensitivity, under a (relaxed) exponential mechanism [28]. (4) Noise adding (NA). The client computes hidden states 
+
+h = Fc(x), normalizes them, and adds calibrated noise: 
+
+h′ = normalize( h) + e, e ∼ DP( ϵ), (2) where e is drawn from a DP mechanism with privacy budget 
+
+ϵ. Defenses differ in their normalization: DPNR uses min-max, CAPE uses L1, DP-Forward uses Frobenius normaliza-tion; TextObfuscator omits normalization, leaving sensitivity unbounded. (a) Original/Obfuscated Embeddings audience crowd (b) Hidden States (Original) audience crowd (c) Hidden States (Obfuscated) audience crowd Predicted audience Predicted crowd Predicted others (d) InvBert Attack 
+
+Figure 2: (a) The original embedding of “audience” (orange •) is not among the top-5 nearest neighbors of its obfuscated embedding (cyan ×). (b) The original hidden states for “audience” and “crowd” are clearly separable. (c) The obfuscated hidden states of “audience” and “crowd” are not clearly separable. (d) InvBert separates the obfuscated hidden states but misclassifies most samples. Each point represents the hidden state of one token occurrence (“audience” or “crowd”) in a different sentence. 
+
+3.3. Motivating the Design 
+
+We use the token “audience” as an example to illustrate limitations of current defenses and attacks. Figure 2-(a) shows that ObfusLM’s obfuscation moves embeddings away from their original positions, making nearest-neighbor at-tacks like KNN ineffective. The original “audience” embed-ding does not even appear among the top-5 nearest neigh-bors of the obfuscated one. However, the relative distances among tokens are largely preserved to maintain downstream task utility. This creates a false sense of security: while individual embeddings are perturbed, the semantic struc-ture in hidden states remains exploitable. Figures 2-(b,c) compare BERT’s last-layer hidden states for “audience” and its neighbor “crowd” before and after obfuscation. The defense blurs but does not eliminate the semantic separation, suggesting that a more sophisticated attack could recover this structure. Figure 2-(d) shows InvBert’s attack results. Though it learns to separate obfuscated hidden states, it fails to assign correct token IDs in most cases due to insufficient exploita-tion of semantic structure and overfitting to shadow data. This motivates our semi-supervised approach that leverages both labeled shadow data and unlabeled target embeddings to discover invariant semantic features. 
+
+## 4. DeepInvert 
+
+We highlight several main issues that lead to suboptimal results in the InvBert attack. First, the supervised learning approach places less focus on discovering potentially unseen semantic structure among noisy embeddings, and targets at an easier task of linking embeddings to their labeled token IDs. Second, noisy embeddings of prompts used in the online service (i.e., the test phase) preserve such semantic information, but they can not be used in training InvBert because their real token IDs are unknown. Finally, for some defenses, the inversion training requires simulating a shadow defense model that might behave differently from a real defense model, causing a severe problem of distribution shift. Inspired by the discovery described above, we propose a novel design, DeepInvert , based on semi-supervised learning to leverage rich semantic information from both labeled and unlabeled data. 
+
+4.1. Semi-Supervised Inversion Attack 
+
+Let fθ : RL×H → RL×V denote the inversion model parameterized by θ, where L is the input (prompt) length, 
+
+H is the embedding size, and V = |V| is the vocabulary size. Given an input sequence x ∈ RL×H , we denote by 
+
+fθ (x)i,v the predicted probability of token v at position 
+
+i. We draw inspiration from a classical semi-supervised learning algorithm FixMatch [32]. For labeled data, the inversion model is trained in a standard supervised manner with cross-entropy loss Ls:
+
+Ls = − 1
+
+L
+
+> L
+
+X
+
+> i=1
+
+log fθ (x)i,y i , (3) where yi ∈ { 1, . . . , V } is the ground truth token ID on position i. FixMatch improves performance on unlabeled data via pseudo-labeling . In summary, it produces a weakly augmented view and a strongly augmented view for each unlabeled sample. High-confidence predictions on the weak views are used as pseudo labels to supervise the training of strong views, termed as the unsupervised consistency regularization loss Lu (also a cross-entropy loss). FixMatch was designed for image classification, where supervised training often yields reliable high-confidence pseudo-labels. However, we have a more challenging task to predict correct tokens in a large vocabulary (typically tens of thousands) given potentially heavily perturbed embeddings. A direct application of FixMatch yields little benefit, so we adopt a tailored design. We introduce three key enhancements here, and defer additional optimizations to later sections. 0 1 2 3        
+
+> Epoch
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Accuracy
+> Top-1 Top-5 Top-100 (a) Inversion on TextObfuscator 0123
+> Epoch
+> 0.0 0.2 0.4 0.6 0.8
+> Accuracy
+> Top-1 Top-5 Top-100 (b) Inversion on ObfusLM
+
+Figure 3: Test accuracy of supervised attacks. Attacker models achieve high top-100 matching accuracy overall. For ObfusLM, the attack overfits to the shadow distribution, resulting in decreasing test accuracy as training progresses. 
+
+4.1.1. Soft Labeling. While analyzing the performance of supervised inversion learning, we find that it achieves rela-tively good results after the first few epochs if we consider a loose metric such as top 100 accuracy for each token (see Figure 3). Such an inversion model might not be useful for an attacker to recover a prompt, but it provides a good starting point of teacher signals. Instead of using highly inaccurate hard pseudo labels, we propose to use soft labeling . Given a weakly augmented view xw and a strongly augmented view xs of the unlabeled input x, a direct approach is to minimize KL-divergence loss on the two views to enforce consistency regularization: 
+
+Lu = 1
+
+L
+
+> L
+
+X
+
+> i=1
+
+DKL (fθ (xs)i|| fθ (xw)i)= 1
+
+L
+
+> L
+
+X
+
+> i=1
+> V
+
+X
+
+> v=1
+
+fθ (xs)i,v log fθ (xs)i,v 
+
+fθ (xw)i,v 
+
+,
+
+Given the observation in Figure 3, we further constrain the loss in the range of top-k highest probabilities, which both optimizes computation resources and minimizes the influence of long-tail low-confidence predictions. For each sample x ∈ RL×H , let I(k) 
+
+> x,i
+
+denote the indices of the top-
+
+k largest entries in fθ (x)i, and let fθ (x)i, I(k)
+
+> x,i
+
+denote these top-k probabilities at position i. The top-k KL divergence loss is defined as: 
+
+L(k) 
+
+> u
+
+= 1
+
+L
+
+> L
+
+X
+
+> i=1
+
+DKL (fθ (xs)i, I(k)
+
+> xw ,i
+
+|| fθ (xw)i, I(k)
+
+> xw ,i
+
+) (4) Note that the indices I(k)  
+
+> xw,i
+
+for both probability distributions come from the prediction on the view xw. The final loss is: 
+
+L = Ls + λ · L (k) 
+
+> u
+
+, (5) where λ is the strength parameter of unsupervised loss. 
+
+4.1.2. Masked Augmented Views. Most defenses cause some damage to semantic information due to the pertur-bation added to the inputs, such as clustering, noise adding, and vocabulary shuffling. A critical step to improve inver-sion performance is to restore such semantic information on the perturbed embeddings. We borrow the token masking idea from pretraining masked language models (e.g., BERT), but apply it to embeddings instead of raw tokens. Essentially, for input x ∈ RL×H , we randomly sample a percentage of positions and replace their embeddings with the [MASK ]
+
+embedding. 
+
+r = ( r1, . . . , r L) ∈ RL, r i ∼ U (0 , 1) i.i.d for i = 1 , . . . , L 
+
+(6) 
+
+xi, : ← e[MASK ] if ri < p m, (7) where e[MASK ] ∈ RH is the embedding of the [MASK ]
+
+token (randomly initialized if [MASK ] token does not exist in the tokenizer), and pm is a hyperparameter for masking probability. We obtain strongly and weakly augmented views xw and 
+
+xs with masking under different parameters pm. Equation 4 can thus be instantiated with xs and xw. In addition, we apply the weakly augmented views to the supervised com-ponent, which helps reduce overfitting to the labeled data distribution. In this case, x should be replaced with xw in Equation 3. 
+
+4.1.3. Smooth Update with EMA Teacher. In the above unsupervised loss (Equation 4), we are forwarding xw and 
+
+xs to the same up-to-date model fθ , basically instructing the model to always learn from itself. However, directly fitting to the up-to-date model tends to be unstable and even cause model collapse, since the target distribution can change abruptly from step to step, causing optimization to chase a rapidly moving target instead of learning consistent representations [33], [34]. We instead use an exponential moving average (EMA) teacher [33], which provides a more stable training target by aggregating the student’s parameters over time, thereby smoothing out the high-variance updates from recent mini-batches. EMA teachers have been widely adopted in semi-supervised learning and self-distillation. Let fθt denote a teacher inversion model and fθs denote a student inversion model. The unsupervised KL divergence loss is further refined to be: 
+
+L(k) 
+
+> u
+
+= 1
+
+L
+
+> L
+
+X
+
+> i=1
+
+DKL (fθs (xs)i, I(k)
+
+> xw ,i
+
+|| fθt (xw)i, I(k)
+
+> xw ,i
+
+) (8) The teacher model is updated using an exponential moving average: 
+
+θt ← αθ t + (1 − α)θs, (9) where α ∈ [0 , 1) is the smoothing coefficient controlling how much the teacher follows the student, e.g., α = 0 .998 .The supervised training component always updates the stu-dent model fθs .
+
+4.2. Mixed Training: Mutual Reinforcement 
+
+Unfortunately, the joint optimization (Equation 5) does not work well in our setting. At the beginning of training, the model has very low accuracy in predicting token IDs, and the KL divergence loss therefore provides misleading signals that push the model in many incorrect directions. Simply disabling this loss in the first few epochs slightly alleviates the problem, but the model still saturates at a suboptimal performance level towards the end of training. This phenomenon has been systematically studied in multi-task learning [35], where different task losses are optimized jointly (on training data with potentially different distribu-tion). Joint optimization might suffer from gradient conflicts between objectives Ls and L(k) 
+
+> u
+
+, which can slow down training and drive the model to sub-optimal compromise so-lutions. Rather than tuning a fixed λ, we adopt an alternating schedule that avoids per-step interference. To better optimize both objectives, we follow a simple yet effective mixed training strategy. The core idea is to alternate the two objectives and let the model focus on one objective at a time according to a predefined schedule. This also enables the two components to reinforce each other with newly learned knowledge. We introduce an unsupervised ratio τi ∈ [0 , 1] for epoch i, which denotes the fraction of optimization steps (mini-batches) allocated to unsupervised training. We compute the ratio τi using a linear schedule: 
+
+τi ← τ0 + in − 1 · (τn−1 − τ0), (10) where n is the total number of epochs. τ0 and τn−1 can be adjusted to reflect a global training budget for each component. Given that each epoch is trained for E steps, in epoch i, we first optimize the supervised objective for 
+
+(1 − τi) · E steps, and then switch to optimizing the unsu-pervised loss for τi ·E steps. Our approach can be interpreted as a curriculum over objectives [36], [37]. We provide an extended discussion of this design in Appendix I, including its motivation as an alternating optimization scheme and a budget interpretation. 
+
+Finalized algorithm. We outline DeepInvert training in Algorithm 1 and highlight additional details below. Sup-pose the obfuscation-based system requires clients to upload layer-l embeddings (including the word embedding layer). To obtain embeddings x ∈ RL×H (and optionally y ∈ V L
+
+for labeled data), a text prompt is fed into the target model (real or shadow), and the layer-l hidden states are extracted. For clarity, we omit standard training details such as mini-batching, learning-rate scheduling, and optimization hyper-parameters. Further enhancements to this basic algorithm are introduced in the next section. 
+
+## 5. Optimizations 
+
+In this section, we introduce several optimizations and extensions in order to adapt DeepInvert to different cate-gories of defenses. 
+
+5.1. Multi-Shadow Attack 
+
+In order to train the supervised component, the attacker needs access to obfuscated token embeddings for input 
+
+Algorithm 1: DeepInvert 
+
+Input: Inversion model fθ ; Real target model 
+
+dθreal ; Shadow target model dθshadow ; Target layer l; Victim’s prompt dataset Dreal ;Attacker’s prompt dataset Dshadow ;Fine-tuning epochs n; Epoch optimization steps E; Learning rate η; KL divergence size k; Smoothing coefficient α
+
+Output: Student model parameter θs 
+
+> 1
+
+θt ← θ; 
+
+> 2
+
+θs ← θ; 
+
+> 3
+
+for i ← 1 to n do  
+
+> 4
+
+Compute epoch-level ratio τi with Eq. 10; // Supervised training  
+
+> 5
+
+for j ← 1 to (1 − τi) · E do  
+
+> 6
+
+Sample a prompt from Dshadow ;// Extract a labeled tuple 
+
+x ∈ RL×H , y ∈ V L 
+
+> 7
+
+x, y ← extract( dθshadow , prompt , l );// Generate weakly augmented view  
+
+> 8
+
+xw ← augment( x); 
+
+> 9
+
+∆θs ← ∇ θs Ls(fθs (xw), y ); // Eq. 3  
+
+> 10
+
+θs ← θs − η∆θs; 
+
+> 11
+
+θt ← sync( θt, θ s, α ); 
+
+> 12
+
+end 
+
+// Unsupervised training  
+
+> 13
+
+for j ← (1 − τi) · E + 1 to E do  
+
+> 14
+
+Sample a prompt from Dreal ;// Extract an unlabeled x ∈ RL×H 
+
+> 15
+
+x ← extract( dθreal , prompt , l );// Generate weakly and strongly augmented views  
+
+> 16
+
+xw, x s ← augment( x); 
+
+> 17
+
+∆θs ← ∇ θs L(k) 
+
+> u
+
+(fθs (xs), f θt (xw)) ; // Eq. 8  
+
+> 18
+
+θs ← θs − η∆θs; 
+
+> 19
+
+θt ← sync( θt, θ s, α ); 
+
+> 20
+
+end  
+
+> 21
+
+end 
+
+sentences. In other words, the attacker must know the white-box obfuscation model so that it can generate obfuscated embeddings for chosen tokens. However, this white-box assumption is unrealistic in settings where the client holds a secret, such as a private vocabulary permutation [9]. Similar to InvBert, DeepInvert uses shadow models to remove this assumption. A shadow model employs its own randomness to generate obfuscated embeddings for supervised training, with the hope that these shadow obfuscated embeddings follow a similar distribution to the real obfuscated embed-dings. In practice, however, the inversion model does not transfer well to real obfuscated embeddings because of the distribution shift (see Figure 4). During supervised training, the inversion model tends to learn a tight decision boundary that encloses the shadow embeddings of each token, inevitably excluding many real Shadow data Real data Wrong classification (Top 5) Correct classification (Top 5) (a) InvBert Attack Shadow data Real data Wrong classification (Top 5) Correct classification (Top 5) (b) DeepInvert Attack 
+
+Figure 4: Distribution of shadow and real embeddings for the token “audience” and the corresponding classification outcomes. (a) InvBert attains high accuracy on shadow embeddings but consistently misclassifies real embeddings due to distribution shift. (b) DeepInvert correctly classifies most real embeddings. Both shadow and real embeddings are derived from data not seen during training. embeddings that are distributed differently. To encourage the inversion model to capture deeper, invariant features (e.g., semantic information) that remain stable despite differences in randomness between a shadow model and the real model, 
+
+DeepInvert leverages multiple shadow models instantiated with different randomness to substantially improve inversion performance. The attacker’s capabilities and assumptions remain unchanged; the only additional requirement is extra resources (e.g., computation and memory) to run multiple shadow models. 
+
+5.2. Renormalization and Denoising 
+
+Differential privacy provides a strong defense with for-mal guarantees and has been incorporated into several obfus-cated language model designs [12], [13], [21], [27]. While such schemes are theoretically hard to fully compromise, we show how DeepInvert can be further strengthened to improve its attack performance against DP-based defenses. In embedding-level DP-based defenses, the obfuscated representation follows Eq. (2): for a plain input x, the client transmits x∗ = normalize (x) + e, where e is noise drawn from a DP mechanism and “normalize” bounds the sensitivity of outputs. 
+
+Renormalization. Existing obfuscation defenses apply different normalization schemes to hidden representations, such as min-max normalization [12], L1 normalization [27], and Frobenius normalization [13]. These schemes rescale the input x to different magnitudes and inject noise with scales determined by the privacy parameter ϵ. As a re-sult, the effective noise level and representation scale can vary substantially across defenses, making it difficult to select augmentation parameters that produce meaningful alternative views of a given embedding x∗. To address this, we first renormalize x∗ using layer normalization before applying any augmentation. This preprocessing step maps embeddings to a more uniform scale, allowing us to use a single augmentation parameter that performs robustly across a wide range of defenses. A further advantage is that this renormalization improves compatibility with di-verse model architectures, including many autoregressive generators (e.g., LLaMA, Qwen) whose hidden states follow a pre-norm design, i.e., normalization is applied at the layer input rather than the output. As we demonstrate in our experiments, this renormalization step has a substantial impact on the effectiveness of DeepInvert .
+
+Denoising. The main difficulty of inverting the noisy embeddings lies in the low signal-to-noise ratio (SNR). After normalizing the embeddings, the standard deviation of noises is usually non-negligible with appropriately chosen 
+
+ϵ parameters. However, embeddings are highly structural vectors where each dimension contains nontrivial signals that enable differentiation of tokens, whereas noises in DP are zero-mean isotropic. Since an attacker can generate unlimited number of “clean” embeddings and their corre-sponding “noisy” embeddings with shadow models, it can first use classical denoising solutions to lower the energy of noise before feeding into DeepInvert .
+
+Principal component analysis (PCA) turns out to be a perfect fit in this case and is often used as a standard linear denoising solution. Let K denote the number of projected dimensions and P ∈ RH×K denote the PCA reduction matrix. We estimate P based on a large volume of plain shadow embeddings. After PCA transformation, embeddings are projected to principal components where standard deviation is largest, while noises are effectively averaged and thus have reduced standard deviation. 
+
+Lemma 1. Suppose g ∈ RH is a noise vector where each dimension is independent with mean 0 and variance σ2, i.e., 
+
+g ∼ (0 , σ 2IH ). Let z = P P T g. Then E∥z∥2 
+
+> E∥g∥2
+
+= KH .
+
+We give a brief proof for this lemma in Appendix B. As for an embedding h ∈ RH , it follows from the lit-erature [38] that this ratio E∥P P T h∥2 
+
+> E∥h∥2
+
+before and after the projection is roughly   
+
+> PKi=1 λi
+> PHi=1 λi
+
+, where {λi} are eigenvalues. The ratio could be configured to be close to 1 with modest K
+
+because PCA concentrates most of the energy in the eigen directions with top-K largest eigen values. Therefore, in order to smooth out noise in x∗, we apply the transforma-tion P P T x∗, which essentially reduces the energy of noise while keeping the energy of embeddings mostly unchanged. Note that this does not constitute an attack on differential privacy, but suggests a more stringent choice of the privacy parameter ϵ in the scenario of obfuscating language models. 
+
+5.3. Inversion Models 
+
+To minimize the effort of distribution adaption and leverage pretrained knowledge, DeepInvert instantiates the backbone of the inversion model as that of the defended target model. In this work, we target transformer-based models and verify the effectiveness of our approach across both classification and generation scenarios. For classification tasks that generally rely on smaller models (e.g., BERT), we use full-parameter fine tuning (Full-FT). For generation models with billions of parame-ters, we use LoRA [39] to enable Parameter-Efficient Fine-Tuning (PEFT) due to limited computational and memory resources. DeepInvert remains effective under both fine-tuning paradigms. 
+
+## 6. Evaluation 
+
+6.1. Setup 
+
+6.1.1. Prototype. We implemented a prototype of 
+
+DeepInvert in PyTorch [40] following Algorithm 1, and ran all experiments on four NVIDIA H800 GPUs with 80GB of memory each. In addition, we integrate the prototype in a modularized library that enables extending various defenses and attacks efficiently. Detailed hyperparameters (augmentation parameters, learning rates, batch sizes, epochs, etc.) are provided in Appendix C. 
+
+6.1.2. Models. We evaluate DeepInvert on four pretrained models covering both classification and generation tasks. 
+
+BERT-Base [1]: A bidirectional Transformer encoder pre-trained with masked LM and next-sentence prediction. We use BERT-Base for classification. It has a 30K vocabulary, 768-dimensional embeddings, and 12 Transformer layers. 
+
+RoBERTa-Base [41]: A BERT-style encoder with the same architecture as BERT but a different pretraining scheme and a larger vocabulary of size 50K. 
+
+LLaMA3-8B-Instruct [4]: An autoregressive LLM based on the LLaMA3-8B architecture, used for generation exper-iments. It has a 128K vocabulary, 4096-dimensional embed-dings, and 32 layers. 
+
+Qwen3.5-27B [42]: An autoregressive LLM built on the Qwen3.5 architecture, optimized for complex reasoning, code generation, and multi-turn dialogue. It has a 248K vocabulary, 5120-dimensional embeddings, and 64 Trans-former layers. 
+
+6.1.3. Datasets. We evaluate DeepInvert on five pub-licly available datasets spanning classification and gener-ation tasks: SST-2 [43] (binary sentiment classification), CoNLL-2003 [44] (token-level named entity recognition), AG News [45] (four-class topic classification), Medical Meadow MedQA [46], [47] (medical licensing exam QA), and Enron Emails [48] (corporate email generation). For NER we report entity-level F1 using seqeval [49]. For all datasets, we follow prior work [9], [21], [26] and report performance on a validation split whenever one is provided; otherwise we evaluate on the standard test split or a held-out 20% partition. Full dataset descriptions, construction details (e.g., how we adapt Enron Emails for generation), and statistics are provided in Appendix D. 
+
+6.1.4. Defenses and Attacks. We conduct a comprehensive evaluation of nine obfuscation-based language model de-fenses that cover a broad range of techniques: Datamix [10], SentinelLMs [8], Santext [11], Custext [25], TextObfus-cator [21], ObfusLM [9], DPNR [12], CAPE [27], and DP-Forward [13]. With the exception of Datamix and SentinelLMs—which rely solely on heuristic mechanisms such as sample mixing or geometric transformations (e.g., glide reflection)—these schemes incorporate some form of differential privacy. We organize our analysis in two stages. First, we show that several defenses become insecure under our attack even when configured with standard, commonly recommended parameters. We then provide a more detailed investigation of defenses that offer formal differential pri-vacy guarantees. As attack baselines, we include KNN [20], InvBert [19], and three advanced prompt-inversion attacks ER, TBS [18], DEML [30]. KNN is a highly efficient, non-parametric attack that directly compares obfuscated embeddings against a public embedding space and recovers tokens by nearest-neighbor search. InvBert, in contrast, trains a supervised in-version model to map obfuscated representations back to the underlying tokens. ER, TBS, and DEML directly optimize the prompts (in the embedding space) that result in observed hidden states. We do not include the MLC attack [6] in our comparison because it shares a similar attack strategy with InvBert but reports a different metric—whether a sentence contains a given token—which is not directly comparable to the ordered token-level recovery metrics used in this work. For empirical results on InvBert and MLC under related settings, we refer readers to prior studies [21], [26]. 
+
+6.1.5. Metrics. Top-k measures the fraction of tokens for which the correct word appears among the attacker’s top-k
+
+predictions; we report top-1 as the strictest metric. We also report ROUGE-L and BLEU for sequence-level semantic similarity. Top-1 is the primary privacy metric, whereas ROUGE-L/BLEU serve as secondary indicators of semantic fidelity. 
+
+Sensitive Top-1. To further demonstrate the severity and ef-fectiveness of the attack on sensitive content, and to validate the use of the standard top-1 metric, we introduce Sensitive Top-1 . We use GPT-5.6 to annotate sensitive tokens in the evaluation data (e.g., medical terms, named entities, numer-ical values; the tagging prompt is provided in Appendix J), and compute the top-1 recovery rate restricted to these annotated sensitive tokens. This metric is applied only to the Medical QA and Email datasets, which contain sensitive information. Our results (Table 4) show that Sensitive Top-1 closely tracks the standard top-1 metric, confirming that the attack recovers sensitive and non-sensitive tokens at comparable rates. 
+
+6.1.6. Attack Cost and Evaluation Protocol. For classifi-cation, training DeepInvert takes 2–5 hours on a single H800 GPU (25 epochs, 1 shadow) or 7–10 hours (50 epochs, 7 shadows for ObfusLM). For generation on LLaMA3-8B and Qwen3.5-27B with LoRA, training takes 24–48 hours on 4 H800 GPUs. InvBert uses the same backbone with a single shadow and 25 epochs. Transductive setting. Our main experiments follow the transductive setting, where the adversary maximizes ASR by leveraging all available unlabeled target embeddings— consistent with prior prompt-inversion works [18], [30]. We also provide ablation results in Section 6.4.6 where the trans-ductive assumption is removed, showing that DeepInvert 
+
+remains effective when transferring to held-out prompts. 
+
+6.2. Small Models for Classification Tasks 
+
+For the classification tasks, we report attack performance on all defenses in Table 3 (binary) and Table 9 (multi-class, Appendix). Each row is a defense; bold indicates the best attack. To facilitate fair comparison, we set ϵ = 3 for all ϵ-DP-based schemes. ObfusLM adopts a non-standard (k, ϵ )-DP notion; we also evaluate ϵ = 0 .1 as recommended in its original paper. 
+
+6.2.1. Binary classification. For binary classification (Ta-ble 3), we present results on both BERT- and RoBERTa-based models. Under the recommended privacy settings, many defenses already incur a noticeable degradation in task accuracy. SentinelLMs is a notable outlier: it provides very weak protection and is essentially broken even by simple attacks, with KNN already achieving an average top-1 ASR above 0.91, and both InvBert and DeepInvert attain-ing essentially perfect recovery ( ≥ 0.998 ). DeepInvert out-performs prior attacks on most defenses, with the magni-tude of improvement varying by defense type. The most striking gains occur on ObfusLM with ϵ = 0.1, where 
+
+DeepInvert reaches a top-1 recovery accuracy of 0.735, compared to the previous best of 0.262 by InvBert, ef-fectively undermining the level of protection claimed by ObfusLM. The main limitation of InvBert on ObfusLM is its tendency to overfit to the shadow data distribution. In contrast, DeepInvert mitigates this issue by exploiting noisy augmented views and multiple shadow models during train-ing. TextObfuscator omits embedding normalization, leaving the sensitivity effectively unbounded; consequently, both In-vBert and DeepInvert achieve high ASR, with DeepInvert ’s advantage being more pronounced on RoBERTa than on BERT. We attribute this to differences in hidden state mag-nitudes across model architectures; a detailed analysis is provided in Appendix F. We give some concrete attack examples in Appendix H. The improvements on Santext and Custext are rela-tively smaller. They apply token-level DP by randomly replacing tokens with other vocabulary items; consequently, 
+
+DeepInvert can only correct these corrupted positions by leveraging sentence-level semantic context, a capability also exploited by InvBert when instantiated with a language-model backbone. Nevertheless, our use of augmented views maintains an advantage over InvBert. Results are broadly similar between BERT and RoBERTa, despite RoBERTa’s substantially larger vocabulary, suggesting that DeepInvert is robust to moderate architectural and tokenizer differences. The other three attack baselines (ER, TBS, and DEML) exhibit similar attack performance across all defenses, and in most cases underperform compared to both InvBert and 
+
+DeepInvert . Given their comparable effectiveness, we in-clude only TBS or DEML in subsequent experiments, and focus on InvBert and DeepInvert to conserve computational resources and concentrate on the most insightful results. 
+
+6.2.2. Multi-class classification. We extend the analysis to multi-class classification (AG News and CoNLL-2003 NER) in Appendix E. DeepInvert attains the highest ASR against all defenses: e.g., on ObfusLM ( ϵ = 0 .1), it reaches an average ASR of 0.818 on AG News (vs. 0.267 for InvBert), and 0.644 on CoNLL-2003 (vs. 0.358), demonstrating sta-ble generalization across heterogeneous obfuscation mech-anisms. 
+
+6.2.3. Embedding-Level DP-based Defenses. To further understand the strengths and limitations of DeepInvert , we analyze its performance against embedding-level DP de-fenses, which constitute the strongest class of obfuscation-based protections among existing schemes. TextObfuscator, DPNR, CAPE, and DP-Forward fall into this category, but they differ significantly in the strength of their DP guaran-tees. TextObfuscator omits normalization entirely and there-fore lacks any formal DP guarantee, as the sensitivity of the embedding mechanism is unbounded; its high ASR under 
+
+DeepInvert thus reflects the defense’s own miscalibration rather than a breakthrough by the attack. DPNR applies min-max normalization and bounds sensitivity at the coordinate level rather than for the full embedding vector, resulting in weaker protection than vector-level guarantees. For vector-level sensitivity, CAPE uses L1 normalization, while DP-Forward employs Frobenius (i.e., L2-matrix) normalization; both provide formally stronger guarantees but at the cost of severe utility degradation. We summarize results on SST-2 and CoNLL-2003 in Figure 5, varying ϵ from 1 to 15, corresponding to “strong” to “moderate” privacy regimes as characterized in prior works [13], [50]. TextObfuscator becomes clearly insecure for ϵ ≥ 3,where DeepInvert attains an ASR above 0.9 on both SST-2 and CoNLL-2003. DPNR also fails to provide meaningful protection once ϵ reaches 10-15, especially on SST-2, where ASR grows substantially. CAPE and DP-Forward are com-paratively more robust under the same ϵ values, consistent with their formal, vector-level DP guarantees. However, this robustness comes at the cost of severe utility loss. On the token-level CoNLL-2003 task, both CAPE and DP-Forward yield an F1 score of 0, effectively equivalent to random guessing. Thus, under their recommended ϵ settings, these schemes are not viable for token-level tasks. Achieving non-trivial task performance would require substantially larger 
+
+ϵ, at which point their effective protection degrades to a level comparable to DPNR. Note that when the DP noise is sufficiently large that InvBert’s ASR becomes very low, 
+
+DeepInvert also becomes unstable and may not exhibit a clear advantage, since its teacher model is no longer reliable. Taken together, these experiments indicate that, with current embedding-level DP designs, the recommended ϵ
+
+regimes either leave DeepInvert with high recovery accuracy TABLE 3: Attack performance on various defenses in classification task SST-2. Cell shading indicates ASR magnitude (darker = higher recovery); bold marks the best attack for each metric. 
+
+Model Defense Acc. KNN (ASR ↑) ER (ASR ↑) TBS (ASR ↑) DEML (ASR ↑) InvBert (ASR ↑) Ours (ASR ↑)
+
+Top-1 RougeL BLEU Top-1 RougeL BLEU Top-1 RougeL BLEU Top-1 RougeL BLEU Top-1 RougeL BLEU Top-1 RougeL BLEU BERT 
+
+|V | ≈ 30 KPlain † 0.927 0.945 0.995 0.916 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 
+
+SentinelLMs ‡ 0.935 0.950 0.995 0.93 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 
+
+Datamix 0.842 0.397 0.451 0.195 0.593 0.560 0.373 0.596 0.561 0.379 0.587 0.559 0.356 0.821 0.780 0.657 0.927 0.916 0.844 
+
+Santext ( ϵ : 3 ) 0.831 0.598 0.569 0.263 0.615 0.563 0.275 0.591 0.537 0.243 0.612 0.554 0.262 0.716 0.687 0.472 0.775 0.751 0.553 
+
+Custext ( ϵ : 3 ) 0.892 0.845 0.854 0.681 0.883 0.856 0.715 0.884 0.857 0.717 0.884 0.858 0.715 0.911 0.894 0.787 0.913 0.897 0.786 
+
+TextObf. ( ϵ : 3 ) 0.904 0.120 0.206 0 0.613 0.627 0.253 0.769 0.787 0.479 0.631 0.661 0.238 0.992 0.991 0.972 0.991 0.991 0.970 Obf.LM ( ϵ : 3 ) 0.892 0.357 0.438 0.062 0.341 0.374 0.052 0.375 0.389 0.072 0.430 0.446 0.096 0.671 0.644 0.355 0.807 0.779 0.565 
+
+Obf.LM ( ϵ : 0 .1) 0.851 0.207 0.246 0.016 0.204 0.238 0.015 0.204 0.239 0.015 0.204 0.239 0.016 0.281 0.260 0.041 0.619 0.589 0.317 
+
+RoBERTa 
+
+|V | ≈ 50 KPlain † 0.954 0.901 0.975 0.767 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 0.999 0.999 1.000 1.000 1.000 
+
+SentinelLMs ‡ 0.947 0.872 0.963 0.724 1.000 1.000 1.000 1.000 1.000 1.000 0.989 0.997 0.967 0.998 0.999 0.997 1.000 1.000 1.000 
+
+Datamix 0.900 0.014 0.029 0 0.648 0.597 0.459 0.639 0.601 0.447 0.529 0.535 0.291 0.819 0.759 0.639 0.938 0.926 0.882 
+
+Santext ( ϵ : 3 ) 0.846 0.566 0.621 0.253 0.645 0.550 0.259 0.633 0.541 0.255 0.627 0.536 0.242 0.762 0.721 0.503 0.844 0.813 0.687 
+
+Custext ( ϵ : 3 ) 0.930 0.811 0.874 0.571 0.915 0.895 0.764 0.915 0.894 0.766 0.904 0.892 0.737 0.943 0.929 0.846 0.943 0.931 0.842 TextObf. ( ϵ : 3 ) 0.907 0 0 0 0.002 0.015 0.002 0.008 0.020 0.001 0.005 0.015 0.001 0.793 0.760 0.508 0.916 0.907 0.762 
+
+Obf.LM ( ϵ : 3 ) 0.898 0.195 0.374 0.031 0.234 0.298 0.029 0.239 0.305 0.030 0.418 0.462 0.111 0.724 0.694 0.406 0.827 0.794 0.578 
+
+Obf.LM ( ϵ : 0 .1) 0.864 0.175 0.209 0.013 0.164 0.181 0.011 0.164 0.181 0.011 0.177 0.200 0.013 0.262 0.266 0.040 0.735 0.688 0.416 
+
+†: Plain refers to the original model that is not obfuscated. ‡: SentinelLMs is fixed to reflect its open-source code according to this work [29]. 1 3 5 10 15  
+
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Top-1 ASR
+> TBS DEML InvBert DeepInvert Accuracy 0.90 0.91 0.92 0.93
+> Task Accuracy
+
+(a) TextObfuscator SST-2 1 3 5 10 15  
+
+> 0.0 0.2 0.4 0.6 0.8
+> Top-1 ASR
+> TBS DEML InvBert DeepInvert Accuracy 0.865 0.870 0.875 0.880
+> Task Accuracy
+
+(b) DPNR SST-2 1 3 5 10 15  
+
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> Top-1 ASR  TBS DEML InvBert DeepInvert Accuracy 0.78 0.80 0.82 0.84 0.86 0.88
+> Task Accuracy
+
+(c) CAPE SST-2 1 3 5 10 15  
+
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> Top-1 ASR  TBS DEML InvBert DeepInvert Accuracy 0.855 0.860 0.865 0.870 0.875 0.880
+> Task Accuracy
+
+(d) DP-Forward SST-2 1 3 5 10 15 
+
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Top-1 ASR
+> TBS DEML InvBert DeepInvert F1 0.65 0.70 0.75 0.80 0.85 0.90 0.95
+> Task Accuracy
+
+(e) TextObfuscator CoNLL 1 3 5 10 15  
+
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6
+> Top-1 ASR
+> TBS DEML InvBert DeepInvert F1 0.0 0.1 0.2 0.3 0.4
+> Task Accuracy
+
+(f) DPNR CoNLL 1 3 5 10 15  
+
+> 0.00 0.02 0.04 0.06 0.08 0.10
+> Top-1 ASR  TBS DEML InvBert DeepInvert F1 0.04
+> 0.02
+> 0.00 0.02 0.04
+> Task Accuracy
+
+(g) CAPE CoNLL 1 3 5 10 15  
+
+> 0.00 0.02 0.04 0.06
+> Top-1 ASR  TBS DEML InvBert DeepInvert F1 0.04
+> 0.02
+> 0.00 0.02 0.04
+> Task Accuracy
+
+(h) DP-Forward CoNLL 
+
+Figure 5: Task and attack performance on embedding-level DP based schemes. Attack performance is aligned with the left Y axis, whereas task performance (accuracy or F1) is aligned with the right one. or collapse downstream task performance to near-random. This tension is even more pronounced in the generation setting, which is inherently a more challenging token-level prediction problem. 
+
+6.3. Large Models for Generation Tasks 
+
+We evaluate attacks on generation tasks using four rep-resentative defenses: ObfusLM ( ϵ = 1 ), Santext ( ϵ = 3 ), DPNR ( ϵ = 15 ), and DP-Forward ( ϵ = 15 ). We focus on these schemes for two reasons. First, several defenses are fundamentally incompatible with generation tasks: Tex-tObfuscator and Datamix rely on output-space mixing or perturbation mechanisms that cannot be applied to autore-gressive token generation. Second, some defenses such as SentinelLMs and Custext already proved highly vulnera-ble to all attacks in our classification experiments (with 
+
+DeepInvert achieving near-perfect recovery). Our experi-ments include Llama3-8B and Qwen3.5-27B, both of which have very large vocabularies. In Table 4, with the recommended ϵ = 1 , ObfusLM is nearly completely compromised by DeepInvert that achieves a top-1 token recovery rate of 0.852 on Qwen3.5-27B in the medical QA dataset. Santext and DP-Forward were not orig-inally designed or evaluated for generation tasks, and both exhibit low task utility in this setting (Rouge1 ≤ 0.54 for Santext and ≈ 0 for DP-Forward). For Santext, DeepInvert 
+
+still consistently outperforms all baselines, though the mar-gin over InvBert is modest, mirroring the pattern observed in our classification experiments: token-level replacement limits the additional gains from our unsupervised objective. DP-Forward remains robust at the recommended ϵ = 15 
+
+parameter, but at the cost of completely collapsing task TABLE 4: Attack performance on generation models in the medical QA and email datasets. S-Top1 denotes Sensitive Top-1, the top-1 recovery rate computed over sensitive tokens only. Cell shading indicates ASR magnitude (darker = higher recovery); bold marks the best attack for each metric.                                                                                                                                                                                                                                                                                                                 
+
+> Task Model Defense Rouge1 TBS (ASR ↑)InvBert (ASR ↑)Ours (ASR ↑)
+> Top-1 RougeL BLEU S-Top1 Top-1 RougeL BLEU S-Top1 Top-1 RougeL BLEU S-Top1 Medical QA Llama3-8B
+> |V| ≈ 128 KPlain 0.804 0.974 0.986 0.910 0.970 0.998 0.999 0.997 0.998 0.999 0.999 0.997 0.999
+> Santext ( ϵ: 3 )0.539 0.571 0.514 0.261 0.556 0.663 0.669 0.371 0.638 0.711 0.685 0.423 0.690
+> DPNR ( ϵ: 15 )0.725 0.832 0.821 0.544 0.845 0.952 0.935 0.856 0.952 0.953 0.935 0.856 0.954
+> DP-Forward ( ϵ: 15 )0.023 00.012 0.001 00.080 0.136 0.008 0.135 0.084 0.147 0.014 0.151
+> ObfusLM ( ϵ: 1 )0.471 0.216 0.357 0.021 0.205 0.457 0.510 0.148 0.345 0.804 0.759 0.537 0.769
+> Qwen3.5-27B
+> |V| ≈ 248 KPlain 0.96 0.984 0.991 0.920 0.984 0.998 0.999 0.999 0.999 0.999 0.999 0.998 0.999
+> Santext ( ϵ: 3 )0.514 0.617 0.584 0.331 0.602 0.676 0.679 0.409 0.647 0.725 0.720 0.499 0.693
+> DPNR ( ϵ: 15 )0.043 00.010 0.001 00.273 0.284 0.098 0.324 0.331 0.337 0.137 0.374
+> DP-Forward ( ϵ: 15 )000000.083 0.147 0.014 0.140 0.083 0.148 0.015 0.142
+> ObfusLM ( ϵ: 1 )0.353 00.015 0.001 00.575 0.651 0.248 0.556 0.852 0.81 0.61 0.839
+> Email Llama3-8B
+> |V| ≈ 128 KPlain 0.781 0.958 0.981 0.927 0.951 0.999 0.999 0.998 0.997 0.995 0.994 0.995 0.996 Santext ( ϵ: 3 )0.427 0.573 0.502 0.249 0.561 0.655 0.663 0.356 0.639 0.683 0.688 0.401 0.671
+> DPNR ( ϵ: 15 )0.701 0.837 0.831 0.578 0.838 0.931 0.914 0.811 0.931 0.944 0.929 0.846 0.946
+> DP-Forward ( ϵ: 15 )0.052 00.016 0.002 00.037 0.011 00.037 0.036 0.072 00.038
+> ObfusLM ( ϵ: 1 )0.396 0.189 0.378 0.027 0.166 0.428 0.500 0.153 0.312 0.723 0.705 0.424 0.702
+> Qwen3.5-27B
+> |V| ≈ 248 KPlain 0.791 0.954 0.956 0.899 0.950 0.998 0.999 0.997 1.000 0.998 0.999 0.997 1.000
+> Santext ( ϵ: 3 )0.445 0.582 0.538 0.287 0.573 0.657 0.670 0.366 0.624 0.691 0.703 0.432 0.673
+> DPNR ( ϵ: 15 )0.046 00.012 0.001 00.155 0.160 0.040 0.160 0.301 0.267 0.160 0.306
+> DP-Forward ( ϵ: 15 )0.001 00.014 0.001 00.037 0.063 00.038 0.038 0.071 00.038
+> ObfusLM ( ϵ: 1 )0.441 00.011 0.001 00.419 0.595 0.183 0.338 0.788 0.808 0.584 0.701
+
+utility. The inversion results on DPNR ϵ = 15 differ across models, due to its lack of theoretical guarantees for bounding sensitivity, leading to unstable relative noise magnitude compared to a model’s hidden states. We provide a quantitative analysis in Appendix F explaining why the same defense can lead to substantially different inversion performance across different model architectures. For the Medical QA and Email datasets, we additionally report Sensitive Top-1 (S-Top1 in Table 4), which measures recovery restricted to sensitive tokens (e.g., medical terms, named entities, numerical values). Across all defenses and models, Sensitive Top-1 closely tracks the standard top-1 metric, confirming that DeepInvert recovers sensitive and non-sensitive tokens at comparable rates—there is no sys-tematic gap that would suggest sensitive content is better protected. Given the similarity in attack effectiveness between our classification and generation results, we expect that other obfuscation defenses would exhibit comparable vulnerabili-ties if adapted to the generation setting without substantial redesign or strengthening of their schemes. 
+
+6.4. Ablation Study 
+
+In this section, we examine how the key components of 
+
+DeepInvert affect its performance. Unless otherwise stated, experiments are conducted on SST-2 with a RoBERTa back-bone. 
+
+6.4.1. Effect of soft labeling and augmented views. We study the impact of soft labeling and masked augmented views in Table 5, using ObfusLM ( ϵ = 0 .1) and DPNR (ϵ = 10 ) as representative defenses. The first row (neither masking nor soft labels) corresponds to a direct applica-tion of FixMatch to embedding inversion—i.e., a generic semi-supervised baseline without domain-specific adapta-tions. This configuration also serves as an approximate TABLE 5: Ablation study of soft labeling and masked views. 
+
+Masked Soft 
+
+ObfusLM 
+
+(ϵ = 0 .1, RoBERTa) 
+
+DPNR 
+
+(ϵ = 10 , RoBERTa) Top-1 ASR Top-1 ASR 0.377 0.753 
+
+✓ 0.393 0.760 
+
+✓ 0.702 0.762 
+
+✓ ✓ 0.735 0.773 
+
+upper bound for InvBert with 7 shadow models, since it shares the same multi-shadow setup and training budget but additionally leverages unlabeled target embeddings via the FixMatch consistency objective. Our enhancements substan-tially outperform this baseline. For ObfusLM, adding masked augmented views is cru-cial for the effectiveness of the unsupervised objective: it increases top-1 recovery accuracy from 0.377 to 0.702. Soft labeling further improves performance from 0.702 to 0.735 by reducing the risk of discarding correct labels when the inversion model is still imperfect. For DPNR, the gains are more modest, as embedding-level DP already injects substantial noise into the representations, effectively acting as a form of augmentation on the clean embeddings. Even so, combining soft labels and augmented views yields an additional two percentage points of attack accuracy. 
+
+6.4.2. Effect of shadow number and training strategy. 
+
+The multi-shadow technique is applied only to ObfusLM in our experiments, because its shadow and target embedding distributions differ substantially due to defense-side per-mutations and clustering. We therefore investigate how the number of shadow models affects attack performance. We also evaluate a joint optimization strategy (Eq. 5), where λ is either fixed at 0.2 or linearly increased from 0 to 1. Results for attacking ObfusLM ( ϵ = 0 .1) are shown in Figure 6-(a). Using a single shadow model already yields an average ASR above 0.6, clearly outperforming InvBert (Table 3), 1 Shadow (Mixed) 3 Shadows (Mixed) 5 Shadows (Mixed) 7 Shadows (Mixed) 7 Shadows (Joint, 0.2) 7 Shadows (Joint, Linear) 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7  
+
+> Average ASR (a) Effect of Shadows & Strategy Layer 0 Layer 1 Layer 2 Layer 3 Layer 4 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+> Average ASR (b) Effect of Target Layer
+
+Figure 6: (a) ASR increases with the number of shadow models, and the “mixed” strategy outperforms the “joint” strategy. (b) ASR slightly decreases when attacking deeper layers. thanks to our semi-supervised components. Note that In-vBert also uses a single shadow model and 25 epochs (same as the single-shadow DeepInvert configuration), so the comparison at Nshadow = 1 is compute-matched; the additional gains from more shadow models represent the added value of the multi-shadow technique. As the number of shadows increases, attack performance continues to im-prove, though with diminishing marginal returns. In the main experiments, we use seven shadows, which offers a good trade-off between effectiveness and computational cost. For a fixed number of seven shadows, the joint optimiza-tion strategy is less effective than our mixed training design. We attribute this to more efficient use of the optimization budget in the mixed scheme. Nonetheless, we do not rule out that a more sophisticated scheduling policy for λ could close this gap; exploring such schedulers is left for future work. 
+
+6.4.3. Effect of target layer. From an architectural perspec-tive (Figure 1), the client typically retains a small number of initial layers, and obfuscates the hidden states produced at a chosen “target” layer. Our main experiments use target layer 3, where the client keeps layers {1, 2, 3}. This is a common choice in prior work [9], [21] and reflects a practi-cal trade-off: the client must retain enough layers to perform obfuscation, but offloads most computation to the server. We note that none of the evaluated defenses prescribes a specific target layer; the choice is left to the deploying client. In this section, we examine how attack performance varies with the target layer. As shown in Figure 6-(b), obfuscating a deeper layer slightly weakens DeepInvert ’s effectiveness. This is ex-pected: hidden states from later layers are more specialized for the downstream task, and thus carry less of the fine-grained, task-agnostic token semantics that inversion attacks exploit. Nevertheless, the ASR remains high even when the target layer is shifted to layer 5. We do not consider layers beyond 5, as doing so would undermine the intended setting in which the client offloads most of the computation to the cloud server. TABLE 6: Ablation study of renormalization and denoising.                         
+
+> Renorm. Denoise
+> ObfusLM
+> Alpaca, Llama3-8B
+> DPNR
+> SST-2, RoBERTa
+> ϵ= 0 .1ϵ= 5 ϵ= 10 ϵ= 15
+> 0.517 0.259 0.605 0.605
+> ✓-0.278 0.608 0.613
+> ✓0.562 0.316 0.741 0.866
+> ✓✓-0.349 0.785 0.869
+
+TABLE 7: Performance of out-of-domain attack with RoBERTa on the SST-2 task. The ASR drop from the in-domain attack is annotated in the subscript.               
+
+> Defense InvBert Ours
+> ObfusLM ( ϵ= 0 .1)0.184 ↓0.078 0.471 ↓0.264
+> Santext ( ϵ= 3 )0.672 ↓0.09 0.733 ↓0.111
+> TextObfus. ( ϵ= 3 )0.63 ↓0.163 0.838 ↓0.078
+> DPNR ( ϵ= 10 )0.449 ↓0.186 0.716 ↓0.057
+
+6.4.4. Effect of renomalization and denoising. Renormal-ization and denoising play an important role in enhancing 
+
+DeepInvert ’s performance. We apply both operations to de-fenses that add embedding-level DP noise. In this section we use DPNR as a representative example, varying ϵ. For denoising, we perform PCA on the obfuscated embeddings and project them to a reduced dimension K = 384 (from the original 768). When the victim model does not normalize hidden states (as in some ObfusLM configurations), we also apply renormalization; we use ObfusLM on Llama3-8B to study this effect on the Alpaca [51] dataset. Note that denoising is not used for ObfusLM, since it does not inject DP noise into the hidden embeddings. Table 6 highlights the importance of renormalization for attacking both DPNR (RoBERTa) and ObfusLM (Llama3-8B). With renormalization alone, the average ASR on Ob-fusLM increases from 0.517 to 0.562, and the ASR on DPNR also improves substantially across all ϵ values. De-noising becomes more beneficial at larger noise scales in DPNR; for example, it raises ASR from 0.316 to 0.349 when ϵ is 5. However, further reducing the PCA dimension does not always help: the gains from denoising are offset by the loss of information in overly aggressive dimensionality reduction. In our experiments, dimension of 256 yielded slightly worse performance. We leave the design and evalu-ation of more advanced denoising methods to future work. 
+
+6.4.5. Out-of-domain attack. In the experiments above, we followed the common setting in prior work [9], [21] and assumed that the shadow dataset is drawn from the same domain as the target data. We now relax this assumption and evaluate the attack in an out-of-domain setting. Here, the adversary may use any public corpus as shadow data for supervised training. Concretely, we construct the shadow dataset by randomly sampling 60,000 sentences from the English Wikipedia dump (20231101.en), and report repre-sentative results on ObfusLM ( ϵ = 0 .1), Santxt ( ϵ = 3 ), TextObfuscator ( ϵ = 3 ), and DPNR ( ϵ = 10 ) in Table 7. 050 100 200 500 1000 1821 1821+target # Unlabeled Samples     
+
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8
+> Top-1 ASR
+> 0.344 0.402 0.425 0.449 0.469 0.502 0.545 0.735
+
+Figure 7: Effect of unlabeled data volume on top-1 ASR (ObfusLM, ϵ=0 .1, RoBERTa, SST-2). The x-axis labels de-note the number of unlabeled samples used during training; “1821+target” includes the evaluation target in the unlabeled set (transductive setting). For all other bars, the evaluation target is excluded from the unlabeled pool, testing transfer to held-out prompts. Compared with the in-domain results (Table 3 and Fig-ure 5), both InvBert and DeepInvert are affected by dis-tribution shift and exhibit a moderate drop in ASR. For embedding-DP schemes, DeepInvert is more robust than InvBert, as its unsupervised component can adapt to the target distribution. For ObfusLM, both attacks suffer a larger (relative) performance drop, likely due to two sources of shift: out-of-domain shadow data and the obfuscation gap induced by differing vocabulary permutations and clustering. Nonetheless, all evaluated schemes remain insecure, with recovery rates on most defenses well above 70% and Ob-fusLM still close to 50%. We note that for ObfusLM, the shadow models already use different obfuscation configu-rations (different permutations and clustering seeds) from the target, so the OOD setting simultaneously tests both domain shift and configuration mismatch. A more controlled study that systematically varies the degree of configuration mismatch (e.g., number of clusters, DP variant) is left for future work. 
+
+6.4.6. Effect of unlabeled data volume. A key assumption of DeepInvert is that the adversary can collect a sufficient volume of unlabeled obfuscated embeddings from the target deployment. To assess how attack performance depends on this quantity—and whether DeepInvert transfers to unseen held-out prompts—we vary the number of unlabeled sam-ples while fixing the evaluation target to the SST-2 validation split (872 samples). Figure 7 shows the results on ObfusLM ( ϵ=0 .1) with RoBERTa. With zero unlabeled samples, DeepInvert reverts to a purely supervised attack and achieves a top-1 ASR of 0.344, comparable to InvBert. As the unlabeled pool grows, ASR increases monotonically: even 50 unlabeled samples yield a noticeable improvement to 0.402, and the full test split (1,821 samples) raises ASR to 0.545. Crucially, in all of these configurations the evaluation target (the vali-dation split) is not included in the unlabeled training set, demonstrating that DeepInvert transfers to held-out prompts without requiring transductive access. The rightmost bar (“1821+target”) corresponds to the transductive setting used in our main experiments, where the unlabeled set includes the evaluation target. ASR jumps to 0.735, a substantial gain over the non-transductive config-uration with the same number of unlabeled samples (0.545). This gap reflects the benefit of the adversary’s model adapt-ing to embeddings drawn from the exact evaluation distribu-tion. Nevertheless, the non-transductive results confirm that 
+
+DeepInvert remains effective even when the adversary has no access to the evaluation prompts—addressing the concern that the attack relies solely on transductive leakage. 
+
+6.5. Discussion 
+
+Our evaluation suggests that current obfuscation-based defenses face a task-dependent tension in their privacy-utility trade-off against DeepInvert . On token-level tasks (e.g., NER) and generation tasks, the tension is acute: strong obfuscation can substantially degrade token-level informa-tion to the point of making defenses impractical, while weaker obfuscation preserves enough signal for an adap-tive adversary to recover a substantial fraction of original tokens. On simpler sentence-level classification (e.g., SST-2), some DP-based defenses (CAPE, DP-Forward at low ϵ)can simultaneously maintain task accuracy and limit token recovery, suggesting that the tension is most pronounced for tasks that require fine-grained token-level information. We view this not as a deficiency of any specific scheme, but as a structural challenge that future obfuscation-based designs will need to address, particularly for token-level and generation workloads. Among existing alternatives, cryptographic approaches such as homomorphic encryption and secure multiparty computation [14], [15], [16], [17] provide stronger guar-antees that remain robust to attacks like DeepInvert while still supporting complex tasks, although they currently incur substantial computational and communication overhead. We refer readers to Appendix G for representative performance results. We see our findings as motivation for continued research on lightweight obfuscation-based defenses, and on hybrid designs that combine obfuscation with cryptographic primitives to achieve a more practical balance between security and efficiency. 
+
+## 7. Related Work 
+
+Defenses. Obfuscation-based defenses perturb representa-tions while preserving semantic information for utility. Early works use heuristic techniques: Datamix [10] applies mixup, SentinelLMs [8] uses geometric transformations, and Text-Fusion [52] fuses word segments (unsuitable for token-level tasks). Token-level DP methods (Santext, Custext [11], [25]) replace tokens with substitutes. Embedding-level DP defenses (TextObfuscator, DPNR, CAPE, DP-Forward [12], [13], [21], [27]) add noise to hidden representations with different normalization strategies. ObfusLM [9] combines vocabulary permutation, clustering, and (k, ϵ )-DP. Recent works Aloepri [53] and Eguard [54] propose novel mech-anisms but lack open-source implementations, making fair comparison difficult. 
+
+Attacks. A growing body of work demonstrates that em-bedding inversion can reconstruct text from obfuscated rep-resentations. Distance-based attacks such as KNN [20] and EDNN [29] infer tokens by comparing obfuscated embed-dings to pretrained word embeddings, though EDNN is specifically designed to exploit SentinelLMs. Prompt em-bedding optimization methods (ER, TBS [18], DEML [30]) formulate token recovery as gradient-based optimization, but lack structural robustness to obfuscation noise. Model-based inversion approaches train explicit inversion models: InvBERT [19] predicts token IDs from shadow data, while MLC [6] performs multi-label classification. However, these supervised methods suffer from distribution shift between shadow and target data. ALGEN [55] demonstrates few-shot inversion but requires (plain, obfuscated) pairs unavailable in our setting. Other recent works explore different attack surfaces: PLeak [56] and Pape et al. [57] investigate system prompt leaking attacks and defenses. These works operate under fundamentally different threat models and technical assump-tions compared to our embedding inversion setting, as they focus on extracting system instructions or bypassing safety filters rather than recovering user prompts from obfuscated embeddings. 
+
+## 8. Conclusion 
+
+We introduced DeepInvert , a semi-supervised embed-ding inversion attack against obfuscation-based defenses for language model services. Across nine defenses, five tasks, and four model architectures, DeepInvert outperforms prior attacks under each scheme’s recommended privacy param-eters: e.g., 73.5% top-1 recovery on ObfusLM ( ϵ=0 .1) vs. 26.2%, and 85.2% on ObfusLM ( ϵ=1 ) for Qwen3.5-27B medical QA. Defenses that resist DeepInvert do so only by destroying task utility. On token-level and generation tasks, this reveals a fundamental tension; on simpler tasks, some DP defenses can maintain both. These findings moti-vate stronger, potentially cryptographic or hybrid, protection mechanisms. 
+
+## References 
+
+[1] J. Devlin, M. Chang, K. Lee, and K. Toutanova, “BERT: pre-training of deep bidirectional transformers for language understanding,” in 
+
+Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA , pp. 4171– 4186, 2019. [2] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al. , “Gpt-4 technical report,” arXiv preprint arXiv:2303.08774 , 2023. [3] H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, et al. , “Llama 2: Open foundation and fine-tuned chat models,” arXiv preprint arXiv:2307.09288 , 2023. [4] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [5] A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu, “Qwen2.5 technical report,” CoRR , vol. abs/2412.15115, 2024. [6] C. Song and A. Raghunathan, “Information leakage in embedding models,” in CCS ’20: 2020 ACM SIGSAC Conference on Computer and Communications Security, USA , pp. 377–390, 2020. [7] X. Pan, M. Zhang, S. Ji, and M. Yang, “Privacy risks of general-purpose language models,” in 2020 IEEE Symposium on Security and Privacy, SP 2020, San Francisco, CA, USA , pp. 1314–1331, 2020. [8] A. Mishra, M. Li, and S. S. Deo, “Sentinellms: Encrypted input adaptation and fine-tuning of language models for private and secure inference,” in Thirty-Eighth AAAI Conference on Artificial Intelli-gence, AAAI 2024, Vancouver, Canada , pp. 21403–21411, 2024. [9] Y. Lin, R. Yang, Y. Mao, Q. Zhang, J. Hong, Q. Cai, Y. Wu, H. Liu, Z. Chen, B. Duan, and S. Zhong, “Obfuslm: Privacy-preserving language model service against embedding inversion attacks,” in 
+
+Proceedings of the 63rd Annual Meeting of the Association for Com-putational Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria , pp. 1160–1174, 2025. [10] Z. Liu, Z. Wu, C. Gan, L. Zhu, and S. Han, “Datamix: Efficient privacy-preserving edge-cloud inference,” in Computer Vision - ECCV 2020 - 16th European Conference, Glasgow, UK, August 23-28 ,vol. 12356, pp. 578–595, 2020. [11] X. Yue, M. Du, T. Wang, Y. Li, H. Sun, and S. S. M. Chow, “Differen-tial privacy for text analytics via natural text sanitization,” in Findings of the Association for Computational Linguistics: ACL/IJCNLP 2021, August 1-6 , pp. 3853–3866, 2021. [12] L. Lyu, X. He, and Y. Li, “Differentially private representation for NLP: formal guarantee and an empirical study on privacy and fair-ness,” in Findings of the Association for Computational Linguistics: EMNLP 2020 , pp. 2355–2365, 2020. [13] M. Du, X. Yue, S. S. M. Chow, T. Wang, C. Huang, and H. Sun, “Dp-forward: Fine-tuning and inference on language models with differential privacy in forward pass,” in Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security, CCS 2023, Copenhagen, Denmark , pp. 2665–2679, 2023. [14] J. Zhang, X. Yang, L. He, K. Chen, W. Lu, Y. Wang, X. Hou, J. Liu, K. Ren, and X. Yang, “Secure transformer inference made non-interactive,” in 32nd Annual Network and Distributed System Security Symposium, NDSS 2025, San Diego, California, USA, February 24-28, 2025 , 2025. [15] J. Moon, D. Yoo, X. Jiang, and M. Kim, “THOR: secure transformer inference with homomorphic encryption,” in Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Secu-rity, CCS 2025, Taipei, Taiwan, October 13-17, 2025 , pp. 3765–3779, 2025. [16] W. Lu, Z. Huang, Z. Gu, J. Li, J. Liu, C. Hong, K. Ren, T. Wei, and W. Chen, “Bumblebee: Secure two-party inference framework for large transformers,” in 32nd Annual Network and Distributed System Security Symposium, NDSS 2025, San Diego, California, USA, February 24-28, 2025 , 2025. [17] Q. Pang, J. Zhu, H. M¨ ollering, W. Zheng, and T. Schneider, “BOLT: privacy-preserving, accurate and efficient inference for transformers,” in IEEE Symposium on Security and Privacy, SP 2024, San Francisco, CA, USA, May 19-23, 2024 , pp. 4753–4771, 2024. [18] T. Dong, Y. Meng, S. Li, G. Chen, Z. Liu, and H. Zhu, “Depth gives a false sense of privacy: LLM internal states inversion,” in 34th USENIX Security Symposium , pp. 1629–1648, 2025. [19] J. H¨ ohmann, A. Rettinger, and K. Kugler, “Invbert: Text reconstruc-tion from contextualized embeddings used for derived text formats of literary works,” CoRR , vol. abs/2109.10104, 2021. [20] C. Qu, W. Kong, L. Yang, M. Zhang, M. Bendersky, and M. Najork, “Natural language understanding with privacy-preserving BERT,” in 
+
+CIKM ’21: The 30th ACM International Conference on Information and Knowledge Management, Queensland, Australia , pp. 1488–1497, 2021. [21] X. Zhou, Y. Lu, R. Ma, T. Gui, Y. Wang, Y. Ding, Y. Zhang, Q. Zhang, and X. Huang, “Textobfuscator: Making pre-trained language model a privacy protector via obfuscating word representations,” in Findings of the Association for Computational Linguistics: ACL 2023, Toronto, Canada, July 9-14, 2023 , pp. 5459–5473, 2023. [22] W. X. Zhao, K. Zhou, J. Li, T. Tang, X. Wang, Y. Hou, Y. Min, B. Zhang, J. Zhang, Z. Dong, Y. Du, C. Yang, Y. Chen, Z. Chen, J. Jiang, R. Ren, Y. Li, X. Tang, Z. Liu, P. Liu, J. Nie, and J. Wen, “A survey of large language models,” arXiv preprint arXiv: 2303.18223 ,2023. [23] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin, “Attention is all you need,” in 
+
+Conference on Neural Information Processing Systems , PMLR, 2017. [24] T. Lin, Y. Wang, X. Liu, and X. Qiu, “A survey of transformers,” 
+
+arXiv preprint arXiv: 2106.04554 , 2021. [25] S. Chen, F. Mo, Y. Wang, C. Chen, J. Nie, C. Wang, and J. Cui, “A customized text sanitization mechanism with differential privacy,” in Findings of the Association for Computational Linguistics: ACL 2023, Toronto, Canada, July 9-14, 2023 , pp. 5747–5758, 2023. [26] X. Zhou, Y. Lu, R. Ma, T. Gui, Q. Zhang, and X. Huang, “Textmixer: Mixing multiple inputs for privacy-preserving inference,” in Findings of the Association for Computational Linguistics: EMNLP 2023, Singapore, December 6-10, 2023 , pp. 3749–3762, 2023. [27] R. Plant, D. Gkatzia, and V. Giuffrida, “CAPE: context-aware private embeddings for private language learning,” in Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, EMNLP 2021 , pp. 7970–7978, 2021. [28] F. McSherry and K. Talwar, “Mechanism design via differential pri-vacy,” in 48th Annual IEEE Symposium on Foundations of Computer Science, FOCS 2007, Providence, RI, USA, October 20-23, 2007, Proceedings , pp. 94–103, 2007. [29] Y. Lin, Q. Zhang, Q. Cai, J. Hong, W. Ye, H. Liu, and B. Duan, “An inversion attack against obfuscated embedding matrix in language model inference,” in Proceedings of the 2024 Conference on Empiri-cal Methods in Natural Language Processing, EMNLP 2024, Miami, FL, USA , pp. 2100–2104, 2024. [30] W. Qu, Y. Zhou, Y. Wu, T. Xiao, B. Yuan, Y. Li, and J. Zhang, “Prompt inversion attack against collaborative inference of large language models,” in IEEE Symposium on Security and Privacy ,pp. 1695–1712, 2025. [31] L. Melis, C. Song, E. D. Cristofaro, and V. Shmatikov, “Exploiting unintended feature leakage in collaborative learning,” in 2019 IEEE Symposium on Security and Privacy, SP 2019, San Francisco, CA, USA , pp. 691–706, 2019. [32] K. Sohn, D. Berthelot, N. Carlini, Z. Zhang, H. Zhang, C. Raffel, E. D. Cubuk, A. Kurakin, and C. Li, “Fixmatch: Simplifying semi-supervised learning with consistency and confidence,” in Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020 , 2020. [33] A. Tarvainen and H. Valpola, “Mean teachers are better role models: Weight-averaged consistency targets improve semi-supervised deep learning results,” in Advances in Neural Information Processing Sys-tems , vol. 30, 2017. [34] J. Grill, F. Strub, F. Altch´ e, C. Tallec, P. H. Richemond, E. Buchatskaya, C. Doersch, B. ´ A. Pires, Z. Guo, M. G. Azar, B. Piot, K. Kavukcuoglu, R. Munos, and M. Valko, “Bootstrap your own latent - A new approach to self-supervised learning,” in Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual , 2020. [35] T. Yu, S. Kumar, A. Gupta, S. Levine, K. Hausman, and C. Finn, “Gradient surgery for multi-task learning,” in Advances in Neural Information Processing Systems 33: NeurIPS 2020 , 2020. [36] Y. Bengio, J. Louradour, R. Collobert, and J. Weston, “Curriculum learning,” in Proceedings of the 26th Annual International Confer-ence on Machine Learning, ICML 2009, Montreal, Quebec, Canada ,vol. 382, pp. 41–48, 2009. [37] P. Soviany, R. T. Ionescu, P. Rota, and N. Sebe, “Curriculum learning: A survey,” CoRR , vol. abs/2101.10382, 2021. [38] C. M. Bishop, Pattern Recognition and Machine Learning . Springer, 2006. [39] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen, “Lora: Low-rank adaptation of large language models,” in The Tenth International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022 , OpenReview.net, 2022. [40] A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. K¨ opf, E. Z. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, J. Bai, and S. Chintala, “PyTorch: An imperative style, high-performance deep learning library,” in Conference on Neural Information Processing Systems , PMLR, 2019. [41] Y. Liu, M. Ott, N. Goyal, J. Du, M. Joshi, D. Chen, O. Levy, M. Lewis, L. Zettlemoyer, and V. Stoyanov, “Roberta: A robustly optimized BERT pretraining approach,” CoRR , vol. abs/1907.11692, 2019. [42] Q. Team, “Qwen3.5-27b.” https://huggingface.co/Qwen/Qwen3. 5-27B, 2025. [43] R. Socher, A. Perelygin, J. Wu, J. Chuang, C. D. Manning, A. Y. Ng, and C. Potts, “Recursive deep models for semantic compositionality over a sentiment treebank,” in Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, EMNLP 2013 ,pp. 1631–1642, 2013. [44] E. F. T. K. Sang and F. D. Meulder, “Introduction to the conll-2003 shared task: Language-independent named entity recognition,” in Proceedings of the Seventh Conference on Natural Language Learning, CoNLL 2003, Held in cooperation with HLT-NAACL 2003, Edmonton, Canada , pp. 142–147, 2003. [45] X. Zhang, J. J. Zhao, and Y. LeCun, “Character-level convolutional networks for text classification,” in Advances in Neural Information Processing Systems 28: Annual Conference on Neural Information Processing Systems 2015 , pp. 649–657, 2015. [46] D. Jin, E. Pan, N. Oufattole, W.-H. Weng, H. Fang, and P. Szolovits, “What disease does this patient have? a large-scale open domain question answering dataset from medical exams,” arXiv preprint arXiv:2009.13081 , 2020. [47] “Medical meadow medqa dataset.” https://huggingface.co/datasets/ medalpaca/medical meadow medqa. Accessed: 2026-05-08. [48] “Enron emails dataset.” https://huggingface.co/datasets/corbt/ enron-emails. Accessed: 2026-05-08. [49] H. Nakayama, “seqeval: A python framework for sequence labeling evaluation,” 2018. Software available from https://github.com/chakki-works/seqeval. [50] C. Meehan, K. Mrini, and K. Chaudhuri, “Sentence-level privacy for document embeddings,” in Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2022, Dublin, Ireland , pp. 3367–3380, 2022. [51] R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. Hashimoto, “Stanford alpaca: An instruction-following llama model.” https://github.com/tatsu-lab/stanford alpaca, 2023. Accessed: 2025-01-08. [52] X. Zhou, J. Lu, T. Gui, R. Ma, Z. Fei, Y. Wang, Y. Ding, Y. Cheung, Q. Zhang, and X. Huang, “Textfusion: Privacy-preserving pre-trained model inference via token fusion,” in Proceedings of the 2022 Confer-ence on Empirical Methods in Natural Language Processing, EMNLP 2022, Abu Dhabi, United Arab Emirates , pp. 8360–8371, 2022. [53] Y. Lin, Q. Zhang, W. Ruan, D. Zhang, J. Hong, Y. Wu, H. Xia, Y. Mao, and S. Zhong, “Towards privacy-preserving LLM inference via covariant obfuscation (technical report),” CoRR ,vol. abs/2603.01499, 2026. [54] T. Liu, H. Yao, F. Lin, T. Wu, Z. Qin, and K. Ren, “Eguard: Defending LLM embeddings against inversion attacks via text mutual information optimization,” in Fortieth AAAI Conference on Artificial Intelligence, Thirty-Eighth Conference on Innovative Applications of Artificial Intelligence, Sixteenth Symposium on Educational Advances in Artificial Intelligence , pp. 35644–35652, 2026. [55] Y. Chen, Q. Xu, and J. Bjerva, “ALGEN: few-shot inversion at-tacks on textual embeddings using alignment and generation,” CoRR ,vol. abs/2502.11308, 2025. [56] B. Hui, H. Yuan, N. Gong, P. Burlina, and Y. Cao, “Pleak: Prompt leaking attacks against large language model applications,” in Pro-ceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , pp. 3600–3614, 2024. [57] D. Pape, S. Mavali, T. Eisenhofer, and L. Sch¨ onherr, “Prompt obfusca-tion for large language models,” in 34th USENIX Security Symposium, USENIX Security , pp. 2323–2342, 2025. 
+
+## Appendix 
+
+1. Open Science 
+
+All benchmark datasets and models used in this paper are open-source and made publicly accessible by their original contributors. 
+
+2. PCA-Based Linear Denoising 
+
+Lemma 2. Suppose g ∈ RH is a noise vector where each dimension is independent with mean 0 and variance σ2, i.e., 
+
+g ∼ (0 , σ 2IH ). Let z = P P T g. Then E∥z∥2 
+
+> E∥g∥2
+
+= KH .Proof. We have E∥g∥2 = Hσ 2 and P T P = IK , and: 
+
+E∥z∥2 = E(gT P P T P P T g) = E(gT P P T g)= E[tr( P P T gg T )] = tr( P P T E[xx T ]) = tr( P P T σ2IH ) = σ2tr( P P T )= Kσ 2
+
+The last step is because P P T is an orthogonal projection matrix and thus tr( P P T ) = rank( P P T ) = K.
+
+Signal-to-noise ratio improvement. Let h ∈ RH be a clean embedding and x = h + g the noisy version after DP perturbation. Define the signal energy E∥h∥2 and noise energy E∥g∥2 = Hσ 2. After PCA projection onto the top K
+
+components, the projected signal energy is E∥P P T h∥2 ≈PKi=1 λi (where λi are the top K eigenvalues of the covari-ance matrix of clean embeddings), while the projected noise TABLE 8: Datasets                      
+
+> Dataset Shadow Real Real Target SST-2 67349 2693 872 AG News 120000 7600 7600 CoNLL-2003 14041 6703 3250 MedQA 8142 2036 2036 Email 4000 1000 1000 Alpaca 41408 10352 10352
+
+energy becomes Kσ 2. Let ρK =  
+
+> PKi=1 λi
+> PHi=1 λi
+
+denote the fraction of total signal energy retained by the top K components. Before PCA, the signal-to-noise ratio is SNR pre = E∥h∥2 
+
+> Hσ 2
+
+;after PCA, SNR post = ρK ·E∥h∥2 
+
+> Kσ 2
+
+= HK ρK ·SNR pre . Since ρK
+
+is typically close to 1 for large vocabularies (the embedding space is low-rank), the dominant factor is H/K . For our experiments with H = 768 and K = 384 , the theoretical SNR gain is roughly 2×.
+
+3. Implementation Details 
+
+We provide detailed hyperparameters for DeepInvert 
+
+below. Unless otherwise stated, we set (pm, σ ) = (0 .2, 0.2) 
+
+for weak augmentation views, and (pm, σ ) = (0 .4, 0.4) 
+
+for strong augmentation views. The smoothing coefficient for the EMA teacher is set to 0.998. We set the start and end unsupervised ratios (τ0, τ n−1) = (0 .3, 0.7) to guarantee a balanced budget for each component while emphasizing more unsupervised training towards the end. The KL diver-gence size k is fixed to 500. We train all models with a learning rate ( η) of 1 × 10 −4
+
+using the AdamW optimizer. The learning rate schedule is linear with 5% warmup steps. The batch size B is 64. The number of epochs is set to 25 when using a single shadow model, and increased to 50 for the multi-shadow setting with 7 shadows (necessary for attacking ObfusLM [9] to achieve optimal performance). The number of optimization steps per epoch E is set to |Dshadow |/B .
+
+4. Dataset Details 
+
+We provide dataset statistics in Table 8. The “real split” is the full source of unlabeled embeddings available to the attacker; the “real target split” is the evaluation subset. Below we describe each dataset. 
+
+SST-2 [43]. Movie review sentences with binary sentiment labels. 
+
+CoNLL-2003 [44]. English NER benchmark with PER, ORG, LOC, MISC labels. We report entity-level F1 via 
+
+seqeval [49]. 
+
+AG News [45]. News headlines in four classes (World, Sports, Business, Sci/Tech). 
+
+Medical Meadow MedQA [46], [47]. Medical licensing exam questions with multiple-choice answers. 
+
+Enron Emails [48]. Corporate emails from the Enron corpus. We merge it with 
+
+corbt/enron_emails_sample_questions on HuggingFace, pairing email excerpts with contextual questions to create instruction-following pairs for generation. 
+
+5. Experimental Results on Multi-Class Classifica-tion Tasks 
+
+We omit SentinelLMs and the ϵ = 3 configuration of ObfusLM and report only the more informative multi-class classification results in Table 9. As before, we focus on RoBERTa-based models; the corresponding BERT results exhibit the same qualitative trends and lead to identical conclusions. On AG News, which appears to be an easier sentence-level classification benchmark than SST-2, all defenses maintain a task accuracy above 0.9 under the same pri-vacy parameter settings. The attack results largely mir-ror the binary classification case, with two notable excep-tions. First, TextObfuscator is highly effective against the KNN baseline: by minimizing a clustering-style objective that pulls token embeddings toward cluster centroids, it pushes them away from their original positions and disrupts nearest-neighbor recovery. However, it remains vulnerable to 
+
+DeepInvert , which attains an average ASR of 0.845. Second, 
+
+DeepInvert reaches an average ASR of 0.818 on ObfusLM, dramatically exceeding InvBert’s 0.267. DeepInvert is the only attack that achieves an average ASR above 0.8 against all defenses, demonstrating stable generalization across het-erogeneous obfuscation mechanisms. 
+
+The CoNLL-2003 benchmark yields quite different be-havior, as token-level classification is substantially more sensitive to noise and token-level perturbations. Datamix and Santext fail to preserve utility on this task and suffer from low task accuracy, yet DeepInvert still achieves high average ASR values of 0.941 and 0.774, respectively. For Santext, the performance gain over InvBert is modest, for the same reasons discussed earlier (token-level randomization limiting recoverability). For ObfusLM, DeepInvert ’s recovery rate is lower than on sentence-level tasks but still exceeds that of InvBert by a significant margin. 
+
+6. Distribution of Hidden States and Noise 
+
+Figure 8 illustrates why the same defense can lead to different inversion performance across architectures. Under DPNR ( ϵ = 15 ), LLaMA3-8B hidden states have an ab-solute mean of 0.3661 while Qwen3.5-27B’s are 0.0843; the injected noise (mean 0.0562) is model-independent. The resulting SNR is ∼6.5 for LLaMA3-8B but only ∼1.5 for Qwen3.5-27B, explaining why attack performance degrades on the latter. DPNR’s min-max normalization lacks theo-retical sensitivity guarantees, causing this model-dependent vulnerability. Nonlinear inversion models exhibit inherent noise ro-bustness through their layered architecture, while direct embedding optimization methods (ER, TBS, DEML) lack this resilience and are more sensitive to noise scale. 0.0 0.2 0.4 0.6 0.8 1.0        
+
+> Value
+> 012345
+> Density  Hidden States (bert): Mean: 0.2212 Hidden States (roberta): Mean: 0.1314 Noise: Mean: 0.2808
+> Distribution of Hidden States and Noise
+> Hidden States (bert) Hidden States (roberta) Noise
+
+(a) TextObfuscator ϵ = 3 .00.0 0.1 0.2 0.3 0.4 0.5 0.6         
+
+> Value
+> 010 20 30 40 50 60 70 80
+> Density  Hidden States (llama3-8b): Mean: 0.3661 Hidden States (qwen3.5-27b): Mean: 0.0843 Noise: Mean: 0.0562
+> Distribution of Hidden States and Noise
+> Hidden States (llama3-8b) Hidden States (qwen3.5-27b) Noise
+
+(b) DPNR ϵ = 15 .0
+
+Figure 8: Comparison of hidden state magnitudes and injected noise across different defenses and models. (a) 
+
+TextObfuscator ( ϵ = 3.0) on SST-2: The injected noise substantially exceeds the magnitude of RoBERTa’s hidden states, explaining the degraded attack performance com-pared to BERT. (b) DPNR ( ϵ = 15 .0) on Medical QA: The noise dominates the hidden states of Qwen3.5-27B, resulting in lower attack success rates compared to the smaller LLaMA3-8B model. These observations highlight how model architecture and defense mechanisms interact to affect inversion vulnerability. 
+
+7. Performance of Cryptographic Solutions 
+
+To illustrate the current status of cryptographic defenses, Table 10 reports the cost of a single BERT inference (sequence length 128) for several state-of-the-art schemes. These approaches remain far too expensive for practical deployment. 
+
+8. Example Attacks on ObfusLM 
+
+Table 11 presents illustrative attack examples against ObfusLM ( ϵ = 0 .1) configured with RoBERTa on SST-2. In most cases, InvBert fails to reconstruct fluent sentences that preserve the original semantics, whereas DeepInvert 
+
+recovers the majority of the original content. 
+
+9. Mixed Training: Motivation and Interpretation 
+
+Equation 5 with a fixed λ is standard joint optimization. However, when Ls and L(k) 
+
+> u
+
+have conflicting gradients, a fixed λ yields a compromise update that attenuates use-ful components—a phenomenon known as gradient con-flict [35]. Empirically, no single λ works well across all defenses and training stages. 
+
+Alternating optimization. Our mixed training alternates the two objectives: within each epoch i, we perform (1 − τi)E
+
+steps on Ls alone, then τiE steps on L(k) 
+
+> u
+
+alone. This avoids per-step gradient interference while achieving an effect similar to joint optimization with epoch-wise weight 
+
+λi = τi/(1 − τi), with two key differences: 1) The two gradients never appear in the same update step, so per-step destructive interference is avoided. This shares a similar motivation with the projection step in TABLE 9: Attack performance on various defenses of sentence-level and token-level multi-class classification tasks. 
+
+Task Defense Acc./F1 KNN (ASR ↑) InvBert (ASR ↑) Ours (ASR ↑)
+
+Top-1 Top-5 RougeL Avg. Top-1 Top-5 RougeL Avg. Top-1 Top-5 RougeL Avg. AG News (Sentence) Plain 0.949 0.881 0.998 0.957 0.945 1.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 Datamix 0.941 0.036 0.430 0.075 0.180 0.913 0.994 0.918 0.942 0.979 0.998 0.976 0.984 Santext ( ϵ = 3 ) 0.915 0.544 0.614 0.600 0.586 0.778 0.848 0.747 0.791 0.804 0.876 0.773 0.818 Custext ( ϵ = 3 ) 0.941 0.765 0.870 0.819 0.818 0.950 0.979 0.939 0.956 0.965 0.987 0.958 0.970 TextObf. ( ϵ = 3 ) 0.943 0.000 0.086 0.000 0.029 0.634 0.828 0.611 0.691 0.811 0.933 0.790 0.845 ObfusLM ( ϵ = 0 .1) 0.929 0.136 0.317 0.211 0.221 0.175 0.388 0.239 0.267 0.781 0.924 0.750 0.818 CoNLL2003 (Token) Plain 0.955 0.751 0.984 0.838 0.858 1.000 1.000 0.997 0.999 1.000 1.000 0.997 0.999 Datamix 0.004 0.011 0.475 0.023 0.17 0.784 0.980 0.705 0.823 0.929 0.993 0.900 0.941 Santext ( ϵ = 3 ) 0.773 0.497 0.619 0.544 0.553 0.743 0.811 0.682 0.745 0.768 0.837 0.716 0.774 Custext ( ϵ = 3 ) 0.929 0.676 0.874 0.737 0.762 0.920 0.951 0.892 0.921 0.932 0.960 0.911 0.934 TextObf. ( ϵ = 3 ) 0.931 0.033 0.334 0.067 0.145 0.932 0.986 0.926 0.948 0.957 0.992 0.951 0.967 ObfusLM ( ϵ = 0 .1) 0.862 0.133 0.298 0.155 0.195 0.277 0.534 0.262 0.358 0.563 0.803 0.484 0.644 
+
+TABLE 10: Inference costs of cryptographic defenses. 
+
+Defense Time (min, LAN) Comm. (GB) BOLT [17] (CPU × 64) 3 59 BumbleBee [16] (CPU × 64) 3 6NEXUS [14] (A100 × 4) 0.6 0.16 THOR [15] (A100 × 1) 10 -
+
+PCGrad [35], but operates in the time-allocation space rather than the gradient-direction space. 2) The weighting is non-stationary: τi increases linearly from τ0 to τn−1, allowing the model to first acquire enough supervised signal before the unsupervised ob-jective begins to dominate. This resembles curriculum learning over objectives [36], [37]. We therefore view mixed training as a principled alterna-tive to fixed-weight joint optimization. With a linear sched-ule, the average unsupervised ratio equals (τ0 + τn−1)/2;we set (τ0, τ n−1) = (0 .3, 0.7) , allocating roughly equal total budget to each component while shifting emphasis toward unsupervised learning in later epochs. 
+
+10. Sensitive Token Tagging Prompt 
+
+We use the following prompt to annotate sensitive tokens in the Medical QA and Email datasets via GPT-5.6: 
+
+You are a sensitive information detection agent. Your task is to identify and annotate sensitive information in English text by wrapping each sensitive span with <sensitive> and </sensitive> tags. ## Sensitive Information Categories Mark the following types of information as sensitive: 1. Personally Identifiable Information (PII) - Full names, partial names with titles (e.g., "Dr. Smith", "Mr. John") - Phone numbers, email addresses, physical addresses - Government IDs: SSN, passport numbers, driver's license numbers - Date of birth, age combined with gender or other identifying details 2. Medical & Health Information (PHI) - Diagnoses and psychiatric conditions (e.g., "major depressive disorder") - Prescription drugs and dosages (e.g., "fluoxetine", "20mg Lisinopril") - Vital signs and lab values (e.g., "temperature is 38.9 C", "blood pressure is 152/94 mm Hg") - Physical examination findings (e.g., "Patellar reflexes are 4+ bilaterally") - Any specific clinical observations tied to an individual 3. Financial Information - Credit card numbers, bank account numbers - Transaction amounts, salary figures - Insurance policy numbers 4. Credentials & Secrets - Passwords, API keys, access tokens - Private keys, secret questions and answers 5. Confidential & Proprietary Information - Internal project codenames, unpublished research data - Trade secrets, proprietary algorithms - Confidential business strategies or internal metrics 6. Location Information - Specific office locations, GPS coordinates - Private residential addresses ## Annotation Rules - Wrap each sensitive span inline within the original text. Do not rephrase, reorder, or summarize. - Tag the minimal meaningful span. For example, tag "blood pressure is 152/94 mm Hg" as a unit, not individual numbers separately. - Do NOT tag generic symptoms in isolation (e.g., "nausea", "headache") TABLE 11: Examples of Attacking Results. 
+
+Method Text Original if you ’re hard up for raunchy college humor , this is your ticket right here . InvBert have you ’ree approach compared to unbishtelymp questionses as i your tickets tremERE : 
+
+DeepInvert if you ’re hard up for raunchy college humor , this is your ticket right there . Original there is n’t nearly enough fun here , despite the presence of some appealing ingredients . InvBert ’there i weren’t exactly inferior SUNERE ; except. appearance for if desirable substance : ’ 
+
+DeepInvert there is n’t nearly enough fun here , despite the efforts of some appealing material . Original while the ideas about techno-saturation are far from novel , they ’re presented with a wry dark humor . InvBert hadplus. sensibilities about ex/s veins had cursby literature ; a ’thy offering as has wrys darker probing : had 
+
+DeepInvert while the ideas of ex-s liberation are far from poetry , they ’re presented with a wry dark humor . 
+
+unless they appear alongside identifiable clinical context. - Do NOT tag common words, articles, or structural text. - If no sensitive information is found, return the text unchanged. - Preserve all original formatting, line breaks, and punctuation. ## Output Format Return the full text with sensitive spans wrapped in tags. Example: Input: The patient John Smith was prescribed 20mg Lisinopril and can be reached at 555-123-4567. Output: The patient <sensitive>John Smith</sensitive> was prescribed <sensitive>20mg Lisinopril</sensitive> and can be reached at <sensitive>555-123-4567</sensitive>. ## Input {text} ## Output
