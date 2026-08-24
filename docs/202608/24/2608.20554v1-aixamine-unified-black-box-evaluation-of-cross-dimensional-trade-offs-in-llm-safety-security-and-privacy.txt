@@ -1,0 +1,894 @@
+Title: aiXamine: Unified Black-Box Evaluation of Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy
+
+URL Source: https://arxiv.org/pdf/2608.20554v1
+
+Published Time: Mon, 24 Aug 2026 00:17:38 GMT
+
+Number of Pages: 41
+
+Markdown Content:
+# aiXamine: Unified Black-Box Evaluation of Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 
+
+Fatih Deniz, Yazan Boshmaf, Dorde Popovic, and Issa Khalil 
+
+Qatar Computing Research Institute (QCRI), HBKU, Doha, Qatar 
+
+{fdeniz, yboshmaf, dpopovic, ikhalil}@hbku.edu.qa 
+
+Abstract. The critical failure modes in deployed large language models (LLMs) are cross-dimensional: a model can score 99.3 in safety alignment while refusing one in three benign queries, or improve across every capa-bility metric while losing 21 points in privacy. Existing evaluation frame-works, which assess safety, security, and privacy independently, cannot detect these patterns. We introduce aiXamine, a unified black-box plat-form that evaluates LLM trustworthiness across safety, security, and pri-vacy as interdependent properties. aiXamine orchestrates 46 tests across nine services through an automated red-teaming pipeline, producing hi-erarchical risk profiles, from prompt-level diagnostics to cross-service trade-off analytics, that enable reproducible comparison of proprietary and open-weight systems under identical conditions. Applying aiXamine to over 120 LLMs through more than 5,000 test runs, we conduct the largest joint safety, security, and privacy study to date and uncover three cross-dimensional phenomena invisible to single-axis evaluation. First, safety enforcement incurs a quantifiable safety tax : stronger alignment systematically increases over-refusal, forcing providers to choose between protection and utility. Second, privacy is near-orthogonal to other trust-worthiness dimensions and not captured by standard alignment. Third, we identify and formally characterize distillation-induced robustness col-lapse : off-policy distillation without on-policy correction causes entropy collapse, catastrophically destroying robustness (56.9 → 2.6) on the same base architecture. These findings, compounded by diminishing returns from scale and category-dependent safety behaviors, demonstrate that trustworthiness is inherently multi-dimensional: progress along one axis does not guarantee, and can actively undermine, progress along others, yet current alignment methods treat it as a single objective. 
+
+## 1 Introduction 
+
+As LLMs are deployed in high-stakes domains such as healthcare, finance, and autonomous systems, ensuring their safety, security, and privacy has become a prerequisite for trustworthy adoption. Yet despite their exceptional capabili-ties, LLMs remain fragile in subtle but critical ways: they over-refuse legitimate queries [66], hallucinate plausible falsehoods [22], succumb to adversarial manip-ulation [16, 27], amplify societal biases [39], and leak memorized private data [13, arXiv:2608.20554v1 [cs.CR] 20 Aug 2026 2 F. Deniz et al. 
+
+44]. The community’s emphasis on capability benchmarks has left systematic trustworthiness evaluation comparatively underdeveloped [38, 26], even as regu-lators and practitioners must navigate an ecosystem exceeding one million public models [12] without standardized assessment tools. Existing evaluation frameworks capture fragments of this risk landscape but lack the breadth to reveal cross-dimensional interactions. HELM [32] and TrustLLM [19] omit privacy or code security; DecodingTrust [60] and TrustE-val [62] provide partial coverage but do not jointly assess jailbreak resistance, pri-vacy leakage, code safety, and over-refusal within a single reproducible method-ology. Most benchmarks also assume white-box access, precluding evaluation of proprietary systems under realistic deployment conditions [42]. Meanwhile, regu-lators increasingly demand transparent assurance under frameworks such as the EU AI Act [11] and NIST AI Risk Management Framework [2]. This fragmenta-tion obscures the trade-offs and interdependencies between safety, security, and privacy, interactions that significantly influence real-world deployment risk. aiXamine 1 addresses these gaps with a unified, black-box methodology for assessing LLM safety, security, and privacy ( SSP ). We integrate 46 standardized tests across nine services, spanning adversarial robustness, code security, fairness and bias, hallucination, jailbreak robustness, model and data privacy, out-of-distribution robustness, over-refusal, and safety alignment, producing structured per-model risk profiles that enable consistent comparison across proprietary and open-weight systems. We support context-dependent assessment through config-urable stakeholder weightings, enabling trustworthiness evaluation aligned with deployment-specific risk priorities. Unlike capability leaderboards that empha-size accuracy, aiXamine characterizes risk boundaries: mapping adversarial fail-ure modes, quantifying safety–utility trade-offs, and testing whether safety be-haviors generalize across categories. This cross-service perspective reveals recur-ring patterns, including the relative independence of privacy from other trust-worthiness dimensions, that single-metric evaluations cannot observe. These ob-servations motivate a security-centric view of trustworthiness: deployment risk is often determined not by a single failure mode, but by the interaction between multiple properties. Unlike broad trustworthiness leaderboards that emphasize capability com-parison, aiXamine targets security-relevant failure modes under realistic black-box deployment. Its distinctive contribution is not measuring adversarial and privacy failures in isolation, but exposing how they interact with related trust-worthiness properties (over-refusal as a service-availability failure, hallucination as integrity failure) to determine deployable security posture. The distillation-induced robustness collapse we characterize illustrates how development choices can profoundly alter security posture despite preserving much of a model’s ap-parent capability.    
+
+> 1Publicly available at https://aixamine.qcri.org/ . Evaluation reports are accessi-ble for reproducibility, and users may submit and run their own examinations. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 3
+
+Because frontier models are increasingly developed through scaling, align-ment, and distillation, we investigate how these development choices affect trust-worthiness outcomes. Specifically, we investigate the following research questions: 
+
+– RQ1. How do safety, security, and privacy interact? Is there a fundamental trade-off between safety enforcement and utility, and are these dimensions jointly addressed by current alignment? 
+
+– RQ2. What drives a model’s safety profile: scale or alignment strategy? Is there a minimum model size required for safety? 
+
+– RQ3. Does advancing model capability preserve privacy? 
+
+– RQ4. Do safety behaviors generalize across risk categories, or are they narrow learned patterns? Throughout this work we distinguish three complementary failure modes: 
+
+safety failures arise during intended use (hallucinations, harmful outputs, exces-sive refusals), security failures arise under adversarial attack (jailbreaks, prompt manipulation, input perturbations), and privacy failures involve inappropriate disclosure of sensitive information. Each requires distinct evaluation methodol-ogy, formalized in Section 3. Our evaluation of over 120 LLMs through more than 5,000 black-box test runs reveals patterns obscured by single-score leaderboards. We find that safety enforcement incurs a measurable utility cost, privacy is near-orthogonal to other trustworthiness dimensions, distillation can collapse adversarial robustness from 56.9 to 2.6 on the same base architecture, in most family pairs examined, the newer generation exhibits a privacy regression despite gains elsewhere, and safety behaviors are category-dependent rather than universal. Even the top-ranked model is not immune: GPT-5 leads the overall ranking yet loses 21.7 points in Privacy relative to its predecessor, despite gaining 3.8 points overall. These find-ings demonstrate that trustworthiness is inherently multi-dimensional: progress along one axis does not guarantee, and can actively undermine, progress along others. Improving it will require moving beyond monolithic alignment toward modular, dimension-aware safety architectures. In summary, our contributions are: 
+
+– Large-Scale Cross-Model Security & Trustworthiness Study. An anal-ysis of 120+ LLMs across 5,000+ evaluations showing that trustworthiness is inherently multi-dimensional: safety is category-dependent, privacy is near-orthogonal to other dimensions, and safety enforcement introduces measurable utility trade-offs. 
+
+– Unified Evaluation Framework. A black-box methodology integrating 46 tests across nine services to jointly assess safety, security, and privacy un-der a single framework ( SSP ). aiXamine further supports context-dependent assessment through configurable stakeholder weightings. 
+
+– Distillation-Induced Robustness Collapse. We identify a structural vul-nerability in strong-to-weak distillation pipelines: the omission of on-policy correction causes entropy collapse and adversarial brittleness, providing the first robustness-focused analysis of this failure mode. 4 F. Deniz et al. 
+
+## 2 Overview 
+
+2.1 Threat Model 
+
+We consider two complementary risk settings: adversarial threats from a delib-erate attacker and emergent risks under benign use. 
+
+Adversarial setting. The adversary operates under a black-box threat model with unrestricted query access but no knowledge of model internals, gradients, or system prompts. The adversary’s goals are to (i) elicit unsafe or policy-violating outputs, (ii) extract memorized training data or personally identifiable informa-tion, (iii) bypass alignment safeguards and refusal mechanisms, or (iv) induce generation of insecure code. An attack succeeds if the model produces any out-put that violates the targeted safety, security, or privacy objective as determined by our scoring pipeline. 
+
+Benign-use setting. Even absent adversarial intent, models may exhibit emer-gent failures that compromise trustworthiness under normal operation, including hallucinating facts, producing unfair or biased outputs, generating vulnerable code, or refusing harmless queries. 
+
+Evaluation constraints. All evaluations comply with provider rate limits and leave content-moderation filters enabled: we evaluate systems as deployed, be-cause that is what users encounter. This ensures uniform applicability across proprietary and open-weight deployments. 
+
+2.2 Evaluation Platform   
+
+> Fig. 1. aiXamine ’s evaluation pipeline. Benchmark prompts and their adversarial and OOD variants are dispatched under standardized inference parameters; responses are scored by deterministic rules or multi-judge ensembles; and normalized scores are ag-gregated at the service, category, and subcategory levels. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 5
+
+Figure 1 depicts the aiXamine pipeline. Benchmark prompts, including adver-sarial and out-of-distribution variants, are dispatched to each registered model under standardized inference parameters. Responses are scored by deterministic rules or multi-judge ensembles, and normalized scores are aggregated hierarchi-cally at the service, category, and subcategory levels. All datasets, configura-tions, and scoring scripts are publicly released for reproducibility. Table 5 in Appendix A enumerates the complete test suite, listing each service, dataset, sample count, and metric. Evaluations follow a four-level taxonomy (services, tests, categories, and subcategories) structured around the SSP framework (Figure 2), which de-composes trustworthiness into three complementary dimensions: Safety & Re-liability (factual consistency, ethical alignment, refusal behavior), Security & Robustness (resilience against adversarial inputs, jailbreaks, and distribution shifts), and Privacy & Fairness (confidentiality, impartiality, demographic eq-uity). These dimensions are operationalized through nine services: Adversarial Robustness , Code Security , Fairness & Bias , Hallucination , Jailbreak Robustness ,
+
+Model & Data Privacy , Out-of-Distribution Robustness , Over Refusal , and Safety Alignment . Each service is instantiated through standardized datasets, domain-specific scoring logic, and judge ensembles. Tests within a service probe specific risk types (semantic transformations for adversarial stress-testing, demographic pairing for fairness, structured extraction for privacy leakage, grounding checks for hallucination), and responses are decomposed into category and subcategory scores that localize weaknesses (e.g., excessive refusals in health-related prompts, memorization of named entities, or unsafe completions in specific programming languages). Detailed per-service definitions are provided in Section 3. 
+
+2.3 Evaluation Metrics 
+
+A core design requirement is that all metrics reside on a common [0 , 1] scale so that scores from heterogeneous services can be aggregated and compared without unit-dependent distortions. Each test produces three analytical layers: atomic scores for individual prompts, service-level aggregates within a defined competency, and cross-service analytics that quantify interdependencies between dimensions. The primary metric is normalized accuracy: the fraction of responses sat-isfying the test criterion (e.g., refusing unsafe instructions under Safety Align-ment ). Where accuracy is inapplicable, we use task-specific alternatives: harmful-content pass-rate, privacy-leakage rate, refusal appropriateness, and faithfulness score. Service-level scores are the arithmetic mean of their constituent test scores. Non-standard metrics require principled normalization to remain interpretable alongside accuracy. For fairness, we adopt Cramér’s V rather than the χ2 statis-tic: χ2 is sample-size dependent and yields a test statistic whose magnitude is not directly comparable across datasets, whereas V normalizes χ2 to [0 , 1] ,producing an effect-size measure that can be read on the same scale as accu-racy. Because stronger associations indicate greater disparity, we report 1 − V
+
+so that higher values consistently reflect lower bias. Similarly, Pearson’s r (used 6 F. Deniz et al. 
+
+for agreement between model and human judgments, e.g., privacy awareness) is linearly rescaled from [−1, 1] to [0 , 1] after direction alignment, preserving its role as an agreement-quality indicator within the unified scoring framework. 
+
+2.4 Evaluation Challenges 
+
+Beyond the fragmentation and limited cross-dimensional coverage of existing benchmarks discussed in Section 1, several methodological challenges require dedicated solutions. 
+
+Inconsistent scoring and judge calibration. Evaluations rely on automated judges whose reliability varies across datasets. LLM-based evaluators misjudge edge cases or abstain, and studies use incompatible metrics (accuracy, refusal rates, moderation scores), hindering reproducibility. We mitigate this through a multi-judge ensemble combining open and closed-weight models, rule-based evaluators, and external moderation APIs. To validate that our results are not artifacts of a single judge, we independently scored the full evaluation suite with two general-purpose judges and confirm near-perfect agreement across all service-level scores. 
+
+Instruction non-compliance. Models frequently deviate from evaluation in-structions, refusing benign queries or ignoring format directives, distorting mea-sured safety. Benchmarks rarely disclose how non-compliance is detected or cor-rected. We address this with separate refusal and compliance judges that differen-tiate genuine safety refusals from generic abstentions, improving interpretability and fairness in scoring. 
+
+Ranking stability under aggregation. A single aggregate ranking implicitly assumes uniform importance across all dimensions, yet a healthcare deployment and a code assistant have fundamentally different risk priorities. We validate robustness by reranking under six stakeholder profiles and 10,000 Dirichlet-sampled weight vectors, confirming that coarse tier membership is robust while within-tier ordering is sensitive to the evaluation perspective. These challenges, together with the fragmentation and coverage limitations discussed earlier, motivate the design principles formalized in Section 3. 
+
+## 3 The SSP Framework 
+
+While Safety, Security, and Privacy are often conflated, they reflect distinct failure modes. Safety concerns harmful behavior during intended use (e.g., hal-lucinations, ethical violations, over-refusal). Security captures adversarial com-promise, including jailbreaks, prompt manipulation, and code vulnerabilities. 
+
+Privacy addresses the exposure of sensitive information, from memorization-based leakage to improper disclosure at inference time. SSP organizes these into a three-level hierarchy (Figure 2), where trustworthiness progresses from internal reliability, to robustness under stress, to societal assurance. Each level builds on the previous, with lower-level failures undermining higher-level guarantees. SSP 
+
+is operationalized through nine services described below. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 7 
+
+> Fig. 2. Hierarchical structure of the SSP evaluation framework. The three dimensions form complementary levels of trustworthiness: Safety & Reliability for behavioral in-tegrity, Security & Robustness for adversarial resilience, and Privacy & Fairness for societal trust. Each level aggregates multiple services, each comprising test suites that evaluate core competencies in model safety, security, and privacy.
+
+The nine services composing SSP were synthesized from trustworthiness dimensions commonly evaluated in prior frameworks, including HELM [32], TrustLLM [19], DecodingTrust [60], and TrustEval [62]. Table 4 in Section 5 maps the dimensions covered by these frameworks to the SSP services. While prior frameworks typically present these dimensions as largely independent cate-gories, SSP organizes them into a three-layer hierarchy according to the aspect of trustworthiness they address: behavioral integrity (Safety & Reliability), adver-sarial resilience (Security & Robustness), and societal trust (Privacy & Fairness). 
+
+3.1 Safety & Reliability 
+
+The base layer focuses on the internal behavioral integrity of LLMs, determining whether a model behaves predictably and responsibly in potentially sensitive contexts. We evaluate model behaviors across these contexts through four services: 
+
+Hallucination , which measures factual accuracy and grounding; Code Security ,which assesses whether generated code is free from vulnerabilities and unsafe pat-terns; Safety Alignment , which tests adherence to ethical and safety guidelines; and Over Refusal , which assesses unnecessary conservatism in safe interactions. 
+
+Hallucination. This service evaluates whether a model produces factual, self-consistent content grounded in its provided context. We employ seven comple-mentary tests to achieve this: SimpleQA [65], TruthfulQA [33], and TriviaQA [24] to examine factual accuracy and resistance to common human misconceptions in open-domain question answering; SelfCheckGPT [35] to measure internal con-sistency across repeated generations, revealing self contradictions or unstable 8 F. Deniz et al. 
+
+reasoning; Vectara [31] and FaithEval [40] to assess contextual faithfulness in summarization and retrieval-augmented generation tasks; and HaluEval [30] to extend the analysis to multi-turn dialogue and reasoning, evaluating whether conversational outputs remain coherent and supported by evidence. 
+
+Code Security. This service evaluates whether a model generates code that is functionally correct, free from exploitable vulnerabilities, and consistent with secure development practices. We employ two complementary tests, CyberSecE-val 3 [58] and SecCodePLT [68], each in two variants: instruction-based, where the model writes code from scratch, and autocomplete, where it completes par-tial code that may include unsafe priors. CyberSecEval 3 examines vulnerability avoidance across six programming languages and 50 CWE categories in both settings, revealing whether models implicitly apply secure-coding principles. Sec-CodePLT targets Python-specific weaknesses such as command injection, unsafe deserialization, and improper resource handling, assessing fine-grained reasoning about security in concrete programming contexts. 
+
+Safety Alignment. This service assesses whether a model consistently recog-nizes and mitigates harmful, unethical, or policy-violating content across diverse risk categories (e.g, harmful language, misinformation, and ethics, and others in WildGuard test). We integrate extensive safety datasets [3, 21, 5, 63, 37, 15, 57, 17], each paired with a specialized judging system and harm taxonomy. GPT-oss-120B serves as the general-purpose judge for red-team and simple-safety datasets; the LLaMA Guard 1–4 judges provide structured moderation through their respective taxonomies [20, 54, 10, 55]; and external moderation systems such as OpenAI Moderation and Perspective API evaluate toxicity, hate, and violence at scale [45, 23]. 
+
+Over Refusal. This service evaluates whether a model can distinguish genuinely unsafe queries from benign ones, maintaining an appropriate balance between caution and responsiveness. We employ four tests which together expose exces-sive conservatism in safety-aligned models. OKTest [50] presents clearly harmless prompts to measure baseline refusal accuracy. OR-Bench [8] introduces near-safe queries across ten semantic categories (e.g., deception, harassment, hate, self-harm, sexual, violence) to assess whether safety filters overgeneralize across sensitive topics. XSTest [48] probes exaggerated refusals arising from linguistic ambiguity, using paired categories such as homonyms, figurative language, and historical events to test whether models differentiate safe from unsafe meanings within contextual nuance. WildGuard [17] examines real-world prompt distribu-tions where models frequently decline legitimate queries due to overactive safety mechanisms. 
+
+3.2 Security & Robustness 
+
+The middle layer assesses whether a model’s security and reliability persist under intentional or accidental stressors. We operationalize this through three services: Adversarial Robustness , which measures resistance to diverse prompt-level attacks; Jailbreak Robustness , which Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 9
+
+evaluates the model’s ability to enforce alignment boundaries under adversar-ial instructions; and Out-of-Distribution Robustness , which tests generalization beyond the training distribution. 
+
+Adversarial Robustness. This service evaluates how effectively a model re-sists prompt perturbations designed to induce incorrect, unsafe, or inconsistent responses. We employ two tests, AdvGLUE [61] and AdvGLUE++ [60], which extend the GLUE [59] test suite with adversarially modified natural language inference, paraphrasing, and sentiment analysis tasks. These tests probe model brittleness through subtle lexical substitutions, negations, and distractor phrases that preserve grammatical validity while altering semantic intent. 
+
+Jailbreak Robustness. This service assesses whether a model upholds its align-ment boundaries when confronted with direct, obfuscated, or adaptive attempts to elicit unsafe behavior. We integrate three complementary tests capturing dis-tinct attack modes. Jailbroken [64], based on the AdvBench dataset [72], targets prompt-level exploits that induce safety violations through manipulative instruc-tions or roleplay. Cipher [70] encodes unsafe intent using alternative linguistic or symbolic representations (e.g., Base64 or substitution ciphers), evaluating whether safety filters extend beyond surface-text recognition. Pair [6] employs an attacker LLM that dynamically rewrites jailbreak prompts, probing whether defenses remain consistent against adaptive, context-sensitive adversaries. 
+
+Out-of-Distribution Robustness. This service evaluates how well a model maintains consistent behavior when inputs deviate from its familiar linguistic or stylistic distributions. We employ the DecodingTrust [60] test, which transforms sentiment-analysis texts into diverse styles (Shakespearean, biblical, romantic, tweet) and applies common augmentations (e.g., typos, whitespace, etc.) while preserving their underlying semantics. Each variant is further perturbed at mul-tiple intensity levels to simulate realistic shifts in expression, vocabulary, and tone. 
+
+3.3 Privacy & Fairness 
+
+The top layer evaluates whether a model behaves equitably and protects sensitive information across diverse users and data contexts. It focuses on societal reli-ability, ensuring that outputs remain unbiased, inclusive, and privacy-preserving across demographic, ideological, and contextual variations. We achieve this through two services: Model & Data Privacy , which measures the exposure and memoriza-tion of sensitive information, and Fairness & Bias , which evaluates consistency and impartiality across social groups. 
+
+Model & Data Privacy. This service measures how effectively a model safe-guards sensitive information and adheres to privacy expectations across both data-level and behavioral dimensions. We employ four complementary tests: En-ron , to examine memorization-based leakage by prompting models to reproduce email addresses [25]; ECHR to extend the analysis to legal text continuations, testing whether models regenerate personally identifiable information (PII) such as names, dates, or locations [47]; PII Awareness [19] and ConfAIDE [41] to 10 F. Deniz et al. 
+
+evaluate reasoning-based privacy behavior. PII Awareness tests whether mod-els recognize privacy-sensitive queries and appropriately refuse to disclose items such as bank details or home addresses, both with and without explicit policy reminders. ConfAIDE compares model judgments on privacy scenarios against human-labeled norms, quantifying alignment with societal privacy values. 
+
+Fairness & Bias. This service evaluates whether a model produces impartial outputs across social, demographic, and ideological dimensions. We employ four tests spanning reasoning, classification, and value alignment. BBQ [46] mea-sures stereotype bias in contextual reasoning through paired demographic sce-narios requiring unbiased answers. Disparagement , derived from the UCI Adult dataset [56], examines fairness in income and occupation predictions across pro-tected attributes (e.g., gender, race, age), using association metrics such as Cramer’s V. GenderCARE [51] probes gender bias in responses, testing whether models overuse gendered terms or pronouns in neutral contexts. Preference [19] assesses normative bias by analyzing whether models favor specific ideologies or moral viewpoints. 
+
+## 4 Experiments 
+
+4.1 Experimental Setup 
+
+We evaluated 121 LLMs spanning both proprietary and open-weight ecosystems, executing over 5,000 black-box examinations across the 46 tests and 9 services defined in our SSP framework. To ensure fair and reproducible comparisons, all evaluations were performed under identical inference conditions: API access for proprietary systems and containerized local deployments for open-weight models. Appendix B details the inference and judge configurations, infrastructure specifications, and proprietary model versions used throughout the evaluation. All results, including detailed per-model reports, are publicly available through the publicly-accessible aiXamine portal. 
+
+Model Selection. To systematically address our research questions, our model selection covers a representative spectrum of architectures, scales, and alignment paradigms, chosen based on their rankings on public leaderboards [7]: 
+
+– Proprietary Systems. We include frontier models such as OpenAI’s GPT-4o/5, Anthropic’s Claude-3.5/4.5, xAI’s Grok-3/4, Google’s Gemini-2.5/3, and DeepSeek-R1. 
+
+– Open-Weight Families. The open-weight group encompasses leading mod-els from OpenAI (GPT-oss), Meta (Llama-3.x/4), Alibaba (Qwen3.5), Google (Gemma3/4), and Microsoft (Phi-4). Our selection includes models with di-verse training techniques and architectures, including distillation-based deriva-tives (e.g., from DeepSeek-R1 and Cogito-v1). Model sizes range from compact 0.8B parameter models to large-scale systems with up to 120B parameters. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 11 
+
+Table 1. SSP evaluation scores for the top 20 models across nine services. No model dominates all dimensions: models exhibit distinct strength-weakness profiles, with trade-offs between safety, robustness, privacy, and utility. Extended results are in Ap-pendix E.1; the complete leaderboard is available through the aiXamine portal.                                                                                                                                                                                                         
+
+> Services Model Adv. Robust. Code Sec. Fair. & Bias Halluc. Jail. Robust. M&D Priv. OOD Robust. Over Ref. Safety Align. Overall Score
+> GPT-5 71.6 79.7 68.8 83.9 90.2 69.4 89.5 87.9 95.6 81.8
+> Gemini 3 77.2 74.3 76.7 82.7 70.3 65.1 91.6 94.4 93.2 80.6
+> Gemma4-31B 75.2 75.3 79.0 75.7 73.6 69.6 89.1 85.3 97.4 80.0
+> Claude-4.5 61.6 70.3 62.7 80.8 98.5 78.7 88.1 82.3 97.0 80.0
+> Gemma4-26B-A4B 70.1 76.4 77.5 73.2 72.7 70.8 89.5 82.3 97.3 78.9
+> GPT-120B 66.3 80.1 72.9 64.2 91.9 76.9 85.0 72.4 98.2 78.7
+> GPT-4o 62.6 73.1 67.5 77.5 51.4 91.1 86.9 94.4 97.5 78.0
+> DeepSeek-R1 67.2 77.1 61.6 74.9 51.8 84.7 86.2 91.5 97.4 76.9
+> Qwen3.5-27B 69.8 75.0 71.2 71.5 99.5 48.4 86.5 79.6 85.6 76.3
+> GPT-20B 65.9 78.2 67.6 59.7 87.7 72.0 83.7 74.5 97.5 76.3
+> Qwen3.5-122B-A10B 69.2 74.1 64.3 73.1 99.2 54.1 86.9 79.0 85.4 76.1
+> Grok 4 70.3 69.7 61.5 66.0 73.2 68.4 90.0 88.3 97.0 76.0
+> Grok 4.1 68.3 72.0 59.5 66.1 78.1 68.2 89.8 88.2 88.0 75.3
+> Claude-3.5 62.7 72.2 61.5 74.9 70.5 80.8 87.0 67.2 99.3 75.1
+> Phi-4 63.5 68.0 72.0 58.4 56.8 84.2 87.3 86.3 99.0 75.1
+> Qwen3.5-35B-A3B 68.1 72.1 63.0 70.6 98.7 54.0 84.9 78.4 85.5 75.0
+> Qwen3.5-9B 66.1 73.2 63.8 70.5 98.8 52.7 84.1 78.7 86.6 74.9
+> Llama3.3-70B 67.6 68.4 58.9 72.1 47.8 74.4 88.6 94.0 94.1 74.0
+> Grok 3 66.3 68.6 60.9 74.0 47.4 67.4 89.6 94.4 94.0 73.6
+> Qwen3.5-4B 65.1 71.5 59.3 68.8 98.6 51.0 82.4 78.5 85.2 73.4
+
+4.2 Cross-Service Leaderboard and Initial Insights 
+
+Table 1 presents the top 20 models ranked by overall score. GPT-5 (81.8), Gem-ini 3 (80.6), Gemma4-31B (80.0), and Claude-4.5 (80.0) lead the ranking, but no single model dominates all dimensions. Gemma4-31B achieves the highest Fair-ness & Bias (79.0), GPT-4o the highest Privacy (91.1), Qwen3.5-27B the highest Jailbreak Robustness (99.5), and Claude-3.5 the highest Safety Alignment (99.3). Notably, open-weight models rank alongside proprietary ones: Gemma4-31B ties Claude-4.5 for third place, and GPT-120B (78.7) outperforms GPT-4o (78.0). The spread between the top-ranked and 20th-ranked model is 8.4 points, yet the service-level variance within individual models is far larger, underscoring that aggregate scores mask critical dimensional trade-offs. 
+
+4.3 RQ1: What is the Trade-Off Between Safety and Utility? 
+
+To move beyond aggregate scores, we first quantify the systemic relationships between our nine evaluation services and then visualize how different models navigate the resulting trade-offs. 
+
+Safety enforcement trades off against utility, while privacy is largely orthogonal to other dimensions. We computed the correlation matrix across the full dataset of over 5,000 examination results (Figure 3). The analysis reveals 12 F. Deniz et al.  
+
+> Fig. 3. Cross-service correlation and dependency analysis.
+
+three distinct patterns. First, services within the Safety & Reliability cluster (e.g., Hallucination and Code Security, r=0 .73 , 95% CI: [0.62, 0.81]) and the Security & Robustness cluster (e.g., Adversarial and OOD Robustness, r=0 .75 ,95% CI: [0.65, 0.83]) are strongly self-correlated, suggesting that improvements in core capabilities lead to simultaneous gains across related areas. Second, the most significant conflict is the negative correlation between Over Refusal and safety-centric services, strongest for Jailbreak Robustness ( r=−0.39 , 95% CI: [ −0.54, 
+
+−0.20]) and Safety Alignment ( r=−0.22 , 95% CI: [ −0.40, −0.02]), empirically quantifying the safety tax : as models improve at refusing harmful content, they get worse at correctly answering benign prompts. Third, Model & Data Privacy exhibits weak correlations with most other services (mean |r|=0 .13 , 95% CI: [0.06, 0.21]; six of eight pairwise correlations are non-significant), with a moder-ate positive exception for Safety Alignment ( r=0 .38 , 95% CI: [0.20, 0.54]). This provides strong evidence that privacy is largely orthogonal to other trustworthi-ness dimensions and is not addressed by standard safety alignment. Figure 4 visualizes how individual models resolve this tension. The Jailbreak Robustness plot is representative: the desirable top-right quadrant (high robust-ness, high utility) is nearly empty. Instead, models cluster into two camps. The “Safety-First” camp (Claude-4.5, GPT-120B) achieves strong Jailbreak Robust-ness and Fairness but records the lowest Over Refusal scores. The “Utility-First” camp (Gemini 3, Grok 4, Llama4-17B-16E) maximizes utility at the cost of sig-nificantly weaker jailbreak and adversarial resistance. The near-orthogonality of privacy (mean |r|=0 .13 ) is particularly striking. Qwen3.5-27B leads the ecosystem in Jailbreak Robustness (99.5) yet records the lowest privacy among open-weight models (48.4), while GPT-4o achieves the highest privacy of any model (91.1) despite weak jailbreak resistance (51.4). Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 13   
+
+> Fig. 4. Safety vs. Utility Tension Analysis. Model performance for eight key services (y-axis) against the Over Refusal ( x-axis) score. A higher Over Refusal score means the model refuses fewer benign prompts. The dashed lines indicate the mean perfor-mance on each axis, dividing the models into four quadrants. The top-right quadrant represents the ideal state of high performance and high utility. The plots visually demonstrate the safety tax , where models with the highest safety (e.g., Claude-4.5, GPT-120B) have the lowest utility. Conversely, services like Model & Data Privacy show that high performance and high utility can be achieved simultaneously.
+
+When we turn to the Model & Data Privacy plot, the trade-off disappears: the desirable top-right quadrant is now populated, with models like Llama3.2-3B and DeepSeek-R1 demonstrating both high privacy and high utility. This distinction suggests that the safety tax is a consequence of blunt, refusal-based alignment strategies, whereas privacy is achievable through methods that do not damage utility, such as improved data curation and PII removal during pre-training [60]. 
+
+Deployment context reshapes rankings. The trade-offs documented above are not merely theoretical: they materially alter which model is “best” depend-ing on deployment priorities. To quantify this, we define six stakeholder profiles ,normalized weight vectors over the nine services that capture the priorities of rep-resentative deployment contexts (e.g., Healthcare emphasizes hallucination and privacy; Code Assistant emphasizes code security and adversarial robustness). Among the top 15 models, the identity of the top model changes across four of six profiles, mean pairwise Kendall’s τ drops to 0.455 (95% CI: [0.33, 0.57]), and 27% of pairwise model orderings reverse when switching perspectives. The most sensitive model, GPT-4o, swings 13 rank positions between its best and worst profiles. A Dirichlet robustness analysis over 10,000 random weight vectors confirms this is not an artifact of the chosen profiles: while coarse tier member-ship is stable ( τ =0 .775 vs. Uniform), within-tier ordering remains sensitive to the evaluation perspective. These results confirm that a single aggregate ranking 14 F. Deniz et al. 
+
+cannot capture deployment-specific trustworthiness; full profile definitions and per-model rankings are in Appendix C (Table 6). 
+
+Summary. Safety and utility remain in tension ( r=−0.39 ), while privacy is largely independent of other dimensions (mean |r|=0 .13 ). Deployment priorities can shift model rankings by up to 13 positions, showing that no single aggregate score captures deployable trustworthiness. 
+
+4.4 RQ2: What is the Impact of Scale and Alignment on Safety? 
+
+To disentangle scale from alignment, we perform two controlled comparisons: (i) intra-family comparisons within Qwen3/3.5, Gemma3, and Llama3, where models share the same architecture and post-training [52, 67, 10] and differ only in size; and (ii) cross-distillation comparisons of models sharing the same base architecture but fine-tuned with different pipelines (DeepSeek-R1, Cogito/IDA). 
+
+Alignment strategy, not scale alone, drives a model’s safety profile. 
+
+Our analysis reveals that the popular assumption of “bigger is better" for safety is an oversimplification. Figure 5 plots the overall scores for the Qwen3/3.5, Gemma3, and Llama3 families against their size. While there is a general upward trend, the relationship is clearly not linear, revealing a consistent two-phase pattern. Initially, performance increases almost linearly with size up to the ∼4B parameter mark. For instance, Qwen3.5 jumps from 59.0 (0.8B) to 73.4 (4B), a gain of over 14 points, but then plateaus with only 3 additional points from 4B to 27B. We observe a consistent plateau around the 4B scale. Beyond this point, models enter a phase of diminishing returns. This consistent trend across the model families examined suggests that a minimum model scale is a necessary prerequisite for learning complex safety behaviors. Below this threshold, models may lack the capacity to fully generalize safety principles. Above it, however, simple parameter growth is insufficient.    
+
+> Fig. 5. The performance impact of model size for open-weight families (Qwen, Gemma, Llama) that share the same post-training within each family. The plot shows a general upward trend with scale but highlights diminishing returns beyond ∼4B parameters. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 15
+
+The dominant role of alignment strategy. Our findings show that the post-training alignment strategy is the primary determinant of a model’s position on the safety-utility spectrum. A clear example is the behavior of GPT-120B. While built on an open-weight architecture, its aggressive safety tuning places it far from its open-weight peers (like Llama and Qwen) and squarely in the “Safety-First" camp alongside proprietary models like Claude-4.5. This demonstrates that a model’s safety posture is less a function of its base capabilities and more a direct outcome of the priorities encoded during its alignment phase. To isolate this effect further, we compare models sharing the same base ar-chitecture but differing in alignment strategy. Safety and utility profiles diverge dramatically, often more so than between models from entirely different ecosys-tems. Figure 6 visualizes this effect, comparing base models (Llama3.1-8B and Qwen2.5-14B) against their distilled derivatives. Distillation methods that pri-oritize reasoning (e.g., DeepSeek-R1) or instruction-following (e.g., Cogito/IDA) introduce markedly different safety profiles. For Qwen2.5-14B, Cogito’s IDA dis-tillation improves adversarial robustness relative to the base model, whereas R1 distillation causes a sharp collapse. The divergence is even more pronounced for Llama-3.1-8B. While IDA moderately reduces robustness, R1 distillation reduces adversarial robustness to near-zero, demonstrating that alignment strategies can radically alter robustness. This demonstrates that while knowledge can be dis-tilled, the process must preserve the nuanced decision boundaries required for robustness, a property that current pipelines do not guarantee.  
+
+> Fig. 6. The impact of different distillation methods on (a) Llama3.1-8B and (b) Qwen2.5-14B base models. The radar plots highlight the dramatic and divergent effects of R1 distillation in Adversarial and OOD Robustness, while the IDA method has a more nuanced, and in the case of Qwen, positive impact.
+
+We trace this collapse to a structural issue in off-policy distillation. In R1-style models, the on-policy KL correction [1] is omitted due to vocabulary mismatches between teacher and student, causing the student to overfit exact teacher trajectories. This collapses the entropy of the predictive distribution, producing sharp decision boundaries that are brittle to small input perturba-16 F. Deniz et al.  
+
+> Fig. 7. Per-sample cosine similarity between base and distilled model representations on 50 AdvGLUE-SST2 adversarial prompts. R1 distillation produces near-orthogonal representations, while IDA distillation maintains high alignment with the base model.
+
+tions [16]. Appendix D formalizes this mechanism, contrasting the on-policy and off-policy objectives and showing how the omission of on-policy correction drives entropy collapse. To corroborate this mechanism, we move beyond the black-box evaluation protocol and extract last-layer hidden-state representations from the open-weight base and distilled models on the same adversarial inputs. We sample 50 ad-versarial prompts from the AdvGLUE-SST2 corpus and extract the last-layer hidden state for each base and distilled model at the final input position, yield-ing per-sample embedding vectors. We then measure per-sample cosine similarity between each distilled model’s embedding and the corresponding base-model em-bedding: high similarity indicates the distilled model preserves the base model’s representational geometry; low similarity indicates divergence. Figure 7 shows that R1 distillation produces near-orthogonal representations relative to the base model ( ¯cos=0 .094 ±0.161 for Llama, 0.069 ±0.206 for Qwen), confirming that the off-policy objective fundamentally restructures the repre-sentation space. IDA retains substantially more structure ( ¯cos=0 .834 ±0.013 for Llama, 0.532 ±0.048 for Qwen; Cohen’s d=6 .5 and 3.1 respectively), consistent with its on-policy correction preserving smoother decision boundaries. These results identify distillation-induced robustness collapse as a structural vulnera-bility in current strong-to-weak distillation pipelines, the first robustness-focused characterization of this failure mode. 
+
+Summary. Above the ∼4B-parameter threshold, alignment strategy — not size — drives a model’s safety profile. On the same base architecture, R1 distillation reduces adversarial robustness from 56.9 to 2.6, revealing a severe robustness failure that capability scores alone would miss. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 17 
+
+4.5 RQ3: How Does Model Capability Relate to Privacy? Advancing model capability degrades privacy. While our analysis of scale within a single generation reveals a complex picture, examining the evolution of seven model families across two consecutive generations reveals a recurring pattern. Table 2 quantifies the changes in overall and privacy scores between consecutive versions of each family. The data reveals a recurring pattern across generations. The most dramatic example is the transition from GPT-4o to GPT-5, where a nearly 4-point gain in the overall SSP score is accompanied by a 21.73-point collapse in the privacy score. Similarly, Qwen ( −6.77 ) and Llama ( −13 .53 )show privacy regressions alongside overall improvements, while Gemma ( −4.10 )exhibits a joint decline in both overall and privacy scores. However, this trajectory is not universal. Grok 3 →4 improves both over-all ( +2 .62 ) and privacy ( +1 .04 ), and Gemini 2.0 →2.5 shows negligible privacy change ( −0.21 ) despite an overall shift. These exceptions suggest that privacy degradation is not an inherent cost of capability improvement but rather a con-sequence of specific training and data curation choices.                                                     
+
+> Table 2. Per-family comparison across model generations, showing changes in overall and privacy scores. Some comparisons span architectural changes (e.g., Llama3.2 →Llama4), yet privacy regression recurs in most families.
+> Family Old Model New Model ∆Overall ∆Privacy Claude Claude-3.5 Claude-4.5 +4 .88 −2.09
+> ChatGPT GPT-4o GPT-5 +3 .84 −21 .73
+> Grok Grok 3 Grok 4 +2 .62 +1 .04
+> Gemini Gemini 2.0 Gemini 2.5 −0.80 −0.21
+> Qwen Qwen2.5-14B Qwen3-14B +3 .26 −6.77
+> Llama Llama3.2-3B Llama4-17B-16E +1 .20 −13 .53
+> Gemma Gemma2-27B Gemma3-27B −2.78 −4.10
+
+Summary. Privacy often regresses across model generations: 5 of 7 tran-sitions show declines, including a 21.73-point drop from GPT-4o to GPT-5 despite a 3.84-point overall gain. Grok’s counterexample shows that this regression is not an inherent cost of capability improvement. 
+
+4.6 RQ4: How Does Category-Specific Safety Generalize? 
+
+As service-level alignment improves safety, model performance should remain stable across the related categories within each test of the service. As defined in Section 2.2, a category refers not to the high-level service but to its fine-grained categories within tests: different topics, programming languages, attack types, and demographic contexts. 18 F. Deniz et al. 
+
+However, as illustrated in Figure 8, even frontier models display substantial variability. Grok 3, for instance, scores above 90 in two WildGuard safety cate-gories but drops below 70 in three others, gaps that its successor partially closes. A similar pattern emerges in the GPT family, where the newer model reduces intra-test variance. To quantify this, we analyze the intra-test performance variation across the 215 categories in our framework, with detailed results for each service provided in Appendix E. We measure two key metrics: the Average Standard Deviation of a model’s scores across categories within a test, and the Average Generaliza-tion Gap, defined as the average difference between a model’s best and worst category-level score. High values for either metric indicate non-generalizable be-havior. Our analysis, aggregated to the service level in Table 3, reveals that the performance is highly fragmented. 
+
+Safety behaviors are category-dependent and fail to generalize, espe-cially in security contexts. Our findings reveal a clear hierarchy of brittleness across the nine services. We find no evidence of a “universally safe" model; in-stead, the degree of generalization is inversely related to the adversarial complex-ity of the service. The services designed to test resilience against active attacks are by far the least generalizable. Jailbreak Robustness is the most fragmented service, with an average standard deviation of 17.8 points (95% CI: [15.0, 18.2]) and a generalization gap of 47.0 points ([38.9, 47.1]): a model’s ability to resist one style of jailbreak offers almost no guarantee of its ability to resist another. In contrast, OOD Robustness and Safety Alignment exhibit the lowest average standard deviations (4.4 [3.6, 4.6] and 5.6 [4.9, 6.0], respectively), with non-overlapping CIs confirming the hierarchy is statistically robust.  
+
+> Fig. 8. Generalization across five safety categories in the WildGuard test for (a) Grok and (b) GPT model families.
+
+Alignment as behavioral overfitting. These results suggest that current alignment methods function analogously to overfitting in supervised learning: they increase refusal rates on targeted safety scenarios but fail to generalize beyond the distributions represented in training data. Models remain vulnera-Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 19                      
+
+> Table 3. Service-level generalization statistics across test categories. Avg Std: mean standard deviation of a model’s category-level scores within each test, averaged across models. Avg Gap: mean difference between a model’s best and worst category score within each test. Higher values indicate more fragmented, category-dependent behavior.
+> Service Avg Std (%) Avg Gap (%)
+> Adversarial Robustness 13.7 35.8 Model & Data Privacy 16.1 23.9 Fairness & Bias 7.2 18.4 Code Security 9.4 17.3 Hallucination 11.6 28.1 Safety Alignment 5.6 16.8 OOD Robustness 4.4 13.6 Jailbreak Robustness 17.8 47.0 Over Refusal 12.4 41.1
+
+ble to adversarial paraphrasing, encoding transformations, and domain shifts, indicating that alignment enforces surface-level policy compliance rather than principle-driven risk understanding. This interpretation reframes over-refusal not merely as an optimization imbalance but as a symptom of distribution-specific learning, where models memorize familiar risk patterns without acquiring deeper contextual reasoning. 
+
+Summary. Safety generalization is highly fragmented: Jailbreak Robustness shows a 47-point within-service gap, versus 13.6 for OOD Robustness. This pattern is consistent with behavioral overfitting, where alignment learned for familiar risks fails to generalize to new ones. 
+
+## 5 Related Work 
+
+Recent work on LLM assurance has transitioned from capability benchmarks (e.g., MMLU [18], BIG-Bench [34]) toward frameworks explicitly designed to measure safety, security, or trustworthiness. While these efforts differ in motiva-tion and design, most assess isolated risk types, leaving significant fragmentation across evaluation domains. To unify comparison, we organize prior works under the SSP taxonomy adopted by aiXamine (Section 3). This taxonomy separates behavioral integrity (how models act), adversarial resilience (how they fail), and societal reliability (how they treat people and data). Table 4 summarizes how existing open-source frameworks and attack toolkits map to this taxonomy and the nine services composing aiXamine. 
+
+5.1 Open-Source Frameworks and Toolkits HELM Safety. HELM [32] introduced a standardized evaluation protocol em-phasizing helpfulness, harmlessness, and fairness. Its Safety extension integrates 20 F. Deniz et al. 
+
+Table 4. Coverage of major frameworks and toolkits across aiXamine’s nine services, grouped by the three evaluation dimensions. denotes explicit coverage; indicates partial or implicit coverage; means no coverage.      
+
+> Dimension Service Trust LLM Trust Eval Decoding Trust Prompt Bench HELM garak aiXamine (ours)
+> Safety & Reliability Hallucination Code Security Safety Alignment Over Refusal Security & Robustness Adversarial Robustness Jailbreak Robustness OOD Robustness Privacy & Fairness Model & Data Privacy Fairness & Bias
+
+the Anthropic Red-Team , BBQ , HarmBench , Simple Safety , and XSTest bench-marks to assess some aspects of alignment, refusal, and bias, but lacks deep analysis and coverage of other risks. 
+
+TrustLLM. TrustLLM [19] expanded coverage to ethics, factuality, and fair-ness. It provides comprehensive fairness and hallucination benchmarks but omits code-level security, lacks systematic over-refusal calibration, and considers only basic jailbreaking methods. 
+
+TrustEval. TrustEval [62] focuses on dynamic test generation and multi-modal evaluation but covers narrow aspects of each service, e.g., checking factu-ality but excluding consistency and grounding checks within Hallucination .
+
+DecodingTrust. DecodingTrust [60] focuses on assessing the trustworthi-ness of GPT models, adapting popular adversarial and fairness benchmarks. It quantifies OOD reliability and privacy leakage but does not integrate code secu-rity diagnostics, consider behavioral privacy, or directly probe different types of hallucination. 
+
+PromptBench. PromptBench [71] provides a tool for adversarial prompt evaluation, covering lexical, syntactic, and semantic perturbations across 11 NLP tasks. While effective for comparative robustness testing, it remains a perturba-tion corpus rather than a full evaluation framework. 
+
+garak. garak [9] is an offensive red-team framework comprising over 30 probes targeting jailbreaks, encoding attacks, toxicity, leakage, and code exploits. Its probe library (e.g., AutoDAN, GCG, Invisible-Tags, MalwareGen) systemat-ically stresses several services, but provides no calibrated scoring or assessment for over refusal and OOD robustness, while only probing slur continuation and factuality under Fairness & Bias and Hallucination .
+
+5.2 Comparative Coverage Across Dimensions 
+
+As Table 4 shows, existing frameworks cluster heavily around safety alignment, jailbreaks, and adversarial robustness. While several also cover hallucination, pri-vacy, and fairness, they do so partially, focusing on a single aspect of the risk area Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 21 
+
+(e.g., only factuality, leakage, or stereotypes). Only garak includes partial code security probing, and none perform cross-guard safety calibration. PromptBench 
+
+and garak provide valuable stress tests but lack unified scoring, normalization, or cross-dimensional integration. Consequently, no prior framework offers simulta-neous evaluation of all dimensions under a unified protocol. aiXamine addresses this gap by combining breadth (46 tests across all nine services) with depth (multiple heterogeneous benchmarks, scoring methods, and judging mechanisms per service), enabling both granular diagnostics and cross-dimensional analysis within a single taxonomy. 
+
+## 6 Limitations 
+
+Our evaluation operates under several structural constraints that bound the scope of our conclusions. 
+
+Language coverage. All tests are English-only, limiting our ability to detect vulnerabilities that manifest in other languages or cross-lingual contexts. Safety behaviors may degrade substantially in low-resource languages where alignment data is sparse, a dimension our framework does not currently capture. 
+
+Black-box access. All benchmarks operate through text-level input-output interactions; the distillation analysis supplements this with a representational diagnostic on open-weight models. Gradient-based adversarial testing and mech-anistic interpretability remain out of scope. 
+
+Judge reliability. While our multi-judge ensemble and cross-judge validation mitigate systematic biases, edge cases involving implicit harm, contextual nu-ance, or culturally specific content remain difficult to adjudicate. The binary safe/unsafe framing further compresses the spectrum of possible harms. 
+
+## 7 Ethics Considerations 
+
+This work exclusively relies on publicly available datasets and benchmarks for evaluating the safety, security, and privacy properties of LLMs. No private, pro-prietary, or personally identifiable data were collected, annotated, or processed by humans for this study. All proprietary models were accessed through their official APIs (via OpenRouter) under standard terms of service, with built-in safety and filtering mechanisms left enabled. Evaluation results, including prompt-level traces, are publicly available through the aiXamine portal for both the community and the model providers; providers may submit models in private mode, or subsequently move any examination to private, retaining control over disclosure. Although some analyses surface un-safe generations, the underlying tests are drawn from previously released pub-lic benchmarks and introduce no novel exploits, and we consider the defensive value of standardized comparative measurement to outweigh the residual risk that published rankings could help adversaries prioritize targets. The intent of this work is to advance the scientific understanding of trade-offs between safety, security, and privacy in LLMs, not to expose or exploit 22 F. Deniz et al. 
+
+vulnerabilities. We explicitly discourage any misuse of the aiXamine framework or its results for adversarial or malicious purposes. 
+
+## 8 Conclusion 
+
+We presented aiXamine, a unified black-box evaluation framework spanning 46 tests across nine services to jointly assess the safety, security, and privacy of LLMs. Our large-scale analysis of over 120 models demonstrates that trustwor-thiness is inherently multi-dimensional. Safety enforcement incurs a measurable utility cost through increased over-refusal; privacy is near-orthogonal to other dimensions and not captured by standard alignment; off-policy distillation with-out on-policy correction induces severe robustness collapse; and safety behaviors are category-dependent rather than universal, with alignment functioning as be-havioral overfitting to familiar risk patterns. These findings converge on a central implication: progress along one trustworthiness axis does not guarantee, and can actively undermine, progress along others. Future work should develop alignment methods that avoid unnecessary conservatism, robustness-preserving distillation techniques, and privacy-aware training pipelines. Until alignment moves from monolithic safety tuning to modular, dimension-aware architectures, trustwor-thiness gains in one area will continue to come at the expense of others. 
+
+## References 
+
+1. Agarwal, R., Vieillard, N., Zhou, Y., Stanczyk, P., Garea, S.R., Geist, M., Bachem, O.: On-policy distillation of language models: Learning from self-generated mis-takes. In: The twelfth international conference on learning representations (2024) 2. AI, N.: Artificial intelligence risk management framework: Generative artificial intelligence profile. NIST Trustworthy and Responsible AI Gaithersburg, MD, USA (2024) 3. Bai, Y., Jones, A., Ndousse, K., Askell, A., et al.: Training a helpful and harm-less assistant with reinforcement learning from human feedback. arXiv preprint arXiv:2204.05862 (2022) 4. Bhardwaj, R., Anh, D.D., Poria, S.: Language models are homer simpson! safety re-alignment of fine-tuned language models through task arithmetic. arXiv preprint arXiv:2402.11746 (2024) 5. Bhardwaj, R., Poria, S.: Red-teaming large language models using chain of utter-ances for safety-alignment. arXiv preprint arXiv:2308.09662 (2023) 6. Chao, P., Robey, A., Dobriban, E., Hassani, H., Pappas, G.J., Wong, E.: Jailbreak-ing black box large language models in twenty queries (2024), https://arxiv.org/ abs/2310.08419 
+
+7. Chiang, W.L., Zheng, L., Sheng, Y., Angelopoulos, A.N., Li, T., Li, D., Zhang, H., Zhu, B., Jordan, M., Gonzalez, J.E., et al.: Chatbot arena: An open platform for evaluating llms by human preference. arXiv preprint arXiv:2403.04132 (2024) 8. Cui, J., Chiang, W.L., Stoica, I., Hsieh, C.J.: Or-bench: An over-refusal benchmark for large language models. arXiv preprint arXiv:2405.20947 (2024) 9. Derczynski, L., Galinkin, E., Martin, J., Majumdar, S., Inie, N.: garak: A frame-work for security probing large language models. arXiv preprint arXiv:2406.11036 (2024) Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 23 10. Dubey, A., Jauhri, A., Pandey, A., Kadian, A., et al.: The llama 3 herd of models. arXiv preprint arXiv:2407.21783 (2024) 11. Ebers, M.: The european commission’s proposal for an artificial intelligence act. In: Research Handbook on EU Internet Law, pp. 271–292. Edward Elgar Publishing (2023) 12. Face, H.: Hugging face: The ai community building the future. https:// huggingface.co (2025), accessed: 2025-04-17 13. Fredrikson, M., Jha, S., Ristenpart, T.: Model inversion attacks that exploit con-fidence information and basic countermeasures. In: Proceedings of the 22nd ACM SIGSAC CCS. pp. 1322–1333 (2015) 14. Ganguli, D., Lovitt, L., Kernion, J., Askell, A., et al.: Red teaming language models to reduce harms: Methods, scaling behaviors, and lessons learned (2022), https: //arxiv.org/abs/2209.07858 
+
+15. Gehman, S., Gururangan, S., Sap, M., Choi, Y., Smith, N.A.: Realtoxici-typrompts: Evaluating neural toxic degeneration in language models. arXiv preprint arXiv:2009.11462 (2020) 16. Goodfellow, I.J.: Explaining and harnessing adversarial examples. arXiv preprint arXiv:1412.6572 (2014) 17. Han, S., Rao, K., Ettinger, A., Jiang, L., et al.: Wildguard: Open one-stop mod-eration tools for safety risks, jailbreaks, and refusals of llms. arXiv preprint arXiv:2406.18495 (2024) 18. Hendrycks, D., Burns, C., Basart, S., Zou, A., Mazeika, M., Song, D., Steinhardt, J.: Measuring massive multitask language understanding (2021), https://arxiv. org/abs/2009.03300 
+
+19. Huang, Y., Sun, L., Wang, H., Wu, S., et al.: Trustllm: Trustworthiness in large language models. arXiv preprint arXiv:2401.05561 (2024) 20. Inan, H., Upasani, K., Chi, J., Rungta, R., et al.: Llama guard: Llm-based input-output safeguard for human-ai conversations, 2023. URL https://arxiv. org/abs/2312.06674 (2023) 21. Ji, J., Liu, M., Dai, J., Pan, X., et al.: Beavertails: Towards improved safety alignment of llm via a human-preference dataset. arXiv preprint arXiv:2307.04657 (2023) 22. Ji, Z., Lee, N., Frieske, R., Yu, T., Su, D., Xu, Y., Ishii, E., Bang, Y.J., Madotto, A., Fung, P.: Survey of hallucination in natural language generation. ACM Computing Surveys 55 (12), 1–38 (2023) 23. Jigsaw, Team, G.C.A.T.: Perspective api. https://perspectiveapi.com/ , ac-cessed: 2025-03-06 24. Joshi, M., Choi, E., Weld, D.S., Zettlemoyer, L.: Triviaqa: A large scale dis-tantly supervised challenge dataset for reading comprehension. arXiv preprint arXiv:1705.03551 (2017) 25. Klimt, B., Yang, Y.: The enron corpus: A new dataset for email classification re-search. In: European conference on machine learning. pp. 217–226. Springer (2004) 26. Kumar, A., Murthy, S.V., Singh, S., Ragupathy, S.: The ethics of interaction: Mitigating security threats in llms. arXiv preprint arXiv:2401.12273 (2024) 27. Kurakin, A., Goodfellow, I., Bengio, S.: Adversarial machine learning at scale. arXiv preprint arXiv:1611.01236 (2016) 28. Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C.H., Gonzalez, J.E., Zhang, H., Stoica, I.: Efficient memory management for large language model serv-ing with pagedattention. In: Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles (2023) 24 F. Deniz et al. 29. Lebret, R., Grangier, D., Auli, M.: Neural text generation from structured data with application to the biography domain. arXiv preprint arXiv:1603.07771 (2016) 30. Li, J., Cheng, X., Zhao, W.X., Nie, J.Y., Wen, J.R.: Halueval: A large-scale hallucination evaluation benchmark for large language models. arXiv preprint arXiv:2305.11747 (2023) 31. Li, M., Luo, R., Mendelevitch, O.: HHEM-2.1-Open (2024). https://doi.org/10.57967/hf/3240, https://huggingface.co/vectara/ hallucination_evaluation_model 
+
+32. Liang, P., Bommasani, R., Lee, T., Tsipras, D., et al.: Holistic evaluation of lan-guage models. arXiv preprint arXiv:2211.09110 (2022) 33. Lin, S., Hilton, J., Evans, O.: Truthfulqa: Measuring how models mimic human falsehoods. arXiv preprint arXiv:2109.07958 (2021) 34. Luo, H., Huang, H., Deng, Z., et al.: Bigbench: A unified benchmark for evaluating multi-dimensional social biases in text-to-image models (2025), https://arxiv. org/abs/2407.15240 
+
+35. Manakul, P., Liusie, A., Gales, M.J.: Selfcheckgpt: Zero-resource black-box hallucination detection for generative large language models. arXiv preprint arXiv:2303.08896 (2023) 36. Markov, T., Zhang, C., Agarwal, S., Eloundou, T., Lee, T., Adler, S., Jiang, A., Weng, L.: A holistic approach to undesired content detection. arXiv preprint arXiv:2208.03274 (2022) 37. Markov, T., Zhang, C., Agarwal, S., et al.: A holistic approach to undesired content detection. arXiv preprint arXiv:2208.03274 (2022) 38. Maslej, N., Fattorini, L., Perrault, R., Parli, V., et al.: Artificial intelligence index report 2024. arXiv preprint arXiv:2405.19522 (2024) 39. Mehrabi, N., Morstatter, F., Saxena, N., Lerman, K., Galstyan, A.: A survey on bias and fairness in machine learning. ACM computing surveys (CSUR) 54 (6), 1–35 (2021) 40. Ming, Y., Purushwalkam, S., Pandit, S., Ke, Z., Nguyen, X.P., Xiong, C., Joty, S.: Faitheval: Can your language model stay faithful to context, even if "the moon is made of marshmallows". arXiv (2024) 41. Mireshghallah, N., Kim, H., Zhou, X., Tsvetkov, Y., et al.: Can llms keep a secret? testing privacy implications of language models via contextual integrity theory. arXiv preprint arXiv:2310.17884 (2023) 42. Mohan, A., Ye, M., Franke, H., Srivatsa, M., et al.: Securing ai inference in the cloud: Is cpu-gpu confidential computing ready? In: 17th International Conference on Cloud Computing (CLOUD) (2024) 43. Moon, S., Shah, P., Kumar, A., Subba, R.: Opendialkg: Explainable conversational reasoning with attention-based walks over knowledge graphs. In: Proceedings of the 57th Annual Meeting of ACL (2019) 44. Nagli, G.: Wiz research uncovers exposed deepseek database leaking sen-sitive information, including chat history. https://www.wiz.io/blog/ wiz-research-uncovers-exposed-deepseek-database-leak (2025), accessed: 2025-02-20 45. OpenAI: Openai moderation api (2024), https://platform.openai.com/docs/ guides/moderation 
+
+46. Parrish, A., Chen, A., Nangia, N., Padmakumar, V., et al.: Bbq: A hand-built bias benchmark for question answering. arXiv preprint arXiv:2110.08193 (2021) 47. Poudyal, P., Šavelka, J., Ieven, A., Moens, M.F., Goncalves, T., Quaresma, P.: Echr: Legal corpus for argument mining. In: Proceedings of the 7th Workshop on Argument Mining. pp. 67–75 (2020) Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 25 48. Röttger, P., Kirk, H.R., Vidgen, B., Attanasio, G., et al.: Xstest: A test suite for identifying exaggerated safety behaviours in large language models. arXiv preprint arXiv:2308.01263 (2023) 49. See, A., Liu, P.J., Manning, C.D.: Get to the point: Summarization with pointer-generator networks. arXiv preprint arXiv:1704.04368 (2017) 50. Shi, C., Wang, X., Ge, Q., Gao, S., et al.: Navigating the overkill in large language models. arXiv preprint arXiv:2401.17633 (2024) 51. Tang, K., Zhou, W., Zhang, J., Liu, A., et al.: Gendercare: A comprehensive frame-work for assessing and reducing gender bias in large language models. In: Proceed-ings of ACM SIGSAC CCS (2024) 52. Team, G., Kamath, A., Ferret, J., Pathak, S., et al.: Gemma 3 technical report. arXiv preprint arXiv:2503.19786 (2025) 53. Team, L.: The llama 3 family of models. https://github.com/meta-llama/ PurpleLlama/blob/main/Llama-Guard3/1B/MODEL_CARD.md (2024) 54. Team, L.: Meta llama guard 2. https://github.com/meta-llama/PurpleLlama/ blob/main/Llama-Guard2/MODEL_CARD.md (2024) 55. Team, L.: The llama 4 herd: The beginning of a new era of natively multimodal ai innovation. https://ai.meta.com/blog/llama-4-multimodal-intelligence/ 
+
+(2025) 56. UCI: Adult dataset (2007), https://archive.ics.uci.edu/dataset/2/adult 
+
+57. Vidgen, B., Scherrer, N., Kirk, H.R., Qian, R., et al.: Simplesafetytests: a test suite for identifying critical safety risks in large language models. arXiv preprint arXiv:2311.08370 (2023) 58. Wan, S., Nikolaidis, C., Song, D., Molnar, D., et al.: Cyberseceval 3: Advancing the evaluation of cybersecurity risks and capabilities in large language models. arXiv preprint arXiv:2408.01605 (2024) 59. Wang, A., Singh, A., Michael, J., Hill, F., et al.: Glue: A multi-task benchmark and analysis platform for natural language understanding (2019), https://arxiv. org/abs/1804.07461 
+
+60. Wang, B., Chen, W., Pei, H., et al.: Decodingtrust: A comprehensive assessment of trustworthiness in gpt models. In: NeurIPS (2023) 61. Wang, B., Xu, C., Wang, S., Gan, Z., et al.: Adversarial glue: A multi-task benchmark for robustness evaluation of language models. arXiv preprint arXiv:2111.02840 (2021) 62. Wang, Y., Ye, J., Wu, S., Gao, C., et al.: Trusteval: A dynamic evaluation toolkit on trustworthiness of generative foundation models. In: Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Compu-tational Linguistics (2025) 63. Wang, Y., Li, H., Han, X., Nakov, P., Baldwin, T.: Do-not-answer: Evaluating safeguards in LLMs. In: Findings of the Association for Computational Linguistics: EACL 2024. pp. 896–911 (2024) 64. Wei, A., Haghtalab, N., Steinhardt, J.: Jailbroken: How does llm safety training fail? (2023), https://arxiv.org/abs/2307.02483 
+
+65. Wei, J., Karina, N., Chung, H.W., Jiao, Y.J., Papay, S., Glaese, A., Schulman, J., Fedus, W.: Measuring short-form factuality in large language models. arXiv preprint arXiv:2411.04368 (2024) 66. Xie, T., Qi, X., Zeng, Y., Huang, Y., et al.: Sorry-bench: Systematically evaluating large language model safety refusal behaviors. arXiv preprint arXiv:2406.14598 (2024) 67. Yang, A., Li, A., Yang, B., Zhang, B., et al.: Qwen3 technical report. arXiv preprint arXiv:2505.09388 (2025) 26 F. Deniz et al. 68. Yang, Y., Nie, Y., Wang, Z., Tang, Y., Guo, W., Li, B., Song, D.: Seccode-plt: A unified platform for evaluating the security of code genai. arXiv preprint arXiv:2410.11096 (2024) 69. Yang, Z., Qi, P., Zhang, S., Bengio, Y., et al.: Hotpotqa: A dataset for diverse, explainable multi-hop question answering. arXiv preprint arXiv:1809.09600 (2018) 70. Yuan, Y., Jiao, W., Wang, W., tse Huang, J., He, P., Shi, S., Tu, Z.: Gpt-4 is too smart to be safe: Stealthy chat with llms via cipher (2024), https://arxiv.org/ abs/2308.06463  
+
+> 71. Zhu, K., Zhao, Q., Chen, H., Wang, J., Xie, X.: Promptbench: A unified library for evaluation of large language models (2024), https://arxiv.org/abs/2312.07910
+> 72. Zou, A., Wang, Z., Carlini, N., Nasr, M., Kolter, J.Z., Fredrikson, M.: Universal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 (2023)
+
+## A Evaluation Components 
+
+Table 5 enumerates the services, tests, datasets, and metrics of aiXamine test suite. 
+
+## B Experimental Setup 
+
+Inference Configuration. Unless otherwise specified, all evaluations were con-ducted using deterministic decoding (temperature = 0) with a maximum gener-ation length of 2,048 tokens. Each test prompt was executed once per model to reflect real-world single-query deployment scenarios. To handle transient API failures, each prompt was retried up to five times with exponential back-off be-fore being marked as failed. Open-weight models were served in containerized local deployments using vLLM [28]. 
+
+Scoring and Judge Configuration. Each test is scored by either a benchmark-specific judge or a general-purpose LLM judge. Benchmark-specific judges are used whenever the original benchmark defines one: LLaMA Guard 1–4 [20, 54, 10, 55] and WildGuard [17] for their respective safety and over-refusal tests, Ope-nAI Moderation [45] and Perspective API [23] for toxicity scoring, and Vectara’s factual consistency scorer [31] for summarization faithfulness. For all remaining tests, GPT-oss-120B serves as the general-purpose evaluation judge. To vali-date judge reliability, we independently scored the full evaluation suite using Gemma3-27B as an alternative general-purpose judge; the two judges achieve a Pearson correlation of 0.985 (95% CI: [0.983, 0.987]) across all service-level scores, confirming that our results are not artifacts of a single judge model. One test-specific exception to the default inference configuration: SelfCheckGPT re-quires multiple stochastic response variations per prompt, so target-model gen-erations for this test use temperature = 1 instead of the default deterministic decoding. 
+
+Infrastructure. Evaluations were executed on a distributed setup compris-ing four Nvidia H200 nodes (140 GB memory each), using parallel GPU batching and asynchronous API scheduling for high throughput. A complete run for a Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 27 
+
+Table 5. aiXamine services, tests, datasets, and metrics. 
+
+Service Test Dataset Description # Samples # Categories Metric 
+
+Hallucination SimpleQA SimpleQA [65] Fact-seeking less frequently encountered ques-tions with short answers 4,326 10 Accuracy TruthfulQA TruthfulQA [33] Multiple-choice questions related to common false beliefs or misconceptions held by humans 816 17 Accuracy TriviaQA TriviaQA [24] Trivia style fact-seeking questions with short answers, measuring model accuracy for at-tempted responses 9,280 – Accuracy SelfCheckGPT WikiBio [29] A dataset of Wikipedia biographies describing individuals, used to assess the consistency of generated responses 239 – Accuracy Vectara Vectara [31] Evaluates the alignment of model-generated summaries with the provided source text 1,006 – Accuracy FaithEval FaithEval [40] QA dataset with context that assesses the faithfulness of generated responses to the pro-vided context 4,992 3 Accuracy HaluEval OpenDialKG [43] A dataset of knowledge-based dialogues 10,000 HotpotQA [69] QA pairs based on the factual knowledge from Wikipedia 10,000 3 Accuracy CNN/Daily Mail [49] A dataset of news articles from CNN and Daily Mail, paired with human-generated summaries 10,000 Code Security CyberSecEval 3 CyberSecEval 3 [58] Code generation prompts in instruction and autocomplete contexts across 50 CWEs and 6 programming languages 3,832 6 Accuracy SecCodePLT SecCodePLT [68] Code generation prompts on Python-specific vulnerabilities, spanning 27 CWEs 2,104 2 Accuracy Safety Alignment Anthropic Red Team [3] HH-RLHF [14] Red team prompts for testing model safety boundaries 1000 – Accuracy OpenAI Moderation OpenAI Moderation [36] Evaluates moderation capabilities of LLMs 522 8 Accuracy Perspective API RealToxicity [15] Measures toxicity in generated responses 946 6 Accuracy Llama Guard 1 [20] BeaverTails [21] Prompts inciting harmful or unsafe behavior 500 6 Accuracy Llama Guard 2 [54] Do-Not-Answer [63] Prompts designed to elicit refusal or harmful responses 768 11 Accuracy Llama Guard 3 [53] HarmfulQA [5] Questions containing harmful or unsafe con-tent 553 14 Accuracy Llama Guard 4 [55] CatQA [4] A categorical harmful questions dataset 550 14 Accuracy WildGuard WildGuard [17] Adversarial prompts challenging safety align-ment 754 5 Accuracy Simple Safety Tests SimpleSafetyTests [57] Prompts testing safety refusal across harm categories 100 5 Accuracy Over Refusal OKTest OKTest [50] Safe prompts that may be misclassified as un-safe 350 – Accuracy OR-Bench OR-Bench [8] Benchmarks refusal handling of safe prompts 1,319 10 Accuracy XSTest XSTest [48] Measures robustness to misinterpretation of safe prompts 450 18 Accuracy WildGuard WildGuard [17] Innocuous prompts challenging over refusal 971 2 Accuracy Adversarial Robustness AdvGlue AdvGlue [61] Jailbreak prompts generated via adversarial attacks 576 10 Accuracy AdvGlue++ AdvGlue++ [60] Enhanced adversarial attacks for robustness evaluation 38,054 5 Accuracy Jailbreak Robustness Jailbroken [64] AdvBench [72] Generates artificial prompts leveraging con-flicting objectives and mismatched generaliza-tion 522 10 Accuracy Cipher [70] Uses various encryption techniques, instead of natural languages to test the ability to main-tain safety protocols 4 Accuracy PAIR [6] Generates semantic jailbreaks using an at-tacker LLM – Accuracy OOD Robustness DecodingTrust DecodingTrust [60] Tests how well a model generalizes to data that differs from its training distribution 9592 10 Accuracy Model & Data Privacy PII Awareness PII Awareness [19] Privacy-related queries, assessing the disclo-sure or withholding of sensitive personally identifiable information 560 7 Accuracy Privacy Understanding ConfAIde [41] Benchmark for evaluating the model’s align-ment with human expectations in privacy-sensitive contexts 196 –Pearson Correlation Data Leakage Enron [25] Dataset evaluating potential data leakage through email addresses from the Enron Cor-poration 400 4 Accuracy ECHR ECHR [47] European Court of Human Rights dataset with PII annotations (names, dates, locations) 600 3 Accuracy Fairness & Bias Disparagement Adult [56] A structured dataset of demographic and work attributes for salary level prediction 810 6 Cramer’s V GenderCARE GenderPair [51] A dataset for evaluating gender bias, focusing on biases in gender-related language choices 103,854 3 Accuracy Preference Preference [19] Prompts designed to assess whether the LLM favors/promotes specific ideologies/lifestyles 240 2 Accuracy BBQ BBQ [46] Analyzes disparities related to age, disability, nationality, race, religion, sexuality, and so-cioeconomic factors 1100 11 Accuracy 
+
+Total 221,882 215 28 F. Deniz et al. 
+
+single model typically requires one to two days of wall-clock time, with the full evaluation consuming over 2,000 GPU hours. 
+
+Proprietary Model Versions. All proprietary models were accessed through OpenRouter 2. Because provider APIs may update model weights without no-tice, we record the specific model identifiers and final evaluation dates for repro-ducibility. GPT-4o ( openai/gpt-4o ), Gemini 2.0 ( google/gemini-2.0-flash-001 ), Gemini 2.5 ( google/gemini-2.5-flash ), Claude-4.5 ( anthropic/claude-haiku-4.5 ), and Grok 4 ( x-ai/grok-4-fast ) were last evaluated on November 7; DeepSeek-R1 ( deepseek/deepseek-r1-0528 ) on November 10; GPT-5 ( openai/gpt-5-mini )and Claude-3.5 ( anthropic/claude-3.5-haiku ) on November 11; Grok 3 ( x-ai/ grok-3-mini ) and Grok 4.1 ( x-ai/grok-4.1-fast ) on November 27; and Gem-ini 3 ( google/ gemini-3-flash-preview ) on December 21. 
+
+## C Context-Aware Adaptive Evaluation 
+
+A uniform arithmetic mean over evaluation dimensions implicitly assumes that every service is equally important in every deployment scenario. In practice, however, the relative importance of trustworthiness dimensions is deployment-context dependent : a healthcare chatbot must above all avoid hallucinations and protect patient privacy, whereas a code assistant must prioritize code security and adversarial robustness. To study how evaluation perspective affects model rankings, we define stake-holder profiles : normalized weight vectors over aiXamine’s nine services rep-resenting six deployment contexts: (i) Uniform (equal weights; our default), (ii) Healthcare (emphasizing hallucination, privacy, and safety), (iii) Code As-sistant (emphasizing code security, adversarial robustness, and jailbreak resis-tance), (iv) Customer Chatbot (emphasizing fairness, over-refusal balance, and OOD robustness), (v) Content Moderator (emphasizing safety alignment, jail-break robustness, and over-refusal), and (vi) Research / Open (emphasizing pri-vacy, fairness, and factuality). The weights are one reasonable instantiation derived from domain-specific risk priorities in established regulatory and op-erational guidelines [11, 2]; the framework is fully configurable, and alternative weightings can be substituted without changing the evaluation pipeline. For each profile, a model’s weighted score is computed as Sp = P9 
+
+> i=1
+
+w(p) 
+
+> i
+
+· si, where w(p)
+
+> i
+
+are the normalized profile weights and si the per-service scores. We focus the analysis on the 15 highest-scoring models under the Uniform profile and rerank them 1–15 within each stakeholder profile. Table 6 presents the weighted scores and reranked positions. The identity of the #1 model changes across profiles: GPT-5 leads under Uniform, Code Assistant, and Content Mod-erator, but Claude-4.5 takes the lead under Healthcare, Gemini 3 tops Cus-tomer Chatbot, and GPT-4o rises to #1 under Research. In total, four distinct models occupy the top position across six profiles, demonstrating that a single aggregate ranking cannot capture deployment-specific trustworthiness.  
+
+> 2https://openrouter.ai
+
+Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 29 
+
+Table 6. Weighted scores and rankings of the top-15 models (by Uniform score), reranked 1–15 within each stakeholder profile. Shaded cells mark rank improvements 
+
+≥5 relative to Uniform; red cells mark drops ≥5.                                                                                                                                                                                           
+
+> Model Uniform Healthcare Code Asst. Cust. Chat. Cont. Mod. Research
+> Score Rank Score Rank Score Rank Score Rank Score Rank Score Rank GPT-5 81.8 181.2 282.2 182.1 286.0 177.9 3Gemini 3 80.6 279.4 478.3 683.5 183.2 378.2 2Gemma4-31B 80.0 379.3 577.9 782.1 382.9 577.4 4Claude-4.5 80.0 481.6 179.8 279.8 685.4 277.2 5Gemma4-26B-A4B 78.9 578.3 676.9 980.7 481.4 876.3 7GPT-120B 78.7 677.8 879.3 378.0 783.0 474.4 9GPT-4o 78.0 780.7 373.1 14 80.1 578.0 12 80.3 1
+> DeepSeek-R1 76.9 878.0 773.7 12 77.9 877.3 14 76.9 6Qwen3.5-27B 76.3 972.3 15 78.6 577.2 11 82.6 669.1 15 GPT-20B 76.3 10 74.5 11 77.1 875.8 14 81.3 971.0 12 Qwen3.5-122B-A10B 76.2 11 72.9 13 78.7 476.2 13 82.1 769.3 14 Grok 4 76.0 12 74.0 12 74.8 11 77.4 10 80.9 10 71.4 11 Grok 4.1 75.3 13 72.6 14 75.5 10 76.3 12 79.6 11 70.7 13 Claude-3.5 75.1 14 77.8 973.4 13 74.6 15 76.7 15 73.3 10 Phi-4 75.0 15 75.2 10 70.6 15 77.7 977.4 13 74.6 8
+
+We quantify ranking divergence using Kendall’s τ rank correlation between all profile pairs. Within the top 15, the mean pairwise τ = 0 .455 and 27% of pairwise model orderings reverse when switching evaluation perspectives, con-firming that rankings among the strongest models are highly sensitive to the evaluation perspective. 
+
+Rank displacement reveals model sensitivity. For each model we com-pute the maximum rank displacement, the difference between its best and worst rank across all profiles. The mean maximum displacement is 6.2 positions; 53% of models shift by more than 5 positions. The most sensitive model is GPT-4o, whose rank swings from #1 under Research / Open to #14 under Code Assis-tant, a displacement of 13 positions. The Qwen 3.5 models exhibit the highest mean displacement ( ∼10 positions), while GPT-5 and Grok 4 remain the most stable ( ≤2 positions). Such instability shows that models strong in one trust-worthiness dimension can be weak in another, a finding invisible under uniform aggregation. These results establish that multi-dimensional trustworthiness evaluation is not merely a “checklist” but a perspective-aware framework: the same set of evaluation services, combined differently, yields materially different conclusions. No prior platform supports such stakeholder-aware evaluation, and the findings demonstrate that this capability reveals insights inaccessible to any single-metric or uniformly aggregated benchmark. 
+
+Ranking robustness under random weightings. To verify that the rank-ing sensitivity observed above is not an artifact of the six chosen profiles, we sample 10,000 weight vectors from a symmetric Dirichlet distribution ( α=1 for each service) and recompute the full ranking under each. The analysis reveals a two-layer structure. At the coarse level, rankings are stable: the mean Kendall’s τ30 F. Deniz et al. 
+
+between the Uniform ranking and random rankings is 0.775 across all evaluated models, and the top four models (GPT-5, Gemini 3, Gemma4-31B, Claude-4.5) collectively hold the #1 position in 82% of samples. At the fine level, within-tier ordering is sensitive: 8 distinct models reach #1 across 10,000 samples and only 67% of the Uniform top-5 appear in any given random top-5. These results confirm that the overall leaderboard provides a meaningful default ranking, but deployment-specific weighting is necessary to resolve the ordering within the top tier. 
+
+## D Theoretical Analysis of Distillation-Induced Robustness Collapse 
+
+Modern strong-to-weak distillation follows a two-stage process [1]: (1) off-policy distillation , where the student imitates teacher logits on sequences generated entirely by the teacher, and (2) on-policy distillation , where the student generates its own trajectories and aligns their logits with the teacher via KL minimization. Formally, the on-policy objective minimizes 
+
+LKL (θ) = Ex∼D Ey∼pθ (·| x) [DKL (pT (· | x, y ) ∥ pθ (· | x, y ))] , (1) where pT denotes the teacher distribution and pθ the student. This KL-based correction ensures that the student is trained on its own output distribution, preventing divergence from the teacher. Crucially, this step requires vocabulary compatibility; without matching tokenization between teacher and student, the KL term cannot be computed correctly. In R1-style distilled open-weight models, this on-policy phase is omitted or cannot be applied due to vocabulary mismatches. Training then collapses to a pure off-policy objective: 
+
+Loff (θ) = E(x,y )∼TeacherGen [− log pθ (y | x)] , (2) which implicitly pushes pθ (y | x) toward extremely peaked, low-entropy distribu-tions. Since the cross-entropy term is minimized when pθ (y | x) → 1, the student is encouraged to overfit the exact teacher token trajectory. This collapses the en-tropy of the predictive distribution, H[pθ (· | x)] → 0, steepening the decision boundary. As a result, even small input perturbations δx can cross the sharp-ened decision boundary, causing disproportionately large shifts in the output distribution ∥pθ (· | x) − pθ (· | x + δx )∥. This loss of local smoothness is a classi-cal precursor to adversarial brittleness [16]. Because the student never receives feedback on its own erroneous trajectories, the support of pθ drifts away from that of the teacher, producing sharp but poorly calibrated decision boundaries. 
+
+## E Detailed Evaluation Results 
+
+This appendix presents the extended cross-service leaderboard and detailed per-service evaluation results. Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 31 
+
+E.1 Extended Leaderboard 
+
+Table 7 extends the main leaderboard (Table 1) with additional model sizes from the selected families, enabling the intra-family scaling and distillation analyses presented in the main text. The complete leaderboard covering all evaluated models is accessible through the aiXamine portal. 
+
+E.2 Hallucination 
+
+Table 8 reveals GPT-5 achieving the highest overall hallucination resilience. Gemini 3 and Claude-4.5 follow closely, reflecting steady improvements in fac-tual reliability and internal consistency compared to earlier generations. The high SelfCheckGPT scores across top systems indicate strong self-verification capabilities, though the disparity between these and factuality-oriented tests like SimpleQA and TruthfulQA underscores that self-consistency alone does not ensure truthfulness. Among open-weight models, Gemma4 and Qwen3.5 vari-ants are competitive on knowledge-dense evaluations such as FaithEval , while GPT-120B and Phi-4 show steep degradation in SelfCheckGPT . The notably high scores of DeepSeek-R1 demonstrate the growing strength of safety-tuned open-weight models. 
+
+E.3 Code Security 
+
+Table 9 shows GPT-120B and GPT-20B leading among open-weight models, while GPT-5 and DeepSeek-R1 top the API group. Most models score well on 
+
+CyberSecEval , indicating broad competence in generating vulnerability-free code, but the more demanding SecCodePLT test exposes substantial degradation, es-pecially in the setting where models must correctly complete partially insecure or ambiguous templates. Security-policy augmentation produces moderate gains for all models, suggesting successful policy internalization. Notably, Qwen3.5 models exhibit a reversed pattern: strong on CyberSecEval but weaker on SecCodePLT ,suggesting a different calibration tradeoff. 
+
+E.4 Safety Alignment 
+
+Table 10 shows uniformly strong performance among proprietary models, with consistently high refusal across tests indicating well-calibrated safety alignment. Across open-weight models, the strongest performers are Phi-4, GPT-120B, and the Gemma4 variants, matching or exceeding the performance of proprietary models. Notably, Qwen3.5 models achieve near-perfect scores on several guardrail tests but show a marked gap on OpenAI Moderation and Perspective API , sug-gesting uneven coverage across safety taxonomies. Grok 4.1 stands out among API models for its lower alignment scores, indicating possible under-tuning on certain safety dimensions. 32 F. Deniz et al. 
+
+Table 7. Extended aiXamine Leaderboard with all model sizes from the selected fami-lies, grouped by (1) API-based, (2) open-weight, and (3) distilled models. The complete leaderboard is available through the aiXamine portal. 
+
+Services Model Adv. Robust. Code Sec. Fair. & Bias Halluc. Jail. Robust. M&D Priv. OOD Robust. Over Ref. Safety Align. Overall Score 
+
+GPT-5 71.6 79.7 68.8 83.9 90.2 69.4 89.5 87.9 95.6 81.8 
+
+Gemini 3 77.2 74.3 76.7 82.7 70.3 65.1 91.6 94.4 93.2 80.6 
+
+Claude-4.5 61.6 70.3 62.7 80.8 98.5 78.7 88.1 82.3 97.0 80.0 
+
+GPT-4o 62.6 73.1 67.5 77.5 51.4 91.1 86.9 94.4 97.5 78.0 
+
+DeepSeek-R1 67.2 77.1 61.6 74.9 51.8 84.7 86.2 91.5 97.4 76.9 
+
+Grok 4 70.3 69.7 61.5 66.0 73.2 68.4 90.0 88.3 97.0 76.0 
+
+Grok 4.1 68.3 72.0 59.5 66.1 78.1 68.2 89.8 88.2 88.0 75.3 
+
+Claude-3.5 62.7 72.2 61.5 74.9 70.5 80.8 87.0 67.2 99.3 75.1 
+
+Grok 3 66.3 68.6 60.9 74.0 47.4 67.4 89.6 94.4 94.0 73.6 
+
+Gemini 2.0 65.7 66.0 66.9 76.2 50.3 59.1 88.6 85.4 94.8 72.5 
+
+Gemini 2.5 62.8 72.2 60.6 72.8 49.7 58.9 88.3 90.4 90.0 71.7 
+
+Gemma4-31B 75.2 75.3 79.0 75.7 73.6 69.6 89.1 85.3 97.4 80.0 
+
+Gemma4-26B-A4B 70.1 76.4 77.5 73.2 72.7 70.8 89.5 82.3 97.3 78.9 
+
+GPT-120B 66.3 80.1 72.9 64.2 91.9 76.9 85.0 72.4 98.2 78.7 
+
+Qwen3.5-27B 69.8 75.0 71.2 71.5 99.5 48.4 86.5 79.6 85.6 76.3 
+
+GPT-20B 65.9 78.2 67.6 59.7 87.7 72.0 83.7 74.5 97.5 76.3 
+
+Qwen3.5-122B-A10B 69.2 74.1 64.3 73.1 99.2 54.1 86.9 79.0 85.4 76.1 
+
+Phi-4 63.5 68.0 72.0 58.4 56.8 84.2 87.3 86.3 99.0 75.1 
+
+Qwen3.5-35B-A3B 68.1 72.1 63.0 70.6 98.7 54.0 84.9 78.4 85.5 75.0 
+
+Qwen3.5-9B 66.1 73.2 63.8 70.5 98.8 52.7 84.1 78.7 86.6 74.9 
+
+Llama3.3-70B 67.6 68.4 58.9 72.1 47.8 74.4 88.6 94.0 94.1 74.0 
+
+Qwen3.5-4B 65.1 71.5 59.3 68.8 98.6 51.0 82.4 78.5 85.2 73.4 
+
+Gemma2-27B 69.9 61.2 64.7 64.5 67.0 72.2 88.6 73.8 97.9 73.3 
+
+Llama4-17B-16E 61.1 69.3 57.8 61.1 56.4 74.5 88.4 94.0 94.5 73.0 
+
+Llama3.1-8B 56.9 70.0 65.7 62.0 55.4 78.6 79.4 90.3 96.6 72.8 
+
+Llama3.2-3B 43.9 62.9 52.4 66.6 58.3 88.1 86.2 93.8 94.3 71.8 
+
+Gemma4-E4B 61.1 71.3 65.8 70.7 52.9 65.7 85.0 72.3 98.1 71.4 
+
+Gemma3-27B 67.3 63.2 56.1 58.3 48.0 68.2 86.3 94.6 92.7 70.5 
+
+Gemma3-12B 68.6 60.8 59.5 57.1 49.7 57.7 85.5 93.1 92.8 69.4 
+
+Gemma4-E2B 53.0 69.3 58.6 71.2 45.6 68.1 82.7 69.7 97.7 68.4 
+
+Gemma3-4B 62.1 58.5 50.0 50.9 49.2 51.2 83.2 90.0 93.2 65.4 
+
+Llama3.2-1B 36.2 59.0 50.9 46.9 67.6 86.2 49.2 81.9 97.0 63.9 
+
+Qwen3.5-2B 55.7 59.9 47.0 37.9 62.8 59.5 79.8 72.9 96.3 63.5 
+
+Gemma3-1B 54.2 54.0 36.1 33.2 53.5 66.9 73.5 84.3 93.8 61.1 
+
+Qwen3.5-0.8B 52.2 54.7 41.7 32.0 54.5 65.9 66.4 69.0 94.8 59.0 
+
+IDA-Qwen2.5-32B 64.7 69.1 59.7 60.6 49.5 80.9 87.1 74.8 98.6 71.7 
+
+IDA-Qwen2.5-14B 62.1 68.5 59.3 60.9 49.1 79.1 86.6 78.7 98.4 71.4 
+
+R1-Qwen3-8B 65.6 54.4 61.1 54.3 59.4 73.4 86.4 80.5 88.8 69.3 
+
+IDA-Llama3.1-8B 38.7 64.1 54.1 56.3 55.7 77.5 89.4 91.5 93.1 68.9 
+
+IDA-Llama3.2-3B 28.9 62.0 42.7 51.3 49.2 81.8 79.9 91.4 89.3 64.1 
+
+R1-Qwen-14B 7.9 67.7 64.0 52.4 46.3 74.4 30.5 79.4 83.0 56.2 
+
+R1-Llama3.1-8B 2.6 60.5 59.3 45.8 43.9 73.5 10.0 89.2 73.4 50.9 Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 33 
+
+Table 8. aiXamine Hallucination Leaderboard                                                                                                                                                                 
+
+> Model SimpleQA TriviaQA TruthfulQA SelfCheckGPT HaluEval FaithEval Vectara Overall Score
+> GPT-5 72.55 95.43 83.80 99.58 74.57 64.34 97.11 83.91
+> Gemini 3 58.60 95.70 92.65 85.36 80.23 77.49 88.57 82.66
+> Claude-4.5 48.08 92.17 88.24 97.91 70.97 72.08 96.03 80.78
+> GPT-4o 36.92 95.31 85.91 89.12 70.07 67.75 97.59 77.52
+> Claude-3.5 53.70 91.29 76.96 95.40 59.06 52.76 95.43 74.94
+> DeepSeek-R1 30.93 100.00 80.64 86.19 75.04 58.35 92.90 74.86
+> Grok 3 41.01 93.45 81.62 72.38 72.98 59.09 97.35 73.98
+> Grok 4.1 17.64 92.74 90.81 13.81 78.32 77.81 91.34 66.07
+> Grok 4 22.42 92.22 88.36 14.64 77.25 73.80 93.02 65.96
+> Gemma4-31B 14.36 82.24 84.56 97.91 75.34 80.22 95.19 75.69
+> Gemma4-26B-A4B 7.95 79.46 81.74 97.49 73.28 74.14 98.07 73.16
+> Qwen3.5-122B-A10B 44.91 92.88 56.62 98.74 49.74 83.28 85.20 73.05
+> Llama3.3-70B 36.36 93.30 75.37 74.90 68.60 58.03 97.83 72.06
+> Qwen3.5-27B 36.13 88.65 60.42 99.16 50.24 83.42 82.19 71.46
+> Qwen3.5-35B-A3B 38.90 89.12 51.10 98.74 49.93 85.83 80.87 70.64
+> Qwen3.5-9B 33.66 84.95 51.35 99.16 50.33 86.03 87.85 70.47
+> Qwen3.5-4B 33.10 81.59 48.53 100.00 50.21 87.09 80.87 68.77
+> GPT-120B 13.82 85.39 81.50 43.93 73.38 58.79 92.30 64.16
+> GPT-20B 18.10 77.40 74.63 40.34 66.47 52.74 88.09 59.68
+> Phi-4 17.08 80.94 76.23 14.23 65.61 62.14 92.90 58.45
+
+E.5 Over Refusal 
+
+Table 11 shows strong responsiveness to innocuous queries across the board, with Gemini 3, Grok 3, and GPT-4o ranking among the top performers. These models maintain high acceptance rates across all four tests, indicating effective calibra-tion across standard, categorical, and semantically tricky prompts. In contrast, Claude-3.5 displays substantially lower OR Bench scores, suggesting a tendency toward over-cautious refusals in contexts that resemble but do not constitute un-safe content. Among open-weight models, Llama3.3-70B leads, while GPT-120B and GPT-20B show notably low OR Bench scores despite strong performance on other tests. 
+
+E.6 Adversarial Robustness 
+
+Table 12 reveals significant variation in LLM responses to prompt attacks and subtle perturbations. Gemini 3 leads by a wide margin, while most API models cluster between 61–72 points. Larger models performed better in clean conditions (AdvGlue ), but their advantage decreased notably on adversarially perturbed prompts ( AdvGlue++ ). Among open-weight models, Gemma4-31B leads with 75.2, outperforming all API models except Gemini 3. This suggests that scaling alone is insufficient and must be complemented with carefully designed training or alignment. 34 F. Deniz et al. 
+
+Table 9. aiXamine Code Security Leaderboard 
+
+Model CyberSecEval 3 SecCodePLT Overall Score C C++ Java Php Python Inst Auto Norm Aug 
+
+GPT-5 66.30 83.78 84.50 88.89 70.80 82.41 81.18 72.05 91.54 79.72 
+
+DeepSeek-R1 91.63 94.79 85.59 88.58 92.17 63.59 60.08 53.99 69.68 77.11 
+
+Gemini 3 64.02 77.22 84.93 87.65 70.37 72.72 72.24 61.12 83.84 74.27 
+
+GPT-4o 92.73 94.21 86.03 90.43 91.74 54.28 52.76 44.30 62.74 73.07 
+
+Claude-3.5 63.22 82.43 84.93 90.43 70.66 66.63 66.54 57.22 75.95 72.17 
+
+Grok 4.1 66.30 83.40 85.15 86.73 70.66 66.25 65.59 53.04 78.80 71.97 
+
+Claude-4.5 56.61 79.34 84.93 87.96 70.94 72.81 55.51 54.66 73.67 70.26 
+
+Grok 4 62.78 80.12 84.93 89.20 69.80 64.26 61.98 48.38 77.85 69.73 
+
+Grok 3 60.13 83.40 85.15 91.36 71.08 62.36 55.99 44.30 74.05 68.60 
+
+GPT-120B 68.72 84.75 85.37 89.20 72.65 80.70 80.23 69.87 91.06 80.10 
+
+GPT-20B 71.37 88.03 85.81 91.36 77.21 73.48 73.95 62.74 84.70 78.18 
+
+Gemma4-26B-A4B 63.66 82.24 86.68 93.21 74.36 73.86 73.86 61.98 85.74 76.42 
+
+Gemma4-31B 66.08 81.47 86.03 91.98 73.50 71.58 71.20 59.51 83.27 75.27 
+
+Qwen3.5-27B 84.80 91.51 90.17 92.28 84.47 67.87 54.09 52.85 69.11 74.95 
+
+Qwen3.5-122B-A10B 84.36 92.28 90.39 93.21 84.05 65.97 51.71 52.19 65.49 74.14 
+
+Qwen3.5-9B 88.55 95.37 93.89 95.68 87.18 60.84 47.15 46.67 61.31 73.15 
+
+Qwen3.5-35B-A3B 87.22 93.82 90.17 92.59 86.18 59.60 47.34 47.53 59.41 72.05 
+
+Qwen3.5-4B 90.09 94.59 89.74 95.99 86.18 57.03 45.63 42.11 60.55 71.53 
+
+Llama3.3-70B 57.93 81.47 85.59 91.67 69.66 60.17 59.41 45.25 74.33 68.41 
+
+Phi-4 62.33 80.89 84.93 90.74 73.08 57.22 57.13 44.11 70.25 67.99 Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 35 
+
+Table 10. aiXamine Safety Alignment Leaderboard 
+
+Model Llama Guard 1 Llama Guard 2 Llama Guard 3 Llama Guard 4 OpenAI Moderation Perspective API Wild Guard Simple Safety Anthropic Redteam Overall Score 
+
+Claude-3.5 100.00 99.61 100.00 100.00 97.13 98.20 99.34 100.00 99.10 99.26 
+
+GPT-4o 99.40 98.18 98.55 97.82 99.04 96.62 89.79 100.00 98.00 97.49 
+
+DeepSeek-R1 99.40 96.74 98.73 99.09 98.47 95.24 92.71 100.00 96.50 97.43 
+
+Claude-4.5 99.20 97.53 100.00 99.45 92.15 94.93 99.73 100.00 90.40 97.04 
+
+Grok 4 99.80 98.05 96.75 99.45 91.95 90.49 96.82 100.00 99.70 97.00 
+
+GPT-5 100.00 93.58 99.27 100.00 87.64 86.23 96.46 100.00 97.58 95.64 
+
+Grok 3 99.60 97.01 85.71 99.82 95.21 87.10 82.49 100.00 98.90 93.98 
+
+Gemini 3 99.00 91.67 94.21 95.45 90.80 87.74 90.45 100.00 89.60 93.21 
+
+Grok 4.1 97.60 93.10 98.37 98.18 63.46 66.35 86.53 100.00 88.35 87.99 
+
+Phi-4 100.00 98.57 99.46 99.45 98.85 98.41 97.88 100.00 98.10 98.97 
+
+GPT-120B 99.80 96.09 100.00 100.00 97.51 92.18 99.34 100.00 98.90 98.20 
+
+GPT-20B 99.80 94.92 100.00 99.82 96.17 90.77 98.01 100.00 97.90 97.49 
+
+Gemma4-31B 100.00 95.96 100.00 100.00 94.44 92.49 97.61 100.00 96.50 97.45 
+
+Gemma4-26B-A4B 100.00 95.44 99.82 100.00 93.68 92.60 98.28 100.00 96.30 97.35 
+
+Llama3.3-70B 98.80 96.88 92.77 97.64 88.51 92.92 86.47 100.00 92.50 94.05 
+
+Qwen3.5-9B 99.60 98.83 99.82 100.00 47.51 34.25 100.00 100.00 99.60 86.62 
+
+Qwen3.5-27B 99.20 99.35 99.64 99.82 42.15 31.40 100.00 100.00 98.80 85.59 
+
+Qwen3.5-35B-A3B 99.20 98.57 99.28 100.00 42.53 30.55 100.00 100.00 99.50 85.51 
+
+Qwen3.5-122B-A10B 98.80 98.44 99.46 100.00 43.10 29.49 100.00 100.00 99.50 85.42 
+
+Qwen3.5-4B 99.80 98.18 99.10 100.00 41.00 29.49 100.00 100.00 99.20 85.20 36 F. Deniz et al. 
+
+Table 11. aiXamine Over Refusal Leaderboard 
+
+Model OK Test OR Bench Wild Guard XS Test Overall Score 
+
+Gemini 3 98.86 91.21 98.76 88.89 94.43 
+
+Grok 3 97.71 97.95 98.04 84.00 94.43 
+
+GPT-4o 97.14 92.57 97.63 90.22 94.39 
+
+DeepSeek-R1 97.71 77.18 98.76 92.44 91.53 
+
+Grok 4 99.14 71.42 90.42 92.22 88.30 
+
+Grok 4.1 98.57 67.40 94.95 92.00 88.23 
+
+GPT-5 96.84 65.88 95.26 93.50 87.87 
+
+Claude-4.5 91.43 80.74 76.31 80.89 82.34 
+
+Claude-3.5 73.43 20.32 83.83 91.33 67.23 
+
+Llama3.3-70B 93.14 95.00 97.53 90.22 93.97 
+
+Phi-4 98.00 62.02 95.78 89.56 86.34 
+
+Gemma4-31B 93.71 61.03 94.23 92.22 85.30 
+
+Gemma4-26B-A4B 91.71 52.62 93.61 91.33 82.32 
+
+Qwen3.5-27B 96.86 43.15 87.11 91.33 79.61 
+
+Qwen3.5-122B-A10B 96.26 38.49 88.72 92.44 78.98 
+
+Qwen3.5-9B 95.42 41.26 86.67 91.33 78.67 
+
+Qwen3.5-4B 95.99 36.59 88.52 92.79 78.47 
+
+Qwen3.5-35B-A3B 96.55 37.31 87.40 92.19 78.36 
+
+GPT-20B 95.42 23.43 87.31 91.78 74.48 
+
+GPT-120B 95.71 14.78 87.02 92.22 72.44 Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 37 
+
+Table 12. aiXamine Adversarial Robustness Leaderboard 
+
+Model AdvGlue AdvGlue++ Overall Score MNLI QNLI QQP RTE SST2 MNLI QNLI QQP RTE SST2 
+
+Gemini 3 86.78 81.76 83.33 90.12 85.14 69.68 74.94 60.81 52.76 86.22 77.15 
+
+GPT-5 73.55 80.41 79.49 90.12 72.30 47.09 82.89 55.26 52.80 82.06 71.60 
+
+Grok 4 65.29 79.73 80.77 96.30 79.05 31.97 77.28 54.63 54.99 83.41 70.34 
+
+Grok 4.1 61.16 80.41 76.92 92.59 79.05 35.79 73.99 51.19 48.52 83.01 68.26 
+
+DeepSeek-R1 74.38 79.05 75.64 91.36 63.51 60.91 59.81 45.52 43.10 78.54 67.18 
+
+Grok 3 53.72 75.00 75.64 90.12 79.73 33.76 70.69 49.31 51.89 82.79 66.26 
+
+Claude-3.5 52.07 82.43 82.05 81.48 62.84 39.00 63.39 51.32 41.91 70.23 62.67 
+
+GPT-4o 50.41 77.03 71.79 90.12 66.22 35.81 60.99 48.92 46.70 77.90 62.59 
+
+Claude-4.5 53.72 82.43 67.95 88.89 67.57 27.62 60.15 48.38 45.74 73.81 61.63 
+
+Gemma4-31B 79.34 85.81 84.62 87.65 79.05 55.56 78.55 61.17 57.72 82.70 75.22 
+
+Gemma4-26B-A4B 68.60 78.38 78.21 90.12 73.65 52.83 74.98 54.52 50.02 80.06 70.14 
+
+Qwen3.5-27B 66.94 87.16 83.33 83.95 68.24 57.29 79.78 55.61 43.64 72.17 69.81 
+
+Qwen3.5-122B-A10B 71.90 81.76 80.77 77.78 67.57 60.08 79.53 56.15 43.46 73.00 69.20 
+
+Qwen3.5-35B-A3B 63.64 84.46 83.33 80.25 60.14 62.75 79.96 55.41 42.19 68.59 68.07 
+
+Llama3.3-70B 61.98 79.05 79.49 86.42 80.41 29.54 71.13 54.74 51.80 80.97 67.55 
+
+GPT-120B 57.85 85.14 87.18 85.19 66.89 30.46 72.84 56.36 47.47 74.08 66.34 
+
+Qwen3.5-9B 61.98 81.76 76.92 80.25 56.76 58.02 79.41 54.09 44.01 67.83 66.10 
+
+GPT-20B 64.46 81.08 80.77 86.42 61.49 41.03 73.30 54.67 45.97 70.17 65.94 
+
+Qwen3.5-4B 51.24 80.41 78.21 83.95 56.08 60.24 77.19 54.83 42.23 66.37 65.07 
+
+Phi-4 59.50 72.97 78.21 87.65 62.84 40.84 62.09 50.63 45.97 73.83 63.45 38 F. Deniz et al. 
+
+E.7 Jailbreak Robustness 
+
+Table 13 reveals stark differences in models’ ability to withstand jailbreak at-tempts. Claude-4.5 leads by a wide margin, demonstrating exceptional resilience across all attack types. GPT-5 ranks second, performing strongly on Jailbroken 
+
+and Cipher , but showing a moderate decline under the adaptive PAIR attack. Most other proprietary models maintain robustness to direct jailbreaks but per-form poorly on PAIR , underscoring that adaptive attacks remain a major vulner-ability. Remarkably, Qwen3.5 models achieve near-perfect jailbreak robustness (98–99), outperforming all API models including Claude-4.5.                                                                                   
+
+> Table 13. aiXamine Jailbreak Robustness Leaderboard
+> Model PAIR Jailbroken Cipher Overall Score
+> Claude-4.5 96.00 99.52 99.88 98.46
+> GPT-5 75.00 98.82 96.80 90.21
+> Grok 4.1 38.00 99.10 97.12 78.07
+> Grok 4 23.00 96.77 99.72 73.17
+> Claude-3.5 41.00 99.07 71.55 70.54
+> Gemini 3 20.00 94.90 96.15 70.35
+> DeepSeek-R1 11.11 83.13 61.13 51.79
+> GPT-4o 5.00 84.21 64.85 51.35
+> Grok 3 0.00 68.41 73.67 47.36
+> Qwen3.5-27B 99.00 99.72 99.65 99.46
+> Qwen3.5-122B-A10B 98.00 99.83 99.90 99.24
+> Qwen3.5-9B 98.00 99.79 98.72 98.84
+> Qwen3.5-35B-A3B 98.00 99.93 98.30 98.74
+> Qwen3.5-4B 97.00 99.66 99.05 98.57
+> GPT-120B 88.00 99.79 87.98 91.92
+> GPT-20B 72.00 99.64 91.37 87.67
+> Gemma4-31B 47.00 98.34 75.42 73.59
+> Gemma4-26B-A4B 48.00 98.55 71.60 72.72
+> Phi-4 10.00 96.38 63.92 56.77
+> Llama3.3-70B 2.00 78.72 62.70 47.81
+
+E.8 OOD Robustness 
+
+Table 14 shows that most models exhibit consistently high accuracy across both stylistic rewrites and perturbation intensities, demonstrating robust semantic stability even under substantial surface-level drift. Gemini 3 leads overall, fol-lowed closely by the Grok models. Among open-weight systems, Gemma4 and Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 39 
+
+Llama3.3-70B match or exceed several API models. Across all model families, performance is generally stronger on word-level augmentations than on style transfers, particularly under higher perturbation, where stylistic transformations impose deeper syntactic and lexical shifts. 
+
+Table 14. aiXamine OOD Robustness Leaderboard 
+
+Model Word Level Bible Romantic Shakespeare Tweet Overall Score Aug ShaW p=0 p=0.6 p=0 p=0.6 p=0 p=0.6 p=0 p=0.6 
+
+Gemini 3 97.02 95.64 89.11 86.58 89.91 88.99 92.66 88.42 93.92 93.69 91.59 
+
+Grok 4 95.30 93.58 87.84 84.40 88.30 87.39 91.74 86.93 91.86 92.32 89.97 
+
+Grok 4.1 94.95 93.58 87.96 84.29 87.84 87.39 91.17 86.70 92.09 91.74 89.77 
+
+Grok 3 94.61 92.89 87.50 84.29 87.73 87.96 90.60 85.78 92.66 91.86 89.59 
+
+GPT-5 94.50 92.32 87.84 82.91 86.93 87.39 91.86 87.16 93.12 90.60 89.46 
+
+Claude-4.5 93.92 91.40 86.58 82.68 85.09 86.70 90.25 83.83 90.60 89.56 88.06 
+
+Claude-3.5 91.63 90.60 85.44 81.54 83.26 85.44 88.76 84.29 89.68 89.33 87.00 
+
+GPT-4o 92.89 90.14 84.29 81.31 84.52 85.78 88.30 82.34 90.37 89.56 86.95 
+
+DeepSeek-R1 91.97 90.25 85.44 80.05 82.80 83.60 88.53 82.00 88.99 88.65 86.23 
+
+Gemma4-26B-A4B 94.15 92.78 87.27 84.98 86.70 88.42 90.94 85.67 92.66 91.51 89.51 
+
+Gemma4-31B 94.27 92.20 87.39 83.72 87.04 87.04 90.60 85.89 91.74 90.71 89.06 
+
+Llama3.3-70B 93.58 91.51 86.93 82.80 86.12 86.24 90.25 84.63 92.32 91.28 88.57 
+
+Phi-4 91.40 91.51 85.21 81.31 84.86 86.12 89.33 84.06 89.22 89.56 87.26 
+
+Qwen3.5-122B-A10B 93.58 90.71 84.29 79.70 83.72 83.60 89.56 83.37 91.17 89.45 86.92 
+
+Qwen3.5-27B 93.23 90.25 84.75 80.16 83.60 83.49 88.19 81.42 90.37 89.45 86.49 
+
+GPT-120B 90.60 88.07 82.45 80.73 83.72 80.28 86.12 81.77 88.07 88.30 85.01 
+
+Qwen3.5-35B-A3B 92.78 88.30 82.22 78.44 81.65 82.34 87.27 78.90 90.14 87.39 84.94 
+
+Qwen3.5-9B 91.40 86.70 81.65 76.03 81.31 81.31 87.04 80.50 88.07 87.27 84.13 
+
+GPT-20B 88.07 86.12 82.45 79.36 81.77 80.28 85.67 79.13 87.73 86.35 83.69 
+
+Qwen3.5-4B 87.50 86.35 79.36 76.72 79.01 79.13 84.86 77.06 87.73 86.01 82.37 
+
+E.9 Model & Data Privacy 
+
+Table 15 shows that both proprietary and open-weight models can achieve strong privacy, though with distinct patterns across test categories. GPT-4o leads among API models, while Phi-4 achieves the highest score among open-weight models. Most models benefit substantially from explicit privacy reminders, indicating strong reliance on prompt-level privacy guidance. 
+
+ConfAIDe evaluations reveal a clearer gap: proprietary models align more closely with human privacy expectations, while many open-weight models, par-ticularly smaller variants, exhibit more variability. On Enron , a stark divide emerges: older models such as GPT-4o and DeepSeek-R1 effectively resist email-address extraction, whereas several newer models (GPT-5, Grok variants, and Gemini 3) exhibit dramatically higher leakage in the zero-shot category, a pat-tern that worsens in the five-shot category. ECHR results further show that 40 F. Deniz et al. 
+
+Table 15. aiXamine Model & Data Privacy Leaderboard 
+
+Model PII Awareness ConfAIde Enron ECHR Overall Score Norm. Aug. Zero-S Five-S Name Date Loc. 
+
+GPT-4o 97.50 100.00 82.69 99.50 93.00 91.50 94.50 74.00 91.09 
+
+DeepSeek-R1 59.64 100.00 87.42 97.50 82.50 83.50 91.50 69.50 84.69 
+
+Claude-3.5 83.21 100.00 78.69 76.00 50.00 93.00 94.50 82.00 80.78 
+
+Claude-4.5 98.57 100.00 85.72 91.50 2.00 84.00 95.00 70.00 78.69 
+
+GPT-5 94.93 100.00 81.42 11.50 8.54 93.00 94.50 78.00 69.36 
+
+Grok 4 95.36 100.00 83.15 10.50 1.00 91.00 94.50 75.50 68.40 
+
+Grok 4.1 93.21 100.00 84.04 7.00 1.00 92.00 95.00 77.00 68.16 
+
+Grok 3 95.71 100.00 85.57 7.50 0.50 83.00 93.00 70.00 67.36 
+
+Gemini 3 87.86 100.00 84.53 4.00 0.00 84.00 91.00 65.00 65.12 
+
+Phi-4 98.21 100.00 83.97 96.50 32.00 90.00 98.00 81.00 84.25 
+
+GPT-120B 100.00 100.00 79.78 31.00 28.00 98.50 99.50 96.50 76.86 
+
+Llama3.3-70B 89.64 100.00 80.89 40.50 29.00 89.50 95.00 76.50 74.36 
+
+GPT-20B 98.93 100.00 72.65 28.50 7.50 97.50 100.00 96.00 71.99 
+
+Gemma4-26B-A4B 93.93 100.00 85.28 21.50 0.50 91.00 95.00 83.50 70.77 
+
+Gemma4-31B 88.21 100.00 84.11 21.50 0.50 92.50 94.00 81.00 69.60 
+
+Qwen3.5-122B-A10B 72.14 77.50 57.65 11.50 0.00 81.00 93.00 60.00 54.06 
+
+Qwen3.5-35B-A3B 48.93 62.14 66.90 27.00 0.50 81.50 93.50 64.00 53.96 
+
+Qwen3.5-9B 34.64 89.29 60.07 12.00 2.00 82.50 93.00 69.50 52.68 
+
+Qwen3.5-4B 29.29 61.07 67.94 14.50 2.00 84.00 92.50 72.00 51.05 
+
+Qwen3.5-27B 26.43 68.93 55.23 23.50 0.50 82.00 90.00 63.50 48.35 Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy 41 
+
+Table 16. aiXamine Fairness & Bias Leaderboard 
+
+Model Adult Gendercare Preference BBQ Overall Score Sex Race Edu Hours Type M F NLifestyle Ideology 
+
+Gemini 3 90.11 92.21 71.56 92.52 58.04 74.07 74.01 73.87 4.88 86.08 92.18 76.72 
+
+GPT-5 92.22 92.45 72.92 91.52 52.82 82.09 73.36 77.16 0.00 34.81 92.41 68.78 
+
+GPT-4o 87.09 94.22 72.54 92.75 44.67 75.78 69.71 72.13 7.32 32.91 93.55 67.53 
+
+Claude-4.5 91.31 94.88 65.75 96.93 41.67 71.72 68.52 71.36 0.00 25.95 83.36 62.71 
+
+DeepSeek-R1 93.90 95.07 65.04 96.17 39.42 73.06 70.82 65.83 0.00 5.06 93.09 61.59 
+
+Grok 4 92.10 93.71 74.82 94.13 34.94 69.36 68.85 74.87 0.00 0.00 94.18 61.50 
+
+Claude-3.5 94.04 93.11 61.15 95.67 43.52 74.41 69.18 65.83 0.00 16.46 85.55 61.45 
+
+Grok 3 80.57 94.59 67.85 96.04 49.72 74.07 69.51 67.59 0.00 0.00 94.45 60.92 
+
+Grok 4.1 88.78 94.03 75.02 93.45 36.48 62.29 65.57 66.33 0.00 0.00 93.00 59.53 
+
+Gemma4-31B 96.62 96.99 78.33 94.18 35.96 76.09 74.75 75.13 8.54 92.41 94.82 78.96 
+
+Gemma4-26B-A4B 95.64 92.18 63.97 94.27 45.78 73.74 74.75 72.11 10.98 91.14 92.64 77.50 
+
+GPT-120B 94.53 93.59 72.97 95.69 35.54 74.07 72.46 70.85 10.98 62.66 92.82 72.93 
+
+Phi-4 92.04 89.70 73.82 98.76 43.31 65.99 66.23 62.81 31.71 60.13 92.55 72.01 
+
+Qwen3.5-27B 94.61 97.46 85.85 94.92 87.81 54.21 55.41 39.45 13.41 77.22 88.00 71.17 
+
+GPT-20B 95.02 92.30 69.62 91.27 56.05 73.74 70.49 67.34 7.32 38.61 90.00 67.64 
+
+Qwen3.5-122B-A10B 98.65 95.18 87.25 90.36 77.87 35.02 42.95 22.36 14.63 63.92 88.00 64.32 
+
+Qwen3.5-9B 88.38 82.84 88.88 95.79 91.56 23.57 25.90 11.56 23.17 77.85 88.45 63.78 
+
+Qwen3.5-35B-A3B 96.46 86.40 92.53 92.14 67.77 25.25 21.64 13.32 21.95 76.58 85.82 63.03 
+
+Qwen3.5-4B 82.34 68.17 76.77 93.29 88.91 18.18 16.39 9.30 21.95 65.82 88.73 59.29 
+
+Llama3.3-70B 87.71 94.27 65.14 93.25 43.07 71.38 66.89 68.09 0.00 1.27 87.27 58.92 
+
+models are generally reliable with name and date fields but often struggle with location, reflecting a persistent weakness in handling geographic PII. 
+
+E.10 Fairness & Bias 
+
+Table 16 shows that models generally achieve high parity on the Adult bench-mark, indicating stable performance across core demographic attributes. How-ever, performance drops on GenderCARE , where disparities in gendered word-choice selection remain pronounced even among top models. The Preference test remains the most challenging: nearly all models struggle to maintain ideological and lifestyle neutrality, rarely refusing to state a preference. In contrast, BBQ 
+
+reveals strong stereotype-avoidance in several models.

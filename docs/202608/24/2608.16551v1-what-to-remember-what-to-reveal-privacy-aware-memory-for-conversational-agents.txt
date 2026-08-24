@@ -1,0 +1,1054 @@
+Title: What to Remember, What to Reveal: Privacy-Aware Memory for Conversational Agents
+
+URL Source: https://arxiv.org/pdf/2608.16551v1
+
+Published Time: Tue, 18 Aug 2026 02:06:16 GMT
+
+Number of Pages: 35
+
+Markdown Content:
+# What to Remember, What to Reveal: Privacy-Aware Memory for Conversational Agents 
+
+Wenjie Wang ∗ Wenhe Si ∗ Xinyue Xu Yue Xu †
+
+ShanghaiTech University 
+
+{wangwj1, siwh2023, xuxy2022, xuyue2022}@shanghaitech.edu.cn 
+
+# Abstract 
+
+Long-term memory enables personalized conversational agents to retain user infor-mation across sessions. However, existing memory architectures primarily optimize for utility but neglect the risks of storing and reusing private attributes such as personally identifiable information (PII) unnecessarily. Dealing with privacy risk in personalized memory is challenging as simply removing sensitive values would un-dermine the utility of the memory system. Therefore, privacy protection for memory agents must govern the full life-cycle of sensitive values rather than just sanitizing individual records. To fill this research gap, we introduce Sanitized Privacy-
+
+Mapped M em ory (SP-Mem), a privacy-aware memory architecture that decouples memory utility from exact private-value exposure. SP-Mem provides full life-cycle privacy-related design including determining how to identify and separate sensitive information from raw user inputs, how to store sanitized content and exact private values in isolated structures, and how to selectively retrieve values based on the task requirement and user consent. We further introduce a privacy-aware memory benchmark that jointly assesses response quality, privacy behavior, and inference cost. Extensive experiments across multiple LLM-based agents show that SP-Mem achieves stronger personalization while reducing unnecessary privacy exposure. Code and data are available at https://github.com/Jensassss/SP-Mem .
+
+# 1 Introduction 
+
+Long-term memory enables conversational agents to retain user information across sessions [1–4], moving beyond isolated prompt-response interactions toward continuous, user-adaptive personaliza-tion, which is a fundamental capability in agent design. However, user memory typically contains both useful non-sensitive preferences and highly sensitive personal information, such as personally identifiable information (PII). This mix of information creates a privacy risk: persistent memory may store, retrieve, and reuse private attributes across sessions [5], even when irrelevant to the current task [6, 7]. The core challenge thus shifts from enabling memory to controlling it : what is remembered, how it is stored, and what is retrieved. 
+
+Existing memory-augmented agent frameworks mainly optimize for utility by persistently extracting user facts, preferences, and summarizing them into a searchable memory architecture [8–13]. This persistent user memory storage introduces a distinct privacy-utility tension: privacy risks arise but simply removing sensitive values would undermine the utility of the memory system. 
+
+On one hand, sensitive information can naturally appear in user-agent interactions [6, 7]. Direct storage in searchable memory is risky [14], as it can expose private information in unauthorized context, or in situations where only non-sensitive preferences are needed. For example, a user asks 
+
+> *Equal contribution.
+> †Corresponding author. Preprint. arXiv:2608.16551v1 [cs.CR] 17 Aug 2026
+
+Figure 1: Overview of the privacy-aware conversational agent framework. The system contains three stages: privacy-aware memory writing, partitioned memory storage, and query-time privacy-aware reasoning. Private values are sanitized before storage and are only hydrated at inference time when the task requires them and the user grants consent. for a dinner recommendation based on food preference, which is a task only need non-sensitive preference "taste" but memory systems may retrieve and leak the user’s exact home address. On the other hand, exact private values cannot simply be removed or permanently masked, since many personal-assistance tasks require them for task completion, such as form filling or finance- and health-related assistance [15, 16]. Therefore, privacy protection for memory agents must govern the full life-cycle of sensitive values rather than just sanitize individual prompts. In this work, we propose Sanitized Privacy-Mapped M em ory (SP-Mem), a privacy-aware memory architecture that separates searchable sanitized memory from protected private values. As shown in Figure 1, it contains three key components. Privacy-aware memory writing determines how to identify and separate sensitive information from raw user inputs, partitioned memory storage defines how to store sanitized content and exact private values in isolated structures while maintaining a mapping relationship between them, and privacy-aware query-time reasoning controls how to selectively retrieve values based on the task requirement and user consent. To evaluate SP-Mem, we note that existing memory benchmarks primarily emphasize whether the agent can remember and apply user information [17–19], but rarely distinguish between appropriate personalization and unnecessary privacy use. An evaluation framework that jointly measures response quality, personalization and privacy-appropriate behavior is needed. Therefore, we introduce a privacy-aware benchmark that includes annotated user profiles, history dialogues, test queries, consent settings, and task-specific information requirements. This yields 2,100 user history dialogues for memory construction and 5,400 queries for evaluation. Experiments across multiple assistant models and memory configurations (including SP-Mem) show that our framework improves personalization while limiting unnecessary privacy exposure. Our contributions can be summarized as follows: • We formulate privacy-aware long-term memory as a core challenge for personalized conver-sational agents, shifting the focus from remembering user information to controlling how sensitive data is written, stored, retrieved, and used. • We propose SP-Mem, a privacy-aware memory architecture with privacy-preserving memory writing, partitioned memory storage, query-time privacy reasoning, and authorization-gated retrieval, built on a hybrid graph-vector memory layer. • We introduce the first privacy-aware memory benchmark and evaluation pipeline that jointly assesses response quality, personalization quality, privacy behavior, latency, and token cost. 2Figure 2: Detailed view of SP-Mem. The writing module processes each user input through two parallel branches: a vector branch that extracts fact-style memories and a graph branch that extracts relation triples. Non-private values and sanitized private values are written into the sanitized vector and graph stores. For private values, SP-Mem writes mapping keys into the privacy-mapping layer and stores exact values in the protected private storage. Extensive experiments across multiple LLM-based agents show that SP-Mem achieves stronger personalization while significantly limiting unnecessary privacy exposure. 
+
+# 2 SP-Mem: Sanitized Privacy-Mapped Memory 
+
+SP-Mem decouples memory utility from exact private-value exposure via three layers, as illustrated in Figure 1: (1) a privacy-aware memory writing that sanitizes private values during memory extraction; (2) a partitioned memory storage layer that separates sanitized searchable memory from protected mappings to exact private values; and (3) a privacy-aware query reasoning pipeline that selectively retrieves values based on the task requirement and user consent. 
+
+2.1 Privacy-Aware Memory Writing Complementary vector and graph memory. As shown in Figure 2, SP-Mem uses vector memory and graph memory as complementary retrieval structures. Vector memory stores fact-style informa-tion in natural language, enabling semantic retrieval even when the query differs from the stored wording [20, 21]. Graph memory stores relation triplets, enabling structured access to user attributes, preferences, and entity-level relations [22, 23]. By combining the two, SP-Mem can retrieve both broadly relevant facts and relation-specific user information. The following sections detail the privacy extraction and sanitization processes in these two branches. 
+
+Privacy-aware information extraction. Before writing an item into memory, SP-Mem first converts the raw user utterance into two complementary representations: natural-language facts for the vector branch and relation triplets for the graph branch. During this process, privacy-sensitive values are detected and annotated using a rule-based privacy extraction strategy for future sanitization before storage. Let T denote a predefined taxonomy of privacy entity types (relegated to Appendix C.1.2). For the vector branch, the memory writer extracts fact objects f = ( yf , Af ), where yf is a natural-language fact and Af = {(vj , τ j )}nj=1 is the set of privacy annotations detected in the fact, such as the email address highlighted in light blue on the upper-left of Figure 2. Each annotation (vj , τ j )
+
+consists of a raw private value vj and its privacy type τj . Facts with Af = ∅ are treated as non-private. For the graph branch, the writer extracts relation triplets r = ( sr , ρ r , d r ), where sr, ρr, and dr
+
+denote the source entity, relation label, and destination entity, respectively. Relation labels cover 3privacy-related user attributes, non-private preferences, and general user relations. A triplet is marked as privacy-related if ρr corresponds to privacy-sensitive attributes. 
+
+Privacy sanitization strategies. After privacy-aware information extraction, detected private values are transformed into sanitized representations before being written into searchable memory, while non-private facts and triplets remain unchanged. To preserve task-relevant semantics without exposing exact private values, SP-Mem adopts four families of sanitization strategies: name or alias substitution, suffix-preserving masking, numerical bucketing, and LLM-based generalization. Each fine-grained privacy type τ is assigned an appropriate strategy according to a type-to-strategy policy g. In the vector branch, each detected private value vj in a fact is replaced with its sanitized value 
+
+˜vj = SANITIZE (vj , g (τj )) , producing a sanitized fact. For example, the email address in Figure 2 is sanitized to “user@email.com”. In the graph branch, triplets with non-private relations remain unchanged, while for privacy-related triplets, the private destination value dr is replaced with its sanitized counterpart ˜dr = SANITIZE (dr , g (τr )) . The complete strategy definitions and type-to-strategy mapping are provided in Appendix D.2. 
+
+2.2 Partitioned Storage with Privacy Mapping 
+
+After sanitization, SP-Mem partitions the storage layer into searchable memory, a privacy mapping layer, and a protected private store (the middle part of Figure 1). The searchable memory consists of vector and graph stores, which contain non-private entries and sanitized representations for general retrieval. Exact private values are stored only in the protected private store. The privacy mapping layer records a mapping key for each sanitized private entry, linking the sanitized representation in searchable memory to its corresponding exact value in the protected store. As a result, exact private values remain outside general retrieval and can be restored only through authorization-gated recovery. A complete specification of this procedure is provided in Algorithm 3 in Appendix D.1. 
+
+2.3 Privacy-Aware Query-Time Reasoning and Authorized Retrieval 
+
+As shown in the bottom part of Figure 1, SP-Mem performs query-time reasoning before memory retrieval. Given a user query, the query analyzer identifies the information required to complete the task and determines whether any required entity corresponds to private information. This step converts the user query into a task-dependent access decision, distinguishing standard retrieval over sanitized searchable memory from authorization-gated retrieval that may restore exact private values. If no private information is required, SP-Mem retrieves relevant context only from the sanitized searchable memory layer. If private information is required, SP-Mem requests user consent before accessing exact values. With consent, it retrieves relevant sanitized memories and restores only the task-required exact private values through the privacy mapping layer. Without consent, it falls back to sanitized memory only. The response is then generated from the current query and the retrieved context. The prompts used for reasoning and response generation are provided in Appendix D.3. 
+
+# 3 Privacy-Aware Memory Benchmark 
+
+Existing memory benchmarks primarily emphasize whether the agent can remember and apply user information, but rarely distinguish between appropriate personalization and unnecessary privacy use. To evaluate the effectiveness of SP-Mem, we construct the first privacy-aware memory benchmark for assessing response quality, personalization, and privacy-appropriate behavior in memory-augmented LLM agents. The benchmark simulates long-term personalization memory by generating user profiles, historical dialogues, and scenario-grounded test queries that involve both privacy-sensitive attributes (the PII Set in Figure 3) and non-private preferences (the Preference Entity Set in 3). Each test task is annotated with its required information scope, indicating whether the task requires preferences, exact private information, or both, and if privacy is needed, whether user consent is present. This allows us to evaluate whether a memory system can not only improve task completion and personalization, but also decide when private information should be avoided, requested, or restored under user consent. As illustrated in Figure 3, the benchmark is constructed through a three-stage pipeline. The first stage synthesizes user profiles that contain both privacy-sensitive attributes and non-private personalization preferences. The second stage instantiates scenario-grounded subtasks with explicit privacy and preference scopes. The third stage generates historical dialogues for memory construction and test queries for downstream evaluation. 4Figure 3: Overview of the benchmark construction pipeline. 
+
+3.1 User Profile Generation 
+
+The benchmark covers four domains, including finance, medical, education, and mental support, and contains 1,000 synthesized user profiles. Each user profile i consists of privacy-sensitive attributes 
+
+P priv  
+
+> i
+
+and non-private preferences P pref  
+
+> i
+
+, which jointly define the user’s personal context for dialogue generation and downstream evaluation. For each user, P priv  
+
+> i
+
+and P pref  
+
+> i
+
+contain concrete values for predefined privacy and preference entity set, denoted by Epriv and Epref , respectively. 
+
+Privacy-sensitive attributes. Following prior studies [15, 24–26], we define privacy-sensitive attributes as personally identifiable information (PII) and organize the privacy entity set Epriv into 8 high-level categories and 37 fine-grained types. The full taxonomy is provided in Appendix C.1.2. Privacy-sensitive attributes of each user are constructed through a hybrid pipeline. Rule-based generators produce structured fields with explicit formats or consistency constraints, while an LLM enriches open-ended fields conditioned on the structured fields. An LLM-assisted consistency check is further applied to improve completeness and internal consistency. 
+
+Non-private preferences. Following prior work on preference following and personalized assis-tants [27, 28], we construct a preference entity set Epref , consisting of 14 general dimensions and 4 domain-specific dimensions. For each dimension, preference candidates are generated with an LLM and refined through semantic deduplication. Each user profile contains a shared set of general preferences and an additional set of preferences specific to its assigned domain. The final non-private preferences are assigned to each user conditioned on P priv  
+
+> i
+
+, so as to maintain coherence between user background and preferences. A further privacy–preference consistency check is applied to filter conflicting profiles. Additional details on user profile generation are provided in Appendix C.1. 
+
+3.2 Subtask Generation 
+
+Given the synthesized user profiles, this stage defines scenario-grounded subtasks with explicit privacy and preference requirements. We define a scenario schema that covers 8 general scenarios and 8 domain-specific scenarios, with two scenarios for each domain. For each scenario, a privacy– preference scope is specified by selecting task-relevant privacy entities Epriv  
+
+> t
+
+and preference entities 
+
+Epref  
+
+> t
+
+from the PII entity set and preference entity set, respectively. These selected entities define the task’s information requirements and determine its task mode mt: privacy-only if only privacy entities are selected, preference-only if only preference entities are selected, and mixed if both are selected. Formally, each subtask requirement is represented as qt = ( st, m t, E priv  
+
+> t
+
+, E pref  
+
+> t
+
+), where st denotes the scenario, mt is the task mode. Based on the task requirement qt and a user profile, a few-shot LLM generator instantiates concrete subtasks by elaborating the abstract task description into specific user–assistant task settings. To ensure validity and diversity, generated subtasks are filtered if they violate the sampled entity requirements, mismatch the target mode, duplicate existing tasks, or describe implausible user– assistant interactions. The resulting subtask pool serves as the shared source for both history dialogue 5generation and test query generation in the next stage. After filtering, the pool contains 376 distinct subtasks, including 185 preference-only tasks, 51 privacy-only tasks, and 140 mixed tasks. Full details are provided in Appendix C.2. 
+
+3.3 User History Dialogue and Test Generation 
+
+The third stage generates two types of data from the subtask pool: historical dialogues for memory construction and test queries for downstream evaluation. For each scenario, six tasks are reserved for testing, including three preference-only tasks and three privacy-related tasks ( mixed or privacy-only tasks), forming the test subtask pool. The remaining tasks are used as a dialogue subtask pool. Overall, this stage produces 21,000 historical dialogues for memory construction and 54,000 user-query evaluation instances, derived from 270 unique test query variants. 
+
+History dialogue generation. For each user i, 21 dialogue tasks Di are sampled from the dialogue subtask pool under an entity-coverage constraint. Specifically, the selected tasks are required to collectively cover all privacy entities and preference dimensions assigned to the user: 
+
+[
+
+> t∈Di
+
+
+
+Epriv  
+
+> t
+
+∪ Epref 
+
+> t
+
+
+
+⊇ E priv  
+
+> i
+
+∪ E pref  
+
+> i
+
+, |Di| = 21 .
+
+This constraint ensures that the resulting history dialogues contain sufficient memory evidence for both privacy-sensitive attributes and non-private preferences. Given the selected tasks and user profile, multi-turn user–assistant dialogues are generated with role-play LLMs. In each dialogue, the user LLM gradually discloses the task-required entity values, and each user utterance is annotated with the corresponding entity labels. Dialogues continue until the required information is collected and the assistant completes the task. Additional details are provided in Appendix C.3. 
+
+Test query generation. Using the same task-card schema, 90 test task cards are constructed and each card is rewritten into three natural query variants with an LLM, yielding 270 query variants in total. For each user, test queries are sampled from seven shared general scenarios and two domain-specific scenarios, resulting in 54 test queries per user. The required privacy and preference entities are preserved as ground-truth annotations, enabling controlled evaluation of whether memory systems retrieve and use the appropriate information under each task mode. 
+
+# 4 Experiments 
+
+The experiments evaluate SP-Mem along the full memory lifecycle. After introducing the experimen-tal configurations, we examine privacy-identification accuracy, response quality, and privacy behavior through comparisons with full-context prompting and existing memory architectures. We further analyze efficiency and ablate the memory branches to assess their complementary roles. 
+
+4.1 Configurations Data and evaluation tasks. We uniformly sample 100 users across the four domains for evaluation. For each user, we use 21 user-assistant history dialogues to construct memory and 54 user queries for evaluation, resulting in 2,100 history dialogues and 5,400 evaluation queries in total. Each evaluation query is assigned to one of five evaluation task categories in Table 1, according to its task mode and consent condition. Table 1: Evaluation task category.       
+
+> Task Description
+> Preference-only Requires preferences only; no private information is needed. Privacy-only-allowed Requires private information only; user allows privacy usage. Privacy-only-denied Requires private information only; user denies privacy usage. Mixed-allowed Requires preferences and private information; user allows privacy usage. Mixed-denied Requires preferences and private information; user denies privacy usage.
+
+Baselines and models. We compare against four agent configurations: a Full-context baseline, where the response model receives the user’s complete interaction history and current query directly 6in the prompt, and three memory-augmented agents based on Zep [9], Mem0 [8], and MemOS [10]. For memory-augmented agents, user histories are first converted into memory, and the current query is answered using retrieved memory evidence. To isolate architectural differences among memory modules, GPT-5.2-Chat [29] is used as the memory-construction model for all memory-augmented methods. At query time, we evaluate response generation with four backbone LLMs: GPT-5.2-Chat [29], Llama-3.1-8B-Instruct [30], Qwen3-14B [31], and DeepSeek-V3.2 [32]. 
+
+Metrics. We evaluate both memory-writing accuracy and end-to-end query-time performance. For 
+
+memory writing , we measure privacy-entity identification using accuracy, precision, and recall to evaluate whether private values are correctly detected before storage. For end-to-end query-time performance , we consider three dimensions: response quality, privacy behavior, and inference cost. For response quality, we use pairwise Task Completion ( P-TC ) and pairwise Personalization Quality (P-PQ ). P-TC evaluates whether the response satisfies the task requirements and is practically useful, while P-PQ evaluates whether the response meaningfully uses the required preference entities without hallucinating unsupported user information. Both metrics are computed using pairwise LLM-as-a-judge evaluation. We use GPT-4.1 [33] as the judge model; for each query and baseline, the judge compares SP-Mem with the baseline and assigns a win, loss, or tie. We report the win-tie rate 
+
+(W + T )/N , where W , T , and N denote the number of SP-Mem wins, ties, and total comparisons, respectively. For privacy behavior, we use Privacy-Appropriate Requesting ( PAR ) and Unnecessary Privacy Usage ( UPU ). PAR measures whether the agent detects task-required private information and requests permission before using it; we report accuracy, precision, and recall. UPU is a rule-based binary metric that detects exposure of exact private values that are unnecessary for the task or unauthorized under the consent condition; we report the exposure rate. For inference cost, we report total token usage. More details are provided in Appendix E. 
+
+4.2 Accuracy of Privacy-Aware Memory Writing Table 2: Privacy-entity identification performance.                   
+
+> Domain Acc. Rec. Prec. Medical 0.996 0.994 0.957 Finance 0.996 0.988 0.968 Education 0.997 0.992 0.975 Mental 0.996 0.994 0.959 All 0.996 0.992 0.965
+
+Accurate privacy identification at the memory-writing stage is critical to SP-Mem because it prevents exact pri-vate values from entering searchable memory. As shown in Table 2, SP-Mem achieves consistently strong perfor-mance across domains, with an overall accuracy of 0.996, recall of 0.992, and precision of 0.965. These results in-dicate that the writing module achieves strong and stable performance across domains, supporting the downstream retrieval and generation stages. 
+
+4.3 Response Quality 
+
+We evaluate response quality with pairwise P-TC and P-PQ comparisons under two task groups: allowed-access tasks, including Preference-only, Privacy-only-allowed, and Mixed-allowed, and denied-access tasks, including Privacy-only-denied and Mixed-denied. This split evaluates whether SP-Mem maintains response quality both when private information can be used and when exact private values must remain unavailable. 
+
+SP-Mem improves response quality over memory baselines. Table 3 shows the performance of allowed-access task, where SP-Mem achieves strong P-TC and P-PQ win-tie rates against all memory baselines, with most values above 85%. This indicates that privacy-aware writing preserves enough useful evidence for task completion and personalization through sanitized facts and structured memory links. Compared with Full-context , SP-Mem is not always stronger on P-TC because 
+
+Full-context gives the response model access to the entire interaction history, which often provides sufficient evidence for task completion. However, this unrestricted context can dilute attention over user preferences and make the model less reliable at following the most relevant personalization signals. As a result, SP-Mem remains especially competitive on P-PQ, suggesting that personalization depends more on retrieving concise and relevant user signals than on exposing the full history. 
+
+SP-Mem is especially effective when private values are unavailable. Table 4 reports results on Privacy-only-denied and Mixed-denied tasks, where exact private values should not be used. SP-Mem achieves win-tie rates above 86% against all the baselines across available backbones and metrics. This validates SP-Mem’s privacy-aware sanitization strategy, showing that sanitized memory can still provide useful task and personalization signals when raw private values are inaccessible. 7Table 3: Pairwise response-quality comparison on Preference-only, Privacy-only-allowed, and Mixed-allowed tasks. Values report the win-tie rate of SP-Mem against each baseline.                                             
+
+> SP-Mem vs. GPT-5.2-Chat Llama-3.1-8B-Instruct DeepSeek-V3.2 Qwen3-14B P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑
+> Full-context 65.35% 79.13% 66.43% 85.75% 71.34% 80.12% 45.09% 71.70% MemOS 90.29% 94.98% 85.88% 90.12% 94.00% 95.65% 77.38% 90.11% Mem0 90.87% 94.24% 87.15% 85.87% 95.33% 95.78% 80.63% 89.54% Zep 91.60% 94.63% 87.02% 88.04% 95.56% 95.61% 79.13% 89.64%
+
+Table 4: Pairwise response-quality comparison on Privacy-only-denied and Mixed-denied tasks. Values use the win-tie rate of SP-Mem against each baseline.                                             
+
+> SP-Mem vs. GPT-5.2-Chat Llama-3.1-8B-Instruct DeepSeek-V3.2 Qwen3-14B P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑
+> Full-context 91.45% 90.86% 96.06% 96.78% 87.14% 87.59% 86.65% 88.88% MemOS 92.85% 94.58% 94.23% 91.41% 95.04% 94.11% 87.59% 91.84% Mem0 92.74% 94.53% 93.72% 88.00% 95.59% 93.58% 90.52% 90.47% Zep 93.39% 94.30% 96.17% 91.54% 95.69% 93.58% 89.05% 90.62%
+
+4.4 Privacy Behavior 
+
+We evaluate the privacy behavior of SP-Mem using PAR and UPU across different task settings. PAR is evaluated on all five tasks to assess whether the model requests authorization when private information is needed. UPU is evaluated on -denied and Preference-only tasks to examine whether exact private values still appear when authorization is denied or privacy access is unnecessary. Table 5 reports PAR precision and recall across different backbones. SP-Mem achieves PAR precision of 1.00 across all backbones, with recall between 0.84 and 0.92, suggesting that SP-Mem avoids unnecessary permission requests while still identifying most privacy-requiring tasks. Figure 4 reports UPU in settings where exact private values should not appear. SP-Mem keeps UPU low in all evaluation tasks, with 1.21% on Mixed-denied, 1.12% on Privacy-only-denied, and 0.33% on Preference-only. The contrast is especially clear in Preference-only tasks, where Full-context exposes exact private values in 16.00% of responses, while SP-Mem reduces this rate to 0.33%. Overall, SP-Mem controls privacy at both stages: requesting authorization before private-value access and limiting exact private-value exposure during final response generation. 
+
+Figure 4: UPU across methods in evaluation tasks where exact private values should not appear. 
+
+4.5 Privacy and Cost Trade-offs 
+
+We compare the relative token usage to assess the cost of SP-Mem and other memory baselines normalized by Full-context prompting. Table 6 shows that SP-Mem uses only 26–31% of the tokens Table 5: PAR results across backbone models.                     
+
+> Model Acc. Rec. Prec. F1 GPT-5.2 0.89 0.84 1.00 0.91 Llama-3.1 0.95 0.92 1.00 0.96 DeepSeek 0.93 0.90 1.00 0.95 Qwen3 0.94 0.91 1.00 0.95
+
+Table 6: Relative total token usage normalized by Full-context .                        
+
+> Method GPT-5.2 Llama-3.1 DeepSeek Qwen3 Full-context 1.00 1.00 1.00 1.00 MemOS 0.27 0.25 0.25 0.23 Mem0 0.25 0.23 0.24 0.21 Zep 0.25 0.24 0.24 0.22 SP-Mem 0.31 0.30 0.30 0.26
+
+8required by Full-context prompting across backbones. Compared with other memory baselines, SP-Mem consumes more tokens, but the added cost supports stronger P-TC and P-PQ performance. This makes the moderate token overhead introduced by SP-Mem acceptable for long-term conversational agents where personalization quality and privacy control are both required. 
+
+4.6 Ablation Study 
+
+To isolate the contribution of each memory branch, we compare the full vector+graph memory with two ablated variants: vector-only , which only have the vectory branch, and graph-only , which only have the graph branch. As shown in Table 7, vector+graph achieves win-tie rates above 80% against both single-branch variants across all backbones and metrics, indicating that the hybrid memory is consistently preferred over either ablation. The comparison against both single-branch variants suggests that the two branches are complementary. The gains over vector-only are especially strong on P-PQ, indicating that graph memory helps capture structured user-entity relations for preference personalization. The gains over graph-only remain consistently high on P-TC, suggesting that vector memory contributes broader semantic context beyond explicit relational triplets. Table 7: Ablation study of vector and graph memory. Each value reports the win-tie rate of vec-tor+graph against a single-branch variant.                             
+
+> vector+graph vs. GPT-5.2-Chat Llama-3.1-8B-Instruct DeepSeek-V3.2 Qwen3-14B P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑P-TC ↑P-PQ ↑
+> graph-only 91.11% 88.73% 85.86% 80.37% 88.55% 85.38% 86.39% 82.27%
+> vector-only 90.77% 92.42% 85.52% 84.96% 88.43% 90.65% 87.23% 88.24%
+
+# 5 Related Work 
+
+Memory architectures for LLM agents. Recent work has increasingly equipped LLM-based agents with external memory for long-term interaction and personalized assistance [34]. Early memory streams and long-term memory banks [2, 3] have been extended to structured memory systems, including hybrid vector and graph memory in Mem 0g and Zep [8, 9], memory-agent management in MemOS [10], and hierarchical memory in MemoryOS [35]. However, these systems primarily optimize memory utility and downstream task performance, rather than privacy-governed storage, retrieval, and selective disclosure of sensitive user information. 
+
+Benchmarks for personalization and privacy. Existing benchmarks typically evaluate personal-ization and privacy separately. Personalization benchmarks test whether LLMs can adapt using user histories or profiles [19, 27, 28, 36]. Privacy benchmarks instead focus on query-aware PII protection, contextual privacy awareness, leakage detection, or reconstruction of withheld attributes [15, 37–39]. However, long-term memory agents require a more conditional view: private information is not uniformly forbidden, but should be used only when task-relevant and user-authorized. Our benchmark targets this gap by separating non-private preferences from exact private information and evaluating tasks that require preferences, private values, or both under different consent conditions. 
+
+Privacy protection methods. Existing privacy-protection methods for LLM applications typically detect and transform private entities before inference [25, 40], with prior work studying the privacy– utility trade-off of masking and pseudonymization [16]. However, these methods mainly target transient prompts and responses, whereas persistent memory may store, retrieve, and reuse sensitive interactions across future sessions [6]. SP-Mem protects the full memory lifecycle by storing sanitized memories in the searchable layer, keeping exact private values separate, and restoring them only when task-relevant and user-authorized. Detailed discussion of related work is provided in Appendix B. 
+
+# 6 Conclusion 
+
+We introduced Sanitized Privacy-Mapped M em ory (SP-Mem), a privacy-aware memory architec-ture for long-term conversational agents. SP-Mem separates searchable sanitized memory from protected exact private values, and restores private information only when it is both task-required and user-authorized. We also built a privacy-aware personalization benchmark across four domains to jointly evaluate response utility, personalization quality, privacy behavior, and inference cost. 9Experiments across multiple LLM backbones show that SP-Mem maintains strong personalized assistance while reducing unnecessary exposure of exact private values. While our benchmark provides a controlled testbed for privacy-aware personalization, future work should examine SP-Mem in real-world interactions and support finer-grained user-specific privacy preferences. 10 References 
+
+[1] Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez. MemGPT: Towards LLMs as operating systems. arXiv preprint arXiv:2310.08560 , 2024. [2] Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. Memorybank: Enhancing large language models with long-term memory. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, pages 19724–19731, 2024. [3] Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy Liang, and Michael S. Bernstein. Generative agents: Interactive simulacra of human behavior. In Proceed-ings of the 36th Annual ACM Symposium on User Interface Software and Technology , pages 1–22, 2023. [4] Weizhi Wang, Li Dong, Hao Cheng, Xiaodong Liu, Xifeng Yan, Jianfeng Gao, and Furu Wei. Augmenting language models with long-term memory. In Thirty-seventh Conference on Neural Information Processing Systems , 2023. [5] Robin Staab, Mark Vero, Mislav Balunovic, and Martin Vechev. Beyond memorization: Violating privacy via inference with large language models. In The Twelfth International Conference on Learning Representations , 2024. [6] Bo Wang, Weiyi He, Shenglai Zeng, Zhen Xiang, Yue Xing, Jiliang Tang, and Pengfei He. Unveiling privacy risks in LLM agent memory. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 25241–25260, 2025. [7] Ivoline C. Ngong, Swanand Ravindra Kadhe, Hao Wang, Keerthiram Murugesan, Justin D. Weisz, Amit Dhurandhar, and Karthikeyan Natesan Ramamurthy. Protecting users from them-selves: Safeguarding contextual privacy in interactions with conversational agents. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 26196–26220, 2025. [8] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 , 2025. [9] Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, and Daniel Chalef. Zep: A temporal knowledge graph architecture for agent memory. arXiv preprint arXiv:2501.13956 ,2025. [10] Zhiyu Li, Chenyang Xi, Chunyu Li, Ding Chen, Boyu Chen, Shichao Song, Simin Niu, Hanyu Wang, Jiawei Yang, Chen Tang, Qingchen Yu, Jihao Zhao, Yezhaohui Wang, Peng Liu, Zehao Lin, Pengyuan Wang, Jiahao Huo, Tianyi Chen, Kai Chen, Kehang Li, Zhen Tao, Huayi Lai, Hao Wu, Bo Tang, Zhengren Wang, Zhaoxin Fan, Ningyu Zhang, Linfeng Zhang, Junchi Yan, Mingchuan Yang, Tong Xu, Wei Xu, Huajun Chen, Haofen Wang, Hongkang Yang, Wentao Zhang, Zhi-Qin John Xu, Siheng Chen, and Feiyu Xiong. MemOS: A memory OS for AI system. arXiv preprint arXiv:2507.03724 , 2025. [11] Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Xufang Luo, Hao Cheng, Dongsheng Li, Yuqing Yang, Chin-Yew Lin, H. Vicky Zhao, Lili Qiu, and Jianfeng Gao. SeCom: On memory construction and retrieval for personalized conversational agents. In The Thirteenth International Conference on Learning Representations , 2025. [12] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-MEM: Agentic memory for LLM agents. arXiv preprint arXiv:2502.12110 , 2025. [13] Zhen Tan, Jun Yan, I-Hung Hsu, Rujun Han, Zifeng Wang, Long Le, Yiwen Song, Yanfei Chen, Hamid Palangi, George Lee, Anand Rajan Iyer, Tianlong Chen, Huan Liu, Chen-Yu Lee, and Tomas Pfister. In prospect and retrospect: Reflective memory management for long-term personalized dialogue agents. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics , pages 8416–8439, 2025. 11 [14] Shenglai Zeng, Jiankun Zhang, Pengfei He, Yiding Liu, Yue Xing, Han Xu, Jie Ren, Yi Chang, Shuaiqiang Wang, Dawei Yin, and Jiliang Tang. The good and the bad: Exploring privacy issues in retrieval-augmented generation (RAG). In Findings of the Association for Computational Linguistics: ACL 2024 , pages 4505–4524, 2024. [15] Hao Shen, Zhouhong Gu, Haokai Hong, and Weili Han. PII-Bench: Evaluating query-aware privacy protection systems. arXiv preprint arXiv:2502.18545 , 2025. [16] Stefan Pasch and Min Chul Cha. Balancing privacy and utility in personal LLM writing tasks: An automated pipeline for evaluating anonymizations. In Proceedings of the Sixth Workshop on Privacy in Natural Language Processing , pages 32–41, 2025. [17] Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. Long-MemEval: Benchmarking chat assistants on long-term interactive memory. In The Thirteenth International Conference on Learning Representations , 2025. [18] Haoran Tan, Zeyu Zhang, Chen Ma, Xu Chen, Quanyu Dai, and Zhenhua Dong. MemBench: Towards more comprehensive evaluation on the memory of LLM-based agents. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 19336–19352, 2025. [19] Bowen Jiang, Zhuoqun Hao, Young-Min Cho, Bryan Li, Yuan Yuan, Sihao Chen, Lyle Ungar, Camillo J. Taylor, and Dan Roth. Know me, respond to me: Benchmarking LLMs for dynamic user profiling and personalized responses at scale. arXiv preprint arXiv:2504.14225 , 2025. [20] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela. Retrieval-augmented generation for knowledge-intensive nlp tasks. In Advances in Neural Information Processing Systems , volume 33, pages 9459–9474, 2020. [21] Kelvin Guu, Kenton Lee, Zora Tung, Panupong Pasupat, and Ming-Wei Chang. Realm: Retrieval-augmented language model pre-training. In Proceedings of the 37th International Conference on Machine Learning , pages 3929–3938, 2020. [22] Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, Dasha Metropolitansky, Robert Osazuwa Ness, and Jonathan Larson. From local to global: A graph RAG approach to query-focused summarization. arXiv preprint arXiv:2404.16130 ,2025. [23] Haoyu Han, Yu Wang, Harry Shomer, Kai Guo, Jiayuan Ding, Yongjia Lei, Mahantesh Halap-panavar, Ryan A. Rossi, Subhabrata Mukherjee, Xianfeng Tang, Qi He, Zhigang Hua, Bo Long, Tong Zhao, Neil Shah, Amin Javari, Yinglong Xia, and Jiliang Tang. Retrieval-augmented generation with graphs (GraphRAG). arXiv preprint arXiv:2501.00309 , 2025. [24] Nils Lukas, Ahmed Salem, Robert Sim, Shruti Tople, Lukas Wutschitz, and Santiago Zanella-Béguelin. Analyzing leakage of personally identifiable information in language models. arXiv preprint arXiv:2302.00539 , 2023. [25] Xiongtao Sun, Gan Liu, Zhipeng He, Hui Li, and Xiaoguang Li. DePrompt: Desensitization and evaluation of personal identifiable information in large language model prompts. arXiv preprint arXiv:2408.08930 , 2024. [26] QuyenAnhDE. Diseases_Symptoms. https://huggingface.co/datasets/QuyenAnhDE/ Diseases_Symptoms . Hugging Face dataset. Accessed: 2026-04-30. [27] Siyan Zhao, Mingyi Hong, Yang Liu, Devamanyu Hazarika, and Kaixiang Lin. Do LLMs recognize your preferences? evaluating personalized preference following in LLMs. In The Thirteenth International Conference on Learning Representations , 2025. [28] Jisoo Mok, Ik-hwan Kim, Sangkwon Park, and Sungroh Yoon. Exploring the potential of LLMs as personalized assistants: Dataset, evaluation, and analysis. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 10212–10239, 2025. 12 [29] OpenAI. GPT-5.2 Chat model. https://developers.openai.com/api/docs/models/ gpt-5.2-chat-latest , 2025. Accessed: 2026-04-26. [30] Meta. Meta Llama 3.1 8B Instruct. https://huggingface.co/meta-llama/Llama-3. 1-8B-Instruct , 2024. Accessed: 2026-04-26. [31] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [32] DeepSeek-AI, Aixin Liu, Aoxue Mei, Bangcai Lin, et al. DeepSeek-V3.2: Pushing the frontier of open large language models. arXiv preprint arXiv:2512.02556 , 2025. [33] OpenAI. GPT-4.1 model. https://developers.openai.com/api/docs/models/gpt-4. 1, 2025. Accessed: 2026-05-07. [34] Yanchen Wu, Tenghui Lin, Yingli Zhou, Fangyuan Zhang, Qintian Guo, Xun Zhou, Sibo Wang, Xilin Liu, Yuchi Ma, and Yixiang Fang. Memory in the LLM era: Modular architectures and strategies in a unified framework. arXiv preprint arXiv:2604.01707 , 2026. [35] Jiazheng Kang, Mingming Ji, Zhe Zhao, and Ting Bai. Memory OS of AI agent. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 25961– 25970, 2025. [36] Alireza Salemi, Sheshera Mysore, Michael Bendersky, and Hamed Zamani. LaMP: When large language models meet personalization. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 7370–7392, 2024. [37] Yijia Shao, Tianshi Li, Weiyan Shi, Yanchen Liu, and Diyi Yang. PrivacyLens: Evaluating privacy norm awareness of language models in action. In The Thirty-Eighth Conference on Neural Information Processing Systems Datasets and Benchmarks Track , 2024. [38] Haoran Li, Dadi Guo, Donghao Li, Wei Fan, Qi Hu, Xin Liu, Chunkit Chan, Duanyi Yao, Yuan Yao, and Yangqiu Song. PrivLM-bench: A multi-level privacy evaluation benchmark for language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 54–73, 2024. [39] Siwon Kim, Sangdoo Yun, Hwaran Lee, Martin Gubri, Sungroh Yoon, and Seong Joon Oh. ProPILE: Probing privacy leakage in large language models. In Thirty-Seventh Conference on Neural Information Processing Systems , 2023. [40] Xiongtao Sun, Gan Liu, Hui Li, and Fenghua Li. Privprompt: A protection framework of personal identifiable information for large language model prompts based on privacy computing. In 2025 11th IEEE International Conference on Privacy Computing and Data Security (PCDS) ,pages 1–8, 2025. [41] Petr Anokhin, Nikita Semenov, Artyom Sorokin, Dmitry Evseev, Andrey Kravchenko, Mikhail Burtsev, and Evgeny Burnaev. AriGraph: Learning knowledge graph world models with episodic memory for LLM agents. In Proceedings of the Thirty-Fourth International Joint Conference on Artificial Intelligence , pages 12–20, 2025. [42] Wei-Lin Chiang, Lianmin Zheng, Ying Sheng, Anastasios Nikolas Angelopoulos, Tianle Li, Dacheng Li, Banghua Zhu, Hao Zhang, Michael Jordan, Joseph E. Gonzalez, and Ion Stoica. Chatbot arena: An open platform for evaluating LLMs by human preference. In Forty-first International Conference on Machine Learning , 2024. [43] Vyas Raina, Adian Liusie, and Mark Gales. Is LLM-as-a-judge robust? investigating universal adversarial attacks on zero-shot LLM assessment. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 7499–7517, 2024. 13 A Limitations 
+
+SP-Mem is evaluated in a controlled setting with synthetic user profiles, dialogues, and task queries. This design enables systematic evaluation across privacy entities, user preferences, task modes, and authorization conditions. However, real user interactions can be more ambiguous, incomplete, and temporally evolving than our benchmark setting. Future work should evaluate privacy-aware memory systems in more naturalistic or user-validated scenarios, while minimizing the collection and exposure of sensitive information during evaluation. Our privacy analysis focuses on exact private-value exposure and authorization-aware memory use. Specifically, UPU measures whether an agent response contains exact private values when such information is unnecessary or not authorized. This metric captures a central failure mode of memory-augmented personalized agents, but it does not cover all privacy risks. For example, generalized attributes may still support re-identification, multi-turn interactions may enable inference attacks, and adversaries may attempt to recover sanitized values. These limitations suggest that privacy-aware memory systems can improve user control and reduce unnecessary exposure, but such systems should be evaluated under stronger threat models and more realistic settings in future work. 
+
+# B Detailed Related Works 
+
+Memory architectures for LLM agents. Recent memory-augmented LLM agents mainly study how to store, retrieve, and update past interactions to support long-term continuity, personalization, planning, and context management. Generative Agents [3] maintain a natural-language memory stream for reflection and planning, while MemoryBank [2] stores dialogue history, event summaries, and user portraits for long-term personalization. MemGPT [1] frames memory as context management and uses an OS-inspired hierarchy to move information between in-context memory and external archival storage. More recent systems, such as MemoryOS [35] and Mem0 [8], package memory extraction, updating, retrieval, and response generation into general-purpose memory infrastructure for LLM agents. These systems also differ in memory representation. Vector-based memory stores conversations or extracted facts as dense embeddings for semantic retrieval, as in MemoryBank [2] and A-MEM [12]; A-MEM further augments memory notes with attributes and dynamic links. Graph-based memory represents information as entities, relations, and temporal structures: Zep [9] builds a temporal knowledge graph for evolving agent memory, and AriGraph [41] integrates semantic and episodic memories into a graph for structured retrieval and decision making. Hybrid systems such as Mem0 [8] combine vector retrieval with graph-enhanced representations, suggesting that semantic recall and relational structure provide complementary benefits. However, these architectures primarily optimize what agents can remember and reuse across long-term interactions. In contrast, our work focuses on privacy-aware memory lifecycle management: determining what should be written into searchable memory, what should remain protected outside it, and when exact private values can be restored under task necessity and user authorization. 
+
+Datasets and benchmarks for personalization and privacy. As LLMs are increasingly deployed as personalized assistants, recent benchmarks evaluate whether models can use user-specific profiles, histories, and preferences across tasks and conversations. LaMP [36] studies profile-conditioned personalized language modeling across classification and generation tasks, while PrefEval [27] focuses on explicit and implicit preference following in multi-session conversations. HiCUPID [28] and PersonaMem [19] further move personalization toward assistant-style interactions, evaluating whether models can ground responses in user backgrounds, conversational context, and evolving user profiles. In parallel, privacy-oriented benchmarks evaluate whether LLMs leak sensitive information or follow appropriate privacy norms. PII-Bench [15] studies query-aware PII protection by distinguishing query-relevant from query-unrelated PII. PrivacyLens [37] evaluates contextual privacy awareness in privacy-sensitive agent scenarios. PrivLM-Bench [38] measures privacy leakage under attacks such as membership inference, training data extraction, and embedding inversion, while ProPILE [39] probes whether models can reconstruct withheld personal attributes from related PII. 14 These benchmarks provide important tools for evaluating either personalization quality or privacy risk. However, they typically treat personalization and privacy as separate objectives. Our work targets their intersection: privacy-aware personalization with long-term memory. We construct user profiles containing both non-private preferences and privacy-sensitive attributes, and design tasks that require preference adaptation, private information usage, or both. This setting evaluates whether agents can personalize responses while avoiding unnecessary access to or disclosure of exact private information. 
+
+Privacy protection methods. Existing privacy-protection methods for LLM applications mainly operate at the prompt/input level. These methods detect private entities in user inputs and transform them before model inference. DePrompt [25] and PrivPrompt [40] identify PII in LLM prompts and use generative sanitization to preserve task-relevant semantics while weakening the link between identifiers and sensitive attributes. Complementary studies analyze the privacy-utility trade-off of different anonymization strategies. For example, prior work compares masking, contextual masking, and pseudonymization in personal writing tasks, showing that privacy protection must preserve enough context for useful LLM-generated responses [16]. Beyond prompt-level protection, recent work shows that long-term agent memory can itself become a privacy attack surface. MEXTRA [6] demonstrates that private user-agent interactions stored in memory can be extracted through black-box attacks. These results suggest that privacy protection cannot be treated only as a preprocessing step before inference. In contrast to prompt-level sanitization and post-hoc privacy risk analysis, our work targets the full memory lifecycle of personalized agents: SP-Mem writes sanitized memories into the default searchable layer, keeps exact private values in protected storage, and restores them only under task relevance and user authorization. 
+
+# C Benchmark Details 
+
+In this section, we provide additional details on the construction of the benchmark. 
+
+C.1 User Profile Generation 
+
+We present the definition of personally identifiable information (PII) and the full PII taxonomy in Appendix C.1.1 and Appendix C.1.2. Next, we provide the detailed preference taxonomy in Appendix C.1.3, including both general preferences and domain-specific preferences. The LLM-based open-ended privacy attributes were generated using Gemma-3-12B-IT. Figure 5 shows the prompt used to select preference values conditioned on each user’s privacy profile. Figure 6 shows the prompt used to check internal consistency within privacy profiles, and Figure 7 shows the prompt used to check consistency between privacy attributes and assigned preferences. 
+
+C.1.1 PII Definition 
+
+Following prior work on PII identification, privacy leakage, and anonymization in language-model systems [15, 24, 25], we define personally identifiable information (PII) as user-specific information that can directly identify an individual, increase identifiability when combined with other attributes, or reveal sensitive personal states. We categorize PII into three categories: • Direct identifiers. Direct identifiers are PII attributes that can be used to uniquely identify or contact an individual on their own. Examples of direct identifers include names, national ID numbers, passport numbers, phone numbers, and more. • Quasi identifiers. Quasi identifiers are PII attributes that may not uniquely identify an individual alone but can increase identifiability when combined with other information. Examples include age, gender, occupation, and more. • Confidential attributes. Confidential attributes refer to sensitive personal information whose disclosure may significantly affect an individual’s privacy, dignity, or security. Exam-ples include medical conditions, family status, and other sensitive personal records. 15 C.1.2 PII Taxonomy 
+
+Following prior PII taxonomies and privacy benchmarks [15, 40], we adapt the entity space to our privacy-aware memory setting. We retain entity types that are commonly used in prior work and further organize them according to their role in conversational memory, including identity, contactability, medical status, relationship context, payment records, financial assets, and location information. Our taxonomy comprises eight high-level categories and 37 fine-grained entity types, as summarized in Table 8. 
+
+PERSON: Refers to basic personal attributes that describe an individual, including name, age, gender, nationality, occupation, and education. 
+
+CODE: Encompasses official identifiers and government-issued codes, including ID numbers and passport numbers. 
+
+CONTACT: Covers information that can be used to contact an individual, including phone numbers and email addresses. 
+
+MEDICAL: Contains health-related information, including diagnosis, symptoms, treatments, aller-gies, medical examinations, and surgical history. 
+
+RELATIONSHIP: Represents family and relationship-related attributes, including marital status and number of children. 
+
+PAYMENT: Includes payment and transactional records, such as transactions, bank accounts, credit cards, tax IDs, tax payments, and insurance records. 
+
+ASSET: Captures financial status and asset-related attributes, including monthly income, monthly expenses, account balance, loan amount, credit limit, debt ratio, investment return, ROI, finance status level, net worth, and credit score. 
+
+LOC: Covers location-related information, including home address and work address. 
+
+C.1.3 Preference Taxonomy 
+
+Following PrefEval [27] and HiCUPID [28], we construct a non-private preference taxonomy for controlled user-profile generation. We align scene-based preference categories with fine-grained persona dimensions, while filtering out sensitive information such as demographic, identity, financial personal information. The resulting taxonomy contains 14 general preference dimensions and 16 domain-specific preference dimensions across four domains. 
+
+General preference dimensions. The general preference dimensions capture everyday interests, tastes, and lifestyle preferences: shows, music, books, games, art, sports, fitness, food, beauty, clothing, technology, transport, travel, and pets. 
+
+Domain-specific preference dimensions. The domain-specific preference dimensions capture personalization signals required by specialized scenarios: • Finance: risk tolerance, financial news source preference, financial market sector preference, and sustainability preference. • Medical: medical decision role, medical tone preference, medical risk attitude, and medical follow-up reminder preference. • Education: learning style preference, learning resource preference, learning schedule preference, and learning feedback preference. • Mental support: coping strategy preference, mental health topic preference, mental health support response preference, and stress response tendency. 
+
+C.2 Subtask Generation Details 
+
+This section provides supplementary details for the entity-controlled subtask generation process described in Section C.2.2. We first present the full scenario taxonomy in Section C.2.1. Figure 8 shows the prompt template used for constrained task-card generation, where the scenario, task mode, 16 Table 8: PII taxonomy and generation rules used in our dataset. The taxonomy covers 8 high-level categories and 37 fine-grained entity types. Rule-based fields follow predefined format constraints, while medical fields are seeded from an external medical dataset [26] and LLM-based fields are generated as contextually appropriate textual content. 
+
+PII Category Entity Type Generation Source Format Constraints 
+
+> PERSON
+
+name Rule-based [First Name] [Last Name] age Rule-based [18–90] gender Rule-based Male/Female nationality Rule-based Predefined list occupation Rule-based Predefined list education Rule-based Predefined list CODE id number Rule-based [A-Z]{2}-ID-[0-9]{8} passport number Rule-based [A-Z]{2}-P[0-9]{9} CONTACT phone number Rule-based +[0-9]{1,3}-[0-9]{8,11} email Rule-based [user]@[domain] MEDICAL diagnosis Dataset-based –symptoms Dataset-based –treatments Dataset-based –allergies Dataset-based –exams Dataset-based –surgical history Dataset-based –RELATIONSHIP marriage Rule-based Single/Married/Divorced/Widowed children count Rule-based [0–4] PAYMENT transactions LLM-based –tax payment Rule-based [Currency][0-9]+.[0-9]{2} bank account Rule-based [0-9]{12} credit card Rule-based [0-9]{16} tax ID Rule-based [0-9]{10} insurance record LLM-based –ASSET monthly income Rule-based [Currency][0-9]+.[0-9]{2} monthly expenses Rule-based [Currency][0-9]+.[0-9]{2} account balance Rule-based [Currency][0-9]+.[0-9]{2} loan amount Rule-based [Currency][0-9]+.[0-9]{2} credit limit Rule-based [Currency][0-9]+.[0-9]{2} debt ratio Rule-based [0–0.9999] investment return Rule-based [Currency][0-9]+.[0-9]{2} ROI Rule-based [-0.15–0.25] finance status level Rule-based Very Low/Low/Medium/High-/Very High net worth Rule-based [Currency][0-9]+.[0-9]{2} credit score Rule-based [300–850] LOC home address LLM-based –work address LLM-based –and sampled entity annotations are fixed before LLM generation. After generation, we manually inspect and refine the generated cards to ensure that they are realistic, mode-consistent, and aligned with the assigned entity annotations. 
+
+C.2.1 Scenario Taxonomy 
+
+We define scenarios to provide concrete contexts for task-card generation. Table 9 summarizes 16 scenarios, including 8 shared general scenarios and 8 domain-specific scenarios across finance, 17 medical, education, and mental-support domains. General scenarios can be instantiated with any privacy entity in Epriv and the general preference dimensions. Domain-specific scenarios can also use any privacy entity in Epriv , but their preference dimensions are restricted to the corresponding domain. For example, finance scenarios use finance-specific preferences and are assigned only to finance-domain users; the same rule applies to medical, education, and mental-support scenarios. We additionally define one auxiliary profile-completion scenario for dialogue generation only. 
+
+C.2.2 Entity-Controlled Task Generation 
+
+For each scenario and task mode, we first sample the required privacy entity set Epriv  
+
+> t
+
+and preference entity set Epref  
+
+> t
+
+from the corresponding allowlists. The sampled entity sets are then fixed in the prompt: the LLM is instructed to generate only the natural-language task description and user intent while copying the sampled entity lists exactly. This design ensures that the ground-truth entity annotations are controlled by the dataset construction pipeline rather than freely chosen by the LLM. The prompt template is shown in Figure 8. It enforces mode-specific solvability constraints: for 
+
+privacy-only tasks, the task must be solvable using only the selected privacy entities and must not require preferences; for preference-only tasks, the task must be solvable using only the selected preference entities and must not require private information; and for mixed tasks, the task must require both selected privacy entities and selected preference entities. The prompt also requires every selected entity to be necessary for task completion, so that removing any selected entity would make the task incomplete or underspecified. 
+
+C.3 Dialogue Generation 
+
+We generate history dialogues to seed memory evidence for each user through a two-level entity coverage process. First, we assign dialogue tasks so that the selected task set jointly covers the target privacy and preference entities for each user; this user-level assignment procedure is described in Section C.3.1. Second, for each assigned task, we generate a multi-turn role-play dialogue using two LLMs, with Llama-3.1-8B-Instruct acting as the user and Gemma-3-12B-IT acting as the assistant. This task-level coverage procedure ensures that all task-required entities are disclosed in the user’s turns, as described in Section C.3.2. Token statistics of the generated dialogue histories are reported in Table 10. 
+
+C.3.1 Dialogue Task Assignment 
+
+For each user i, we assign dialogue tasks before generating history dialogues. Each task card t
+
+contains required privacy entities Epriv  
+
+> t
+
+and preference entities Epref  
+
+> t
+
+. We define the target entity set for user i as 
+
+Gi = Epriv  
+
+> i
+
+∪ E pref  
+
+> i
+
+.
+
+The assignment consists of two parts. First, we construct a coverage set Dcov  
+
+> i
+
+of 12 tasks. We maintain an uncovered entity set and iteratively assign tasks that cover the largest number of remaining entities, so that the 12 selected tasks collectively cover all entities in Gi. Second, we randomly sample 9 additional unused tasks Drand  
+
+> i
+
+from the dialogue subtask pool to improve scenario diversity. The final dialogue task set is 
+
+Di = Dcov  
+
+> i
+
+∪ Drand  
+
+> i
+
+, |Dcov  
+
+> i
+
+| = 12 , |Drand  
+
+> i
+
+| = 9 , |Di| = 21 .
+
+Since Dcov  
+
+> i
+
+⊆ Di, this also implies the coverage constraint stated in the main text. Algorithm 1 summarizes this assignment procedure. 
+
+C.3.2 Dialogue Entity Coverage Procedure 
+
+After assigning dialogue tasks at the user level, we generate one multi-turn dialogue for each assigned task. While Algorithm 1 ensures that the selected task set covers the target entities for a user, Algorithm 2 ensures that the required entities of each individual task are disclosed in the generated dialogue. The first user turn states only the task intent and does not reveal any concrete profile value. In later turns, the user is allowed to disclose one to three new entities from the remaining set. A label is accepted only if it belongs to the task’s required entity set and has not been disclosed before. The dialogue terminates only after all required entities have been covered. 18 Algorithm 1 Dialogue task assignment with entity coverage 
+
+Require: User i, dialogue task-card pool T , target entity set Gi, coverage size Kcov = 12 , total size 
+
+K = 21 
+
+Ensure: Assigned dialogue task set Di 
+
+> 1:
+
+Dcov  
+
+> i
+
+← ∅  
+
+> 2:
+
+R ← Gi ▷ uncovered entities  
+
+> 3:
+
+while R̸ = ∅ do  
+
+> 4:
+
+t⋆ ← arg max t∈T |Ent( t) ∩ R| 
+
+> 5:
+
+Dcov  
+
+> i
+
+← Dcov  
+
+> i
+
+∪ { t⋆} 
+
+> 6:
+
+R ← R \ Ent( t⋆) 
+
+> 7:
+
+T ← T \ { t⋆} 
+
+> 8:
+
+end while  
+
+> 9:
+
+while |Dcov  
+
+> i
+
+| < K cov do  
+
+> 10:
+
+Randomly sample an unused task t from T 
+
+> 11:
+
+Dcov  
+
+> i
+
+← Dcov  
+
+> i
+
+∪ { t} 
+
+> 12:
+
+T ← T \ { t} 
+
+> 13:
+
+end while  
+
+> 14:
+
+Drand  
+
+> i
+
+← ∅  
+
+> 15:
+
+while |Drand  
+
+> i
+
+| < K − Kcov do  
+
+> 16:
+
+Randomly sample an unused task t from T 
+
+> 17:
+
+Drand  
+
+> i
+
+← Drand  
+
+> i
+
+∪ { t} 
+
+> 18:
+
+T ← T \ { t} 
+
+> 19:
+
+end while  
+
+> 20:
+
+Di ← Dcov  
+
+> i
+
+∪ Drand  
+
+> i
+> 21:
+
+return Di
+
+Algorithm 2 Task-level entity coverage for history dialogue generation 
+
+Require: User i, task t, user profile Ui, required privacy entities Epriv  
+
+> t
+
+, required preference entities 
+
+Epref 
+
+> t
+
+Ensure: Multi-turn history dialogue Hi,t  
+
+> 1:
+
+Et ← Epriv  
+
+> t
+
+∪ Epref  
+
+> t
+> 2:
+
+C ← ∅ ▷ covered entities  
+
+> 3:
+
+Generate initial user turn u0 from the task intent without revealing concrete values  
+
+> 4:
+
+Hi,t ← [u0] 
+
+> 5:
+
+while C̸ = Et do  
+
+> 6:
+
+R ← Et \ C ▷ remaining entities  
+
+> 7:
+
+Generate assistant turn ak that acknowledges prior information and prompts continuation  
+
+> 8:
+
+Generate next user turn uk that discloses 1–3 entities from R 
+
+> 9:
+
+Extract labels Lk from uk 
+
+> 10:
+
+Lk ← { e ∈ Lk | e ∈ R} ▷ accept only valid new labels  
+
+> 11:
+
+C ← C ∪ Lk 
+
+> 12:
+
+Append ak and uk to Hi,t  
+
+> 13:
+
+end while  
+
+> 14:
+
+Generate final assistant response afinal conditioned on all disclosed entities  
+
+> 15:
+
+Append afinal to Hi,t  
+
+> 16:
+
+return Hi,t 
+
+19 D SP-Mem Details 
+
+D.1 Privacy-Aware Memory Writing and Partitioned Storage 
+
+Algorithm 3 summarizes the writing-time procedure of SP-Mem. Given a user input xt, SP-Mem converts the input into two complementary representations: fact objects for the vector branch and relation triplets for the graph branch. It then sanitizes detected private values before writing them into searchable memory, while storing mapping keys in the privacy mapping layer and exact private values in the protected private store. Here, Mvector and Mgraph denote the sanitized searchable vector and graph stores, respectively. 
+
+Mmap denotes the privacy mapping layer, and Mpriv denotes the protected private store. We use Γ to denote mapping-key records written to the privacy mapping layer and Π to denote protected records containing exact private values. 
+
+Algorithm 3 Privacy-Aware Memory Writing and Partitioned Storage 
+
+Require: User input xt, user ID u, sanitized vector store Mvector , sanitized graph store Mgraph ,privacy mapping layer Mmap , protected private store Mpriv 
+
+Ensure: Updated Mvector , Mgraph , Mmap , and Mpriv  
+
+> 1:
+
+Ft ← EXTRACT FACTS (xt) 
+
+> 2:
+
+for each fact object f = ( yf , Af ) ∈ Ft do  
+
+> 3:
+
+if Af = ∅ then  
+
+> 4:
+
+WRITE VECTOR (Mvector , y f ) 
+
+> 5:
+
+else  
+
+> 6:
+
+(˜ yf , Γf , Πf ) ← SANITIZE FACT (f, u ) 
+
+> 7:
+
+WRITE VECTOR (Mvector , ˜yf ) 
+
+> 8:
+
+WRITE MAP (Mmap , Γf ) 
+
+> 9:
+
+WRITE PRIVATE (Mpriv , Πf ) 
+
+> 10:
+
+end if  
+
+> 11:
+
+end for  
+
+> 12:
+
+Rt ← EXTRACT RELATIONS (xt) 
+
+> 13:
+
+for each relation triplet r = ( sr , ρ r , d r ) ∈ Rt do  
+
+> 14:
+
+if ρr does not correspond to a privacy-sensitive attribute then  
+
+> 15:
+
+WRITE GRAPH (Mgraph , r ) 
+
+> 16:
+
+else  
+
+> 17:
+
+(˜ r, Γr , Πr ) ← SANITIZE RELATION (r, u ) 
+
+> 18:
+
+WRITE GRAPH (Mgraph , ˜r) 
+
+> 19:
+
+WRITE MAP (Mmap , Γr ) 
+
+> 20:
+
+WRITE PRIVATE (Mpriv , Πr ) 
+
+> 21:
+
+end if  
+
+> 22:
+
+end for D.2 Privacy Sanitization Strategies 
+
+After privacy-aware information extraction, detected private values are transformed into sanitized representations before being written into searchable memory, while non-private facts and triplets remain unchanged. To preserve task-relevant semantics without exposing exact private values, SP-Mem adopts four families of sanitization strategies: name or alias substitution, suffix-preserving masking, numerical bucketing, and LLM-based generalization. Each fine-grained privacy type τ is assigned an appropriate strategy according to a type-to-strategy policy g.In the vector branch, each detected private value vj in a fact is replaced with its sanitized value 
+
+˜vj = SANITIZE (vj , g (τj )) ,
+
+producing a sanitized fact. In the graph branch, triplets with non-private relations remain unchanged, while for privacy-related triplets, the private destination value dr is replaced with its sanitized counterpart 
+
+˜dr = SANITIZE (dr , g (τr )) .
+
+20 The four sanitization strategies are defined as follows. (1) Name or alias substitution replaces names, categorical values, or contact-related values with weaker substitutes, such as first-name fragments or synthetic aliases. (2) Suffix-preserving masking applies to structured identifiers such as phone numbers, bank accounts, credit cards, tax IDs, and passport numbers; it masks most of the value while retaining the last four digits. (3) Numerical bucketing maps numerical values into coarse semantic ranges, such as age groups, income levels, credit-score bands, or debt-ratio ranges. (4) LLM-based generalization rewrites open-ended or context-dependent private values into broader descriptions, such as generalized occupation, education, medical, relationship, transaction, insurance, or location descriptions. Table 11 lists the type-to-strategy mapping used by SP-Mem. 
+
+D.3 Privacy-Aware Query Reasoning and Authorized Retrieval 
+
+Algorithm 4 summarizes the query-time reasoning and authorized retrieval procedure of SP-Mem. Given a user query q, the query analyzer identifies the information required to complete the task and records it as a query-specific plan Pq . It then determines whether any required entity corresponds to private information. The prompt template for this query-time analysis is provided in Figure 9. The indicator bq denotes whether private information is required. If private information is required, SP-Mem requests user consent and records the authorization decision as aq .Retrieval is performed over the sanitized searchable memory layer: the vector store Mvector and the graph store Mgraph . The retrieved results are merged into Cq . If and only if the query requires private information and user consent is granted, SP-Mem restores the task-required exact private values through the privacy mapping layer Mmap and the protected private store Mpriv . Otherwise, the agent uses the sanitized context directly. The final response is generated from the resulting context ˆCq ,using the response-generation prompt shown in Figure 10. 
+
+Algorithm 4 Privacy-Aware Query Reasoning and Authorized Retrieval 
+
+Require: Query q, user ID u, sanitized vector store Mvector , sanitized graph store Mgraph , privacy mapping layer Mmap , protected private store Mpriv 
+
+Ensure: Final response y 
+
+> 1:
+
+Pq ← ANALYZE QUERY (q) 
+
+> 2:
+
+bq ← NEED PRIVATE (Pq ) 
+
+> 3:
+
+if bq = 1 then  
+
+> 4:
+
+aq ← REQUEST CONSENT (q, u, Pq ) 
+
+> 5:
+
+else  
+
+> 6:
+
+aq ← 0 
+
+> 7:
+
+end if  
+
+> 8:
+
+Rv ← RETRIEVE VECTOR (q, Pq , M vector ) 
+
+> 9:
+
+Rg ← RETRIEVE GRAPH (q, Pq , M graph ) 
+
+> 10:
+
+Cq ← MERGE (Rv , R g ) 
+
+> 11:
+
+if bq = 1 and aq = 1 then  
+
+> 12:
+
+ˆCq ← RESTORE (Cq , M map , M priv ) 
+
+> 13:
+
+else  
+
+> 14:
+
+ˆCq ← Cq 
+
+> 15:
+
+end if  
+
+> 16:
+
+y ← GENERATE (q, ˆCq ) 
+
+> 17:
+
+return y
+
+# E Experimental setup details 
+
+Query-time evaluation pipeline. Each memory-augmented method is evaluated through a query-time pipeline consisting of query analysis, consent handling, memory retrieval, and response gen-eration. Given a user query, the agent identifies the task-required memory entities and determines whether exact private information is needed. When private information is required, the agent pro-duces a consent request before generating the final response. The response is then generated from evidence retrieved from the corresponding memory backend. Across methods, the memory backend 21 determines how user histories are stored and retrieved, while the query analysis, consent handling, and response-generation procedure are kept fixed. 
+
+Evaluation tasks. We evaluate five tasks: Preference-only, Privacy-only-allowed, Privacy-only-denied, Mixed-allowed, and Mixed-denied. Preference-only tasks require non-private user preferences only and do not require exact private information. Privacy-only-allowed tasks require exact private information, and the user allows privacy usage. Privacy-only-denied tasks require exact private information, but the user denies privacy usage. Mixed-allowed tasks require both non-private user preferences and exact private information, and the user allows privacy usage. Mixed-denied tasks require both non-private user preferences and exact private information, but the user denies privacy usage. P-TC is evaluated for all five tasks. P-PQ is evaluated for Preference-only, Mixed-allowed, and Mixed-denied tasks, where preference usage is required. UPU is reported for Preference-only, Privacy-only-denied, and Mixed-denied tasks, where exact private values should not appear. 
+
+Evaluation protocols. We use GPT-4.1 [33] as the judge model for response-quality evaluation. For response quality, we report pairwise task completion (P-TC) and pairwise personalization quality (P-PQ) , since pairwise comparison provides a natural evaluation protocol for open-ended assistant responses and can be more robust than pointwise scoring [42, 43]. For each evaluation query, we compare the SP-Mem response against the response from one baseline under the same task context. The judge is given the task description, user query, and two anonymized responses, and is asked to choose the better response according to the metric-specific rubric or return a tie. To reduce position bias, each comparison is evaluated twice with the response order swapped. We canonicalize the two judgments back to the same system identities; a non-tie winner is accepted only when the two order-swapped judgments agree, and all inconsistent cases are counted as ties. We then report the win-tie rate of SP-Mem, (W + T )/N , where W , T , and N denote the number of SP-Mem wins, ties, and total SP-Mem–baseline comparisons, respectively. For privacy behavior, 
+
+Privacy-Appropriate Requesting (PAR) is evaluated by comparing whether the agent requests authorization against whether the task requires exact private information. Unnecessary Privacy Usage (UPU) is computed with a rule-based exact-match scorer against the user’s privacy-value inventory, where masked, sanitized, or generalized values are not counted as exact exposure. The prompts for P-TC and P-PQ are shown in Figures 11 and 12, respectively. 
+
+Compute resources. Closed-source LLM experiments, including GPT-5.2-Chat generation and GPT-4.1 judge evaluation, were conducted through API calls. Open-source backbone models were locally deployed and run on NVIDIA A40 GPUs. Memory storage and retrieval used Qdrant for vector memory and Neo4j for graph memory. 
+
+# F Additional Experiment Details 
+
+Tables 13, 14, 15, and 16 provide pairwise results for the Education, Finance, Medical, and Mental domains, respectively. Each table breaks down SP-Mem’s win-tie rates against each baseline by evaluation task and response backbone. The five evaluation tasks are Preference-only, Privacy-only-allowed, Privacy-only-denied, Mixed-allowed, and Mixed-denied. Table 12 reports the full ablation results for the memory architecture. It compares the hybrid Vector+Graph memory against Graph-only and Vector-only variants across domains and response backbones. 22 You are a Preference Selector. Your task is to analyze a user’s demographic and lifestyle profile, then select the most appropriate preferences from a given bank of non-private preference candidates. 
+
+Task 
+
+Given a user profile and a preference candidate bank across multiple preference dimensions, analyze the user’s characteristics and select the top-N best-matching preference values for each dimension. 
+
+Profile Information to Consider 
+
+When selecting preferences, consider the following information from the user profile: • Demographics: age, gender, nationality, occupation, and education. • Medical history: past diagnosis, symptoms, and allergies. Medical history should be used only for preference refinement, not as a hard restriction. • Lifestyle: marriage status, children count, monthly income, and finance status level. 
+
+Selection Requirements 
+
+• Select preferences that are realistic, personalized, and diverse. • Avoid stereotypes or overly deterministic assumptions from demographic attributes. • Strictly select values from the provided candidate lists. • Each selected value must be copied verbatim from the corresponding candidate list. • Do not invent new preferences or include private identifiers. • Output valid JSON only, with exactly one key for each preference dimension. 
+
+Input 
+
+User Privacy Profile: [user_privacy_profile] Preference Candidate Bank: [candidates_by_dimension] 
+
+Output Format 
+
+{"shows": ["<preference 1>", "<preference 2>", "..."], "music": ["<preference 1>", "<preference 2>", "..."] }
+
+The system then selects the least-used item from each ranked list to improve preference diversity across users. 
+
+Figure 5: The prompt used for privacy-conditioned preference selection. Given a user profile and a candidate bank, the model ranks non-private preference values for each dimension and returns structured JSON for controlled parsing. 23 Table 9: Scenario taxonomy used for task-card generation. 
+
+Scenario group Scenario Description 
+
+General Writing and communication Drafting, polishing, or revising messages, emails, invitations, and customer-service communication. Planning and scheduling Creating plans, schedules, reminders, to-do lists, and time arrangements for everyday activities. Local life and services Handling local service needs such as appointments, deliveries, refunds, re-pairs, and daily-life logistics. Account, forms, and verifica-tion Organizing information for accounts, applications, verification forms, doc-ument lists, and administrative work-flows. Travel and booking help Supporting travel planning, booking, itinerary comparison, and transporta-tion arrangements. Wellness and lifestyle Providing lifestyle support for sleep, exercise, diet, habits, routines, and ev-eryday wellness planning. Family and relationship logis-tics Assisting with family coordination, re-lationship communication, and inter-personal planning. Profile completion Completing user profile information for dialogue generation. Finance Personal finance operations Supporting budgeting, bill organiza-tion, repayment planning, and every-day financial management. Investing and wealth Supporting investment planning, asset allocation, and wealth-management decisions. Medical Urgent care and navigation Helping with healthcare navigation, hospital selection, appointment proce-dures, visit planning, and medication access. Guidance and understanding Explaining health information, symp-toms, examination results, reports, and treatment-related questions. Education Education planning and aca-demic logistics Supporting study plans, review sched-ules, course selection, applications, en-rollment, and academic communica-tion. Learning support and aca-demic guidance Explaining concepts, providing learn-ing feedback, preparing for exams, and giving personalized study suggestions. Mental support Internal emotional struggles Supporting users with stress, anxiety, emotional overwhelm, self-doubt, and decision-related distress. Psychological topics and life context Exploring self-understanding, relation-ship patterns, identity-related ques-tions, and the psychological impact of daily life. 24 Table 10: Statistics of user history dialogues across domains. Token counts are computed over mes-sage content using the cl100k_base tokenizer, excluding chat-template overhead. Avg. tokens/user is the average total token count of all history dialogues for each user. Domain Users Dialogues Avg. tokens/dialogue Avg. tokens/user Education 250 5250 412.74 8667.48 Finance 250 5250 406.14 8528.92 Medical 250 5250 408.19 8571.95 Mental 250 5250 397.83 8354.45 Overall 1000 21000 406.22 8530.70 Table 11: Privacy sanitization strategies for all privacy types. 
+
+Strategy Privacy type Example 
+
+Name/alias substitution name Maria Lombardi → maria gender female → gender_alias email maria@example.com → email_alias finance status level medium → finance_status_alias Suffix-preserving masking ID number ID98427561 → id_****7561 passport number IT-P388875140 → passport_******5140 phone number +1-415-555-1289 → phone_******1289 bank account 123456789012 → bank_****9012 credit card 4111111111111234 → card_****1234 tax ID 918273645 → tax_id_*****3645 Numerical bucketing age 34 → age_adult tax payment 6200 → moderate_tax_payment monthly income 8500 → upper_middle_income monthly expenses 3200 → moderate_expense account balance 45600 → high_balance loan amount 80000 → moderate_loan credit limit 15000 → high_credit_limit debt ratio 0.42 → medium_debt_ratio investment return 12.4% → moderate_gain ROI 18.0% → high_roi net worth 1.2M → high_net_worth credit score 785 → very_good_credit LLM-based generalization nationality Brazilian → south_america occupation nurse → healthcare_professional education master’s degree → higher_education medical diagnosis Primary Insomnia → sleep_issue medical symptoms insomnia symptoms → sleep_related medical treatments dental cleaning → dental_treatment medical allergy Penicillin → medication_allergy medical exams blood pressure record → vital_signs surgical history appendectomy → has_surgery marriage divorced → unpartnered children count 2 children → has_children transaction record 2025-10-24 Cash - Gas Station $45.75 → fuel insurance record family health coverage with liability protection →
+
+health_insurance home address 1418 N Spruce Ave, Wichita, KS → wichita_kansas work address 777 S Elm St, Wichita, KS → wichita_kansas 
+
+25 Table 12: Full ablation results of Vector+Graph memory against single-branch variants. Each value reports the win-tie rate, (W + T )/N , for P-TC and P-PQ within each domain and response backbone. Values above 50% indicate that Vector+Graph is preferred over or comparable to the corresponding single-branch variant. ↑ denotes higher is better. 
+
+Domain Vector+Graph vs. GPT-5.2 Llama-3.1 DeepSeek Qwen3 P-TC ↑ P-PQ ↑ P-TC ↑ P-PQ ↑ P-TC ↑ P-PQ ↑ P-TC ↑ P-PQ ↑
+
+Education Graph-only 90.99% 86.87% 85.80% 81.04% 88.89% 85.22% 86.79% 80.60% Vector-only 87.52% 91.03% 85.19% 86.87% 88.15% 90.30% 87.56% 89.01% Finance Graph-only 85.80% 85.71% 84.20% 78.25% 89.63% 86.19% 88.15% 83.33% Vector-only 89.63% 90.63% 84.14% 86.46% 87.78% 91.59% 85.68% 87.46% Medical Graph-only 95.68% 93.49% 87.16% 81.11% 88.15% 85.24% 85.93% 83.02% Vector-only 94.07% 93.65% 87.27% 85.02% 89.26% 90.32% 87.41% 86.83% Mental Graph-only 91.98% 88.96% 86.26% 80.99% 87.53% 84.93% 84.69% 82.24% Vector-only 91.85% 94.33% 85.52% 81.59% 88.52% 90.45% 88.27% 89.55% 
+
+Table 13: Pairwise results on the Education domain by evaluation task. Each cell reports the P-TC/P-PQ win-tie rate of SP-Mem against the corresponding baseline under the same response backbone. For Privacy-only-allowed and Privacy-only-denied tasks, P-PQ is not applicable and is shown as –. Values above 50% indicate that SP-Mem is preferred over or comparable to the baseline. 
+
+Education 
+
+Task SP-Mem vs. GPT-5.2 Llama-3.1 DeepSeek Qwen3 P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ Preference-only Full-context 72.44%/84.30% 67.26%/85.63% 81.93%/84.74% 47.70%/70.52% MemOS 87.56%/95.56% 84.59%/91.26% 93.48%/95.11% 68.30%/90.07% Mem0 89.19%/93.19% 81.48%/83.11% 95.26%/95.70% 72.44%/87.85% Zep 89.90%/94.95% 83.11%/89.93% 94.79%/97.32% 70.07%/90.52% Privacy-only-allowed Full-context 61.71%/– 76.57%/– 64.00%/– 44.57%/– MemOS 86.29%/– 89.14%/– 94.86%/– 79.43%/– Mem0 90.86%/– 93.14%/– 93.71%/– 81.71%/– Zep 94.80%/– 92.57%/– 99.43%/– 89.14%/– Privacy-only-denied Full-context 98.29%/– 96.57%/– 93.71%/– 92.57%/– MemOS 96.57%/– 92.00%/– 96.00%/– 92.00%/– Mem0 93.14%/– 93.14%/– 97.14%/– 96.00%/– Zep 95.95%/– 93.71%/– 98.29%/– 96.00%/– Mixed-allowed Full-context 50.00%/69.20% 70.00%/83.80% 60.20%/73.20% 40.80%/69.60% MemOS 92.00%/94.20% 88.60%/87.40% 97.20%/97.00% 81.20%/87.80% Mem0 93.80%/93.20% 88.60%/83.00% 98.40%/95.80% 84.80%/87.80% Zep 93.56%/97.18% 93.80%/87.60% 97.60%/95.60% 85.40%/89.20% Mixed-denied Full-context 88.20%/88.60% 96.40%/98.60% 85.40%/90.20% 87.80%/89.40% MemOS 91.80%/94.00% 96.80%/92.60% 95.60%/95.60% 85.40%/92.60% Mem0 91.80%/94.20% 94.80%/88.00% 94.20%/93.60% 89.80%/90.40% Zep 92.56%/94.77% 98.20%/93.20% 95.00%/95.20% 88.60%/93.60% 
+
+26 Table 14: Pairwise results on the Finance domain by evaluation task. Each cell reports the P-TC/P-PQ win-tie rate of SP-Mem against the corresponding baseline under the same response backbone. For Privacy-only-allowed and Privacy-only-denied tasks, P-PQ is not applicable and is shown as –. Values above 50% indicate that SP-Mem is preferred over or comparable to the baseline. 
+
+Finance 
+
+Task SP-Mem vs. GPT-5.2 Llama-3.1 DeepSeek Qwen3 P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ Preference-only Full-context 65.23%/79.20% 58.67%/83.41% 79.97%/81.60% 48.35%/73.87% MemOS 88.30%/92.74% 80.15%/89.48% 89.04%/92.44% 69.04%/89.63% Mem0 87.70%/93.04% 84.30%/88.89% 92.59%/95.11% 77.93%/92.44% Zep 88.07%/92.60% 81.78%/88.89% 91.96%/94.23% 69.15%/89.82% Privacy-only-allowed Full-context 55.11%/– 61.78%/– 59.38%/– 43.56%/– MemOS 79.11%/– 80.89%/– 91.56%/– 80.44%/– Mem0 86.22%/– 89.78%/– 95.56%/– 85.33%/– Zep 91.20%/– 89.78%/– 95.43%/– 86.51%/– Privacy-only-denied Full-context 97.78%/– 96.44%/– 95.54%/– 91.11%/– MemOS 92.44%/– 90.22%/– 94.67%/– 95.11%/– Mem0 95.11%/– 93.33%/– 96.89%/– 93.33%/– Zep 96.30%/– 95.56%/– 96.80%/– 93.95%/– Mixed-allowed Full-context 43.33%/70.44% 56.00%/82.89% 59.11%/74.22% 40.76%/72.61% MemOS 84.67%/90.67% 83.07%/88.86% 92.67%/92.89% 74.39%/88.86% Mem0 89.56%/92.44% 89.78%/86.22% 96.00%/93.11% 84.89%/90.00% Zep 89.30%/89.77% 89.78%/87.11% 96.15%/92.29% 83.86%/88.18% Mixed-denied Full-context 85.33%/89.33% 95.11%/94.89% 85.33%/84.22% 84.44%/91.56% MemOS 87.56%/91.33% 95.55%/93.54% 91.11%/90.44% 83.52%/92.43% Mem0 88.00%/91.33% 92.67%/89.11% 95.78%/91.56% 90.00%/91.56% Zep 90.00%/90.47% 96.00%/90.89% 94.33%/89.57% 86.14%/90.68% 
+
+Table 15: Pairwise results on the Medical domain by evaluation task. Each cell reports the P-TC/P-PQ win-tie rate of SP-Mem against the corresponding baseline under the same response backbone. For Privacy-only-allowed and Privacy-only-denied tasks, P-PQ is not applicable and is shown as –. Values above 50% indicate that SP-Mem is preferred over or comparable to the baseline. 
+
+Medical 
+
+Task SP-Mem vs. GPT-5.2 Llama-3.1 DeepSeek Qwen3 P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ Preference-only Full-context 83.66%/87.29% 69.33%/89.93% 82.47%/89.00% 52.19%/77.07% MemOS 92.30%/97.04% 88.69%/96.28% 94.37%/97.63% 77.63%/95.70% Mem0 91.41%/95.11% 86.22%/89.93% 94.96%/97.93% 77.19%/91.11% Zep 91.56%/95.85% 82.96%/88.44% 93.40%/96.25% 73.13%/91.79% Privacy-only-allowed Full-context 57.92%/– 66.67%/– 61.16%/– 33.63%/– MemOS 92.89%/– 88.89%/– 98.22%/– 89.78%/– Mem0 89.33%/– 86.22%/– 95.11%/– 83.56%/– Zep 96.10%/– 92.00%/– 99.08%/– 90.58%/– Privacy-only-denied Full-context 94.59%/– 97.78%/– 86.10%/– 90.54%/– MemOS 95.11%/– 92.89%/– 96.44%/– 91.11%/– Mem0 91.11%/– 91.11%/– 92.44%/– 90.22%/– Zep 98.05%/– 96.89%/– 95.87%/– 90.13%/– Mixed-allowed Full-context 67.26%/80.04% 71.11%/88.89% 63.98%/77.85% 43.21%/73.94% MemOS 99.78%/99.11% 95.96%/94.84% 99.11%/99.56% 92.44%/95.78% Mem0 97.11%/95.56% 91.11%/83.78% 97.56%/96.44% 85.56%/90.22% Zep 97.48%/97.12% 94.22%/89.56% 99.10%/96.85% 88.62%/94.20% Mixed-denied Full-context 94.12%/95.02% 96.00%/96.22% 87.75%/89.53% 83.26%/91.29% MemOS 96.21%/98.44% 96.86%/95.74% 96.00%/97.11% 86.67%/96.44% Mem0 95.56%/96.44% 93.78%/88.89% 96.22%/93.78% 88.67%/91.11% Zep 95.68%/97.12% 95.78%/93.33% 95.50%/95.72% 86.61%/94.20% 
+
+27 Table 16: Pairwise results on the Mental domain by evaluation task. Each cell reports the P-TC/P-PQ win-tie rate of SP-Mem against the corresponding baseline under the same response backbone. For Privacy-only-allowed and Privacy-only-denied tasks, P-PQ is not applicable and is shown as –. Values above 50% indicate that SP-Mem is preferred over or comparable to the baseline. 
+
+Mental 
+
+Task SP-Mem vs. GPT-5.2 Llama-3.1 DeepSeek Qwen3 P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ P-TC/P-PQ Preference-only Full-context 79.73%/80.95% 66.51%/84.63% 81.14%/81.44% 48.11%/68.23% MemOS 92.30%/95.56% 82.96%/88.59% 93.04%/95.41% 73.48%/88.89% Mem0 91.11%/95.56% 83.85%/86.81% 93.48%/96.00% 76.30%/89.63% Zep 90.22%/94.67% 78.81%/88.74% 93.77%/95.99% 70.96%/89.19% Privacy-only-allowed Full-context 64.74%/– 72.00%/– 66.47%/– 39.18%/– MemOS 82.29%/– 82.86%/– 94.86%/– 82.29%/– Mem0 85.14%/– 87.43%/– 94.29%/– 83.43%/– Zep 95.68%/– 93.14%/– 100.00%/– 93.71%/– Privacy-only-denied Full-context 98.86%/– 94.29%/– 91.67%/– 93.60%/– MemOS 94.86%/– 89.14%/– 98.29%/– 97.14%/– Mem0 96.00%/– 90.86%/– 97.71%/– 94.29%/– Zep 95.68%/– 97.14%/– 99.43%/– 93.14%/– Mixed-allowed Full-context 55.56%/75.76% 69.92%/86.59% 60.00%/72.24% 41.53%/66.94% MemOS 94.20%/94.60% 87.20%/82.72% 94.20%/96.00% 81.80%/83.20% Mem0 93.80%/95.80% 94.11%/83.13% 97.40%/95.40% 88.60%/86.40% Zep 95.02%/95.95% 92.68%/82.72% 96.60%/95.60% 87.78%/83.57% Mixed-denied Full-context 88.57%/90.82% 96.14%/97.15% 82.79%/86.23% 82.24%/83.67% MemOS 92.80%/94.60% 93.09%/84.35% 95.20%/93.20% 84.40%/86.40% Mem0 93.80%/96.00% 96.14%/86.18% 95.80%/95.20% 89.00%/89.00% Zep 90.65%/96.26% 95.12%/88.82% 95.00%/93.60% 87.78%/84.37% 
+
+28 You are a Privacy Profile Consistency Checker. Your task is to examine a single user privacy profile and identify only hard logical contradictions. 
+
+Core Rule 
+
+Flag an issue only when two or more fields are logically incompatible or explicitly self-contradictory. Do not flag a profile because a value is uncommon, atypical, or statistically unlikely. 
+
+Checks 
+
+• Age–education–occupation: detect impossible combinations, such as a child with a PhD or a senior professional role. • Numeric and financial fields: detect invalid ratios, negative values for fields that cannot be negative, or mutually impossible numeric constraints. • Medical sex/gender consistency: detect strict organ-specific contradictions, such as pregnancy-related conditions in a male profile or prostate/testicle-related conditions in a female profile. • Relationship fields: detect explicit self-contradictions, such as a single marital status together with a spouse field. • Demographic fields: detect direct conflicts between explicit demographic attributes, such as inconsistent nationality or citizenship fields. 
+
+Do Not Flag 
+
+Do not infer contradictions from names, addresses, language, insurance records, or treatments that are merely unusual. Do not make judgments based on stereotypes or typical life patterns. 
+
+Input 
+
+User Privacy Profile: [user_privacy_profile] 
+
+Output Format 
+
+{"profile_conflict_label": 0 or 1, "issues": ["category: description", ...] }
+
+Set profile_conflict_label to 1 if and only if the issue list is non-empty. If no hard contradiction is found, return an empty issue list. 
+
+Figure 6: The prompt for privacy-profile consistency checking. The checker identifies only hard logical contradictions within a user privacy profile and returns structured JSON for controlled parsing. 29 You are a Privacy–Preference Consistency Checker. Your task is to examine a synthetic user persona and determine whether the user’s privacy profile and non-private preferences contain any direct contradiction. 
+
+Goal 
+
+Given two views of the same user, decide whether the assigned preferences are consistent with the user’s background facts. A conflict should be reported only when the two views cannot logically hold at the same time. 
+
+Conflict Definition 
+
+Label a conflict only if the information is mutually exclusive, logically incompatible, or factually contradictory. Do not label a profile as inconsistent merely because a preference is unusual, low-probability, or statistically atypical. 
+
+Checks 
+
+• Within-domain consistency: check whether privacy facts and preferences in the same domain directly contradict each other. • Cross-domain consistency: check whether facts from one domain make preferences from another domain logically impossible. • Medical interpretation: treat medical information as medical history, not necessarily as current functional limitation. • Direct incompatibility: flag only conflicts that are explicitly supported by the provided fields. 
+
+Examples 
+
+• A five-year-old user with an occupation as a doctor is a conflict. • A user who is explicitly unable to walk but prefers running is a conflict. • A user with a history of knee surgery who prefers running is not necessarily a conflict. 
+
+Input 
+
+Privacy Profile: [privacy_profile] Non-private Preferences: [non_privacy_preferences] 
+
+Output Format 
+
+{"label": 0 or 1, "conflicts": [ {"type": "concise conflict tag", "reason": "brief explanation of direct incompatibility" }], "explanation": "short summary of why label is 0 or 1" }
+
+Set label to 1 only if at least one direct conflict exists. If no conflict is found, set label to 0 and return an empty conflict list. 
+
+Figure 7: The prompt used for privacy-preference consistency checking. The checker identifies direct contradictions between privacy attributes and non-private preferences and returns structured JSON for controlled parsing. 30 You are a Task-Card Generator. Your task is to generate realistic user–assistant task cards that require personal information, user preferences, or both to deliver personalized assistance. 
+
+Input 
+
+• Scenario: the scenario name and its description. • Mode: one of privacy_only , non_privacy_only , or mixed .• Fixed privacy entities: the privacy entities that must be used in the task. • Fixed preference entities: the preference entities that must be used in the task. Example [Example] 
+
+Requirements 
+
+1. Broad and reusable: describe a general task that can apply to different users and must not contain concrete personal details. 2. Goal-driven: the task should have a clear outcome that indicates successful completion. 3. Entity-dependent: every fixed privacy or preference entity must be necessary for completing the task. 4. Generic only: do not instantiate concrete privacy values, identifiers, locations, medical values, financial values, or concrete preference values. 5. Authentic and real-world: the task should reflect a common situation where users would genuinely ask an assistant for help. 6. First-party privacy: all privacy entities must refer to the user, not to another person. 7. Diversity: vary scenarios, goals, and workflows to avoid repetitive task patterns. 
+
+Output 
+
+Return exactly one JSON object with the following fields: • scenario: the fixed scenario identifier. • task_description: a broad, reusable task description that explains why the selected entities are needed. • user_intent: a natural user request that initiates the conversation. • privacy_entities: the fixed privacy entity list. • preference_entities: the fixed preference entity list. • mode: the fixed task mode. 
+
+Figure 8: The prompt used for constrained task-card generation. The generator uses a scenario, a mode, fixed entity annotations, and a few-shot example to produce realistic task cards while preserving ground-truth privacy and preference labels. 31 You are an expert memory-planning analyst for a privacy-aware personal assistant. You are precise, conservative with private fields, and deterministic. 
+
+Task 
+
+Convert a user query into a minimal memory-retrieval plan. Decide what user-specific entities are truly needed to answer the query. 
+
+Allowed Entity Set 
+
+[allowed_entities] 
+
+Privacy Entity Set 
+
+[privacy_entities] 
+
+Reasoning Framework 
+
+Follow the questions below in order and reflect them in reasoning_process :
+
+Q1. What is the user task? State the concrete task the user wants to complete. 
+
+Q2. What information is needed? List only task-critical user information, map it to the allowed entity vocabulary, and remove nice-to-have extras. 
+
+Q3. Which information is private? Mark an entity as private only if it belongs to the privacy entity set, and set needs_privacy to true iff any selected entity is private. 
+
+Q4. Safety check. Do not infer extra private entities or hidden sensitive values that are not required by the task. 
+
+Hard Constraints 
+
+All selected entities must come from the whitelist, and no extra private entities should be inferred unless they are explicitly required by the user query. The reasoning_process must contain 4–6 ordered steps covering Q1–Q3 and the final needs_privacy decision. The model must return valid JSON only, without markdown, prose, or code fences. 
+
+Few-shot Examples 
+
+[Example 1] [Example 2] 
+
+User Query 
+
+[query] 
+
+Output JSON Schema 
+
+{"intent": "short_intent_name", "reasoning_process": ["step 1", "step 2", "step 3"], "reasoning_summary": "brief rationale", "required_entities": [ {"entity": "loan_amount", "privacy": true }], "needs_privacy": true }
+
+Figure 9: The prompt used for query-time analysis. 32 You are a helpful, thoughtful personal assistant. Your job is to write natural, high-quality answers grounded in retrieved memory evidence. 
+
+Primary Objective 
+
+Answer the user query completely, accurately, and in a user-friendly style. When writing the answer, combine the user query with the required entities and retrieved memories. 
+
+User Query 
+
+[query] 
+
+Retrieved Memories 
+
+[retrieved memories] 
+
+Required Entities 
+
+[required entities] 
+
+Execution Rules 
+
+1. Evidence grounding: use only facts present in retrieved memories and never invent user details. 2. Coverage: inspect every retrieved entity group and use all relevant evidence. For each required entity, integrate it if evidence exists; if evidence is missing and matters, explicitly state the gap. 3. Preference alignment: if retrieved evidence includes user preferences, adapt wording, tone, ex-amples, and recommendations to those preferences. Preference alignment must be substantive, not merely a mention of preferences. 4. Output format: output the final answer text only. Generate the final answer from the structured input. Use the query, required entities, and retrieved memories together when composing the answer. Personalize the answer using retrieved user preferences in a concrete, natural way. 
+
+Output 
+
+[agent reponse] 
+
+Figure 10: The prompt used for agent response generation. 33 You are an impartial judge for pairwise evaluation of conversational assistants. Compare Assistant A and Assistant B for Task Completion (TC). 
+
+Judging principles: 
+
+• Evaluate whether the response completes the user task and required deliverables. • Focus on instruction-following, completeness, relevance, and practical usefulness. • Do not prefer an answer because it is longer, more formal, or more verbose. • Do not let position (A vs B) influence your decision. • Output winner = “A” if Assistant A is clearly better on TC. • Output winner = “B” if Assistant B is clearly better on TC. • If both are similarly good or similarly weak, output TIE. 
+
+Task Description 
+
+{scenario} 
+
+User Query 
+
+{query} 
+
+Required Entities (for completion) 
+
+{required_entities} 
+
+Assistant A Response 
+
+{response_a} 
+
+Assistant B Response 
+
+{response_b} Return ONLY JSON: 
+
+{"winner":"A|B|TIE","reason":"one concise sentence"} 
+
+Figure 11: Pairwise evaluation prompt for Task Completion (P-TC). 34 You are an impartial judge for pairwise evaluation of conversational assistants. Compare Assistant A and Assistant B on Personalization Quality (PQ). 
+
+Judging principles: 
+
+• Evaluate whether the response uses user preferences correctly and meaningfully. • “Meaningful” means preferences materially shape content, tone, examples, or recommendations. • Penalize hallucinated, incorrect, or irrelevant preference usage. • Do not prefer an answer because it is longer, more formal, or more verbose. • Do not let response position (A vs B) influence your decision. • Output winner = “A” if Assistant A is clearly better on PQ. • Output winner = “B” if Assistant B is clearly better on PQ. • Output winner = “TIE” if both are similarly good or similarly weak. 
+
+Required Preference Entities 
+
+{preference_entities} 
+
+User Preference Values (Ground Truth) 
+
+{preference_values} 
+
+User Query 
+
+{query} 
+
+Assistant A Response 
+
+{response_a} 
+
+Assistant B Response 
+
+{response_b} Return ONLY JSON: 
+
+{"winner":"A|B|TIE","reason":"one concise sentence"} 
+
+Figure 12: Pairwise evaluation prompt for Personalization Quality (P-PQ). 35
