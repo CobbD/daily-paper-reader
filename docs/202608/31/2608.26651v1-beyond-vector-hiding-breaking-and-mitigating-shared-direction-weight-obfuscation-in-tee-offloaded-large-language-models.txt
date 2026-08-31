@@ -1,0 +1,847 @@
+Title: Beyond Vector Hiding: Breaking and Mitigating Shared-Direction Weight Obfuscation in TEE-Offloaded Large Language Models
+
+URL Source: https://arxiv.org/pdf/2608.26651v1
+
+Published Time: Fri, 28 Aug 2026 00:33:33 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Beyond Vector Hiding: Breaking and Mitigating Shared-Direction Weight Obfuscation in TEE-Offloaded Large Language Models 
+
+## Menghui Zhang 1∗, Aoying Zheng 1∗, Guoxiao Liu 2, Zizhuang Deng 1,3,Jiejing Wen 1† , Jincheng Zhuang 1† , and Ran Tao 11School of Cyber Science and Technology, Shandong University, Qingdao, China 
+
+> 2
+
+## Tsinghua University, Beijing, China 
+
+> 3
+
+## Suzhou Research Institute of Shandong University, Suzhou, China 
+
+## Abstract 
+
+Trusted Execution Environment (TEE)-shielded partitioning of Large Language Models (LLMs) accelerates on-device inference by offloading obfuscated linear layers to an un-trusted accelerator while retaining only a small correction inside the TEE. However, earlier lightweight obfuscation schemes preserved weight-vector directions and were broken by ArrowMatch. To defend against this attack, ArrowCloak injects scalar multiples of the same hidden direction into all weight vectors, enabling lightweight trusted correction. We show that this reuse leaves a rank-one relation across the complete accelerator-visible matrix. For the released real-valued scheme, we propose S PECTRAL LEAK , which es-timates and removes the shared component. Across 12 task settings, its surrogates achieve 87 .98% mean accuracy ver-sus 89 .85% for the victims. In our defense-favorable mod-Q
+
+realization of ArrowCloak’s published modular security for-mulation, mod-Q arithmetic suppresses this spectral signal but retains the algebraic rank-one relation modulo Q. We there-fore propose L ATTICE LEAK , which exploits the resulting hid-den lattice. In our BERT-Base and GPT2-Base experiments, it reconstructs every protected fixed-point parameter exactly; across all evaluated architectures, the reconstructed models re-tain victim-level task accuracy without victim queries, labels, or fine-tuning. These findings identify shared rank-one reuse as the root cause of the leakage exploited by our attacks . Guided by this insight, we design B UTTERFLY CLOAK , a keyed maximal-rank butterfly mask that replaces the reused direction with distinct mask rows while retaining fast trusted correction. In our full-BERT evaluation, protection leaves task accuracy un-changed (91 .6284% before and after), reduces ArrowMatch recovery to near-random levels, and prevents L ATTICE LEAK .For a square n × n layer with ℓ input activations, its trusted correction costs O(nℓ log n), only a logarithmic factor above ArrowCloak’s O(nℓ) correction and asymptotically below dense masking’s O(n2ℓ) cost.  
+
+> ∗Equal contribution. †Corresponding authors.
+
+## 1 Introduction 
+
+As Large Language Models (LLMs) are increasingly de-ployed on smartphones, personal computers, and other edge devices, protecting proprietary model weights has become an important security problem. Model weights embody substan-tial investments in data collection, training, and task-specific adaptation, and therefore constitute valuable intellectual prop-erty. In cloud deployment, users typically have only black-box access through an input–output interface. In on-device deployment, however, the model runs on a user-controlled device, potentially exposing its files, memory, and execution process. Prior studies have shown that model weights can be extracted from on-device applications, device memory, or data transfers [19, 23, 30, 41, 46]. Related attacks recover model architectures or protected inputs through shared resources and ciphertext side channels [39,42], while black-box and transfer-learning attacks demonstrate that public interfaces can also enable functional or parameter recovery [2,10,21,32,35]. On-device model protection therefore aims to prevent restricted black-box access from becoming direct white-box access to proprietary weights. Trusted Execution Environments (TEEs) can isolate model weights and sensitive computation from the rest of the device. However, their limited memory and com-putation make full-model execution expensive. TEE-shielded model partitioning addresses this limitation by offloading computation-intensive linear layers to an untrusted acceler-ator while retaining only lightweight correction inside the TEE [15, 18, 31, 44]. Research on GPU and accelerator TEEs seeks to enlarge the trusted computing base [27, 33, 36]; nev-ertheless, partitioned execution remains attractive when the accelerator is outside the trusted boundary or when trusting the complete accelerator is too costly. Because the accel-erator must receive the weights required for computation, these systems obfuscate the weights before offloading them and recover the correct outputs inside the TEE. The central challenge is to hide the original weights while keeping the in-TEE output correction lightweight, thereby preserving the efficiency benefits of computation offloading. 1arXiv:2608.26651v1 [cs.CR] 27 Aug 2026 Full TEE execution no exposed weights high trusted cost Permutation / scaling 
+
+O(nℓ) correction directions preserved ARROW CLOAK 
+
+O(nℓ) correction shared rank-one mask BUTTERFLY CLOAK 
+
+O(nℓ log n) correction maximal-rank mask ArrowMatch public-ancestor matching Real value version SPECTRAL LEAK 
+
+mod-Q version LATTICE LEAK   
+
+> offload response repair
+
+Figure 1: The security–efficiency evolution studied in this paper. Earlier lightweight transformations preserve vector directions; ARROW CLOAK blocks that leakage by reusing one hidden direction, but the reuse creates a global rank-one invariant. Our two attacks expose its real and finite-field views, and B UTTERFLY CLOAK explores a maximal-rank repair. Cost labels use the square-layer shorthand m = d = n.Existing schemes face a clear tension between security and efficiency. Lightweight permutation, scaling, and channel-wise transformations require only O(nℓ) trusted correction, but preserve weight-vector directions [16, 25, 28, 29, 38]. Ac-tive weight-obfuscation defenses can also perturb selected parameters, but must preserve model utility and efficient infer-ence [45]. More expressive schemes such as GroupCover [43] can change vector directions, but incur substantially higher trusted computation. ArrowMatch [37] showed that the for-mer lightweight schemes can be broken by matching the di-rections of exposed private-model vectors to those of a public pre-trained model. Because private models are commonly fine-tuned from public checkpoints, corresponding weights often retain exploitable structure [2, 10, 35]; the recovered correspondences can therefore be used to construct functional surrogate models. To defend against ArrowMatch, Arrow-Cloak [37] injects the same hidden direction into every private weight vector using different coefficients, followed by scaling and permutation, and establishes a reduction to Learning With Errors (LWE) problem [24]. This shared component disrupts per-vector direction matching while retaining O(nℓ) trusted correction. When vectors are considered independently, Ar-rowCloak therefore appears to provide both direction protec-tion and lightweight overhead. However, we find that hiding individual weight vector directions does not protect the com-plete weight matrix. Because ArrowCloak injects the same hidden direction into all vectors, this reuse leaves a shared rank-one relation in the complete matrix. In row notation, the transformation is Y = P(D + rk ⊤)W , where W is the private weight matrix, D is diagonal, P is a permutation, and rk ⊤
+
+captures the shared rank-one reuse. This relation remains in both the real-valued implementation of ArrowCloak and its modular variant. For the original ArrowCloak over the reals, we propose SPECTRAL LEAK , which removes the shared component and recovers surrogate models that nearly match victim-model utility. Across 12 task settings covering 4 models and 7 datasets, the recovered models achieve 87 .98% mean accu-racy, compared with 89 .85% for the victims. A separate scale extension to Qwen3-8B, Llama-3.1-8B, and Gemma-4-E2B obtains 96 .22–96 .56% without public-data refinement, at most 0 .34 percentage points from the corresponding vic-tims. Although field-wide mod-Q arithmetic defeats S PEC -
+
+> TRAL
+
+LEAK , the underlying rank-one relation remains. We therefore propose L ATTICE LEAK for the modular variant. In our BERT-Base and GPT2-Base experiments, L ATTICE LEAK 
+
+reconstructs every protected fixed-point parameter exactly. It also restores victim-level accuracy in the evaluated ViT and GPT2-XL settings. The algebraic attack requires no victim queries, labels, or fine-tuning. These findings identify shared rank-one reuse as the root cause of the leakage . Guided by this insight, we further design B UTTERFLY CLOAK , a keyed maximal-rank butterfly mask that removes rank-one reuse without dense TEE computation. It leaves full-BERT ac-curacy unchanged. Across the three larger models, it sup-presses the tested spectral and correspondence attacks and keeps simulated protected accuracy within 0 .23 percentage points of the victim. For an m × d layer, its trusted cor-rection costs O(ℓ max {m, d} log d), compared with Arrow-Cloak’s O(ℓ(m + d)) and dense masking’s O(ℓmd ).Figure 1 summarizes this evolution: earlier lightweight schemes preserve weight-vector directions; ArrowCloak blocks this directional leakage but introduces shared rank-one reuse; S PECTRAL LEAK and L ATTICE LEAK expose this structure over the reals and finite fields, respectively; and BUTTERFLY CLOAK eliminates the root cause of the leakage. Two recent concurrent preprints also analyze ArrowCloak. MOSAIC [3] questions ArrowCloak’s claimed security re-duction to LWE. After we registered our USENIX Security submission on August 18, 2026, another concurrent preprint was submitted to arXiv on August 21, 2026, introducing Ar-rowRevelio, an SVD-based attack against ArrowCloak’s re-leased real-valued implementation [17]. Compared with these concurrent works, we study ArrowCloak in both settings: we propose a PCA attack against its original implementation over the reals and use lattice reduction to attack its modular for-mulation. In addition, we design a mitigation against these attacks. 2Our contributions are summarized as follows: • Matrix-level leakage. We identify shared rank-one reuse as the root cause of information leakage in both Arrow-Cloak and its modular variant, showing that security must be analyzed over the complete accelerator-visible matrix rather than individual vectors. • Attacks across arithmetic settings. We propose S PEC -
+
+> TRAL
+
+LEAK for the real-valued scheme, recovering sur-rogates with 87 .98% mean accuracy versus 89 .85% for the victims across 12 task settings and extending to three 5.1–8.2B-parameter models without refinement. We fur-ther propose L ATTICE LEAK for the modular variant; it exactly reconstructs all protected fixed-point parameters for BERT-Base and GPT2-Base and restores victim-level utility across the evaluated BERT, ViT, GPT2-Base, and GPT2-XL settings without victim queries, labels, or fine-tuning. • Mitigation of rank-one reuse. We design B UTTER -
+
+> FLY
+
+CLOAK , a keyed maximal-rank butterfly mask that eliminates shared rank-one reuse. On full BERT it sup-presses all evaluated attacks, including L ATTICE LEAK .On three larger language models it preserves utility and suppresses the tested spectral and correspondence at-tacks, with O(ℓ max {m, d} log d) trusted correction. 
+
+## 2 Background and Preliminaries 2.1 TEE-Shielded Model Partitioning 
+
+In on-device deployment, a Trusted Execution Environment (TEE) isolates model weights and sensitive computation from untrusted software. However, existing TEEs typically have limited computational capacity and available memory, mak-ing it difficult to efficiently execute the large-scale matrix operations required by modern models. To reduce the over-head of full-model execution inside the TEE, prior work has proposed TEE-shielded model partitioning, which offloads computation-intensive linear layers to a GPU or another hard-ware accelerator outside the TEE while retaining sensitive state and necessary output correction within the TEE. Slalom masks outsourced linear computation and verifies its execu-tion using Freivalds’ algorithm [31]; DarkneTZ partitions on-device models between trusted and untrusted execution [18]; and subsequent work further analyzes the potential model information leakage introduced by such partitioning [44]. Figure 2 illustrates cooperative execution between the TEE and the accelerator. For a private weight matrix Wvic to be offloaded, the system generates an obfuscated matrix Wobf 
+
+during deployment or initialization and provides it to the untrusted accelerator. During inference, the accelerator com-putes with Wobf and returns the result, which the TEE cor-rects using its retained secret information. In this way, the Model 
+
+Deployment 
+
+> Victim model
+
+TEE(Trusted Partition) 
+
+> Input
+> non-linear operations
+> Obfuscation in TEE
+> Recover final output
+
+GPU(Untrusted Partition)  
+
+> offloaded linear operations
+> Compute
+> send return
+
+On-Device Execution 
+
+> extract
+
+Figure 2: Cooperative execution between the TEE and an untrusted accelerator. The accelerator performs linear compu-tation using obfuscated weights, while the TEE recovers the correct outputs. computation-intensive matrix multiplication is executed by the accelerator, while the TEE performs only lightweight out-put correction. We focus on whether the complete obfuscated weight matrices legitimately provided to the untrusted accel-erator reveal the private model. Unlike query-based model ex-traction, memory attacks, or TEE side channels [21,23,32,46], our attacks use only these matrices and require no additional leakage. Input protection, result integrity, and adversarial capabilities are specified in our threat model. 
+
+## 2.2 Weight Obfuscation 
+
+Notation. Unless otherwise stated, weight matrices are rep-resented in row-oriented form throughout this paper. For 
+
+W,Y,U ∈ Dm×d , each row wi, yi, ui ∈ D1×d denotes one weight vector, where D = R for the released implementa-tion and D = FQ for the modular realization. Throughout the matrix-level analysis, weight vectors are represented as row vectors, while all other vector-valued quantities are represented as column vectors unless explicitly stated otherwise. Thus, directions such as v and bv, as well as coefficient vectors such as r, k, and the blockwise coefficients introduced later, are column vectors. Their row forms are written using the transpose operator when needed. Conse-quently, weight-row projections act from the right, and for 
+
+X ∈ Dℓ×d the accelerator computes Oobf = XY ⊤.Figure 3 and its accompanying per-vector equation fol-low the original column-vector notation used by ArrowCloak. Figure 2 is a schematic system overview using local system-level notation. All matrix-level analysis thereafter follows the convention above. Weight obfuscation must balance security and efficiency. 3Table 1: Representative weight obfuscation designs. Costs denote trusted output correction for a layer of width n and sequence length ℓ.            
+
+> Design Mixing TEE work Relevant structure
+> Permutation / scaling Per vector O(nℓ)Directions preserved GroupCover Dense group mixing O(n2ℓ/ k)Directions changed ARROW CLOAK Shared direction O(nℓ)Rank-one reuse
+
+On the one hand, the obfuscated weights should not reveal in-formation about the original model. On the other hand, output correction inside the TEE must remain lightweight; otherwise, computation offloading provides little benefit. For a linear layer of width n and sequence length ℓ, the original matrix multiplication costs O(n2ℓ). The cost of weight obfuscation and output correction should therefore be substantially lower than this complexity. Existing lightweight schemes use scal-ing, permutation, and channel transformations to retain O(nℓ)
+
+trusted correction [16, 25, 28, 29, 38], but preserve exploitable weight-vector directions. ArrowMatch exploits this informa-tion by matching exposed vectors to corresponding vectors in a public model [37]. Because private models are commonly fine-tuned from public models, their corresponding weight vectors often remain close in direction. ArrowMatch uses this similarity to recover vector correspondences and construct a functional surrogate model. GroupCover instead changes vector directions through dense mixing within groups, but increases trusted correction to O(n2ℓ/ k) [43]. Although it was not evaluated as an ArrowMatch target, GroupCover il-lustrates the higher trusted cost required by dense direction mixing. Table 1 summarizes the relevant tradeoffs among representative weight obfuscation designs. To defend against direction matching, Wang et al. proposed ArrowCloak, which injects the same hidden direction into ev-ery weight vector while retaining lightweight correction [37]. To remain consistent with the presentation in the original Ar-rowCloak paper, Figure 3 and Equation (1) temporarily use its original column-vector notation. In this notation, the i-th private weight vector wi is transformed as 
+
+yi = piwi + qiv, v = ∑
+
+> j
+
+k jw j, (1) where pi scales the original vector, qi controls the injection of v, and k j are the coefficients used to construct the hidden direction. ArrowCloak then secretly permutes the transformed vectors. As shown in Figure 3, the injection changes each vector’s direction and disrupts its correspondence with the public model. Because all vectors reuse the same v, the TEE computes Xv only once, keeping the correction cost at O(nℓ).After this local presentation of the original ArrowCloak notation, we return to the row-oriented matrix convention defined above. Let W,Y ∈ Dm×d denote the private and ob-fuscated weight matrices, respectively. The domain D is Clean Victim weights 
+
+> Shared-direction
+> obfuscation
+> Per-Vector Obfuscation
+> obfuscated column vector
+> Hidden permutation
+> hidden
+> permutation
+> dim 1
+> dim 2
+> columns reordered by
+> Columns are weight vectors
+> ARROW CLOAK
+> in
+> Offloaded
+> linear layer
+
+Figure 3: Weight obfuscation in ArrowCloak, shown using the original paper’s column-vector notation. All weight vec-tors reuse the same hidden direction with different injection coefficients before permutation. 
+
+R for the released implementation and FQ for the modular realization. For an input activation matrix X ∈ Dℓ×d , the accelerator computes 
+
+Oobf = XY ⊤. (2) The released ArrowCloak implementation operates over the reals. However, the original ArrowCloak paper explicitly quantizes its security relation over a large prime field and formulates the resulting relation in an LWE-style finite-field form [37]. LATTICE LEAK is our attack, but the modular target it analyzes is derived from this original security for-mulation rather than introduced as a new defense by us. Be-cause [37] does not specify a complete end-to-end modular inference protocol, we instantiate the omitted fixed-point and field-arithmetic details in a defense-favorable manner. 
+
+## 2.3 Preliminaries for Matrix-Level Analysis 
+
+Our analysis examines the matrix-level structure induced by ArrowCloak’s reuse of a shared hidden direction. We for-malize this structure in Section 4.1. Over the reals, we use principal component analysis to characterize its dominant spectral manifestation. Over a finite field, we use code-lattice constructions and lattice basis reduction to analyze linear relations that remain under modular arithmetic. We briefly introduce the tools needed for both analyses. 
+
+Principal Component Analysis over the Reals. For a cen-tered matrix, the first principal component is the leading right singular vector and captures the direction of maximum pro-jected variance [11, 12]. We use it to identify a component shared across the accelerator visible weight rows. Appendix B 4provides the formal definition and detailed spectral diagnos-tics. 
+
+Code-Lattice Construction over Finite Fields. Let Q be a prime number. Mod-Q arithmetic disrupts the numerical ordering present over the reals, preventing the direct appli-cation of real-valued spectral analysis. To analyze the linear relations preserved over a finite field, we use Construction A to embed a linear code into an integer lattice. For a linear code C ⊆ FdQ, the corresponding Construction A lattice is defined as 
+
+Λ(C ) = 
+
+n
+
+z ∈ Zd : z mod Q ∈ C o
+
+. (3) This is the standard Construction A code-to-lattice embed-ding [4]. The LLL algorithm finds short vectors in a given lattice basis [14] and has been widely used to analyze integer structures hidden within modular relations [20]. We describe how L ATTICE LEAK uses these tools to recover hidden row spaces in Section 6. 
+
+## 3 Security Goal and Threat Model 
+
+We follow the practical setting of TEE-shielded model parti-tioning, where an untrusted accelerator receives obfuscated weights for linear computation, while secret parameters and sensitive operations remain inside the TEE [18, 31, 37, 44]. 
+
+Scenario. A model owner fine-tunes a public pretrained model Mpre into a private victim model Mvic and deploys it using the partition in Figure 2. An untrusted accelerator executes computation-intensive linear layers using obfuscated weights, while secret state and lightweight output correction remain inside the TEE. The protected assets are the private weights and the model functionality they encode. 
+
+Adversary’s Goal. The adversary aims to recover a useful substitute for Mvic rather than every secret obfuscation param-eter. We consider two forms of success. Functional recovery 
+
+means that a reconstructed surrogate achieves task accuracy close to that of the victim model. Exact recovery means that the recovered weights equal the defender’s fixed point representation element by element. Recovering the secret obfuscation parameters is not required under either criterion. 
+
+Adversary’s Capability. The adversary controls the host and untrusted accelerator, records every obfuscated matrix ex-posed outside the TEE, and knows the architecture, tensor shapes, public parameters, and public ancestor Mpre , consis-tent with ArrowCloak [37]. S PECTRAL LEAK may use at most 1% of the public task training split for fine-tuning, whereas LATTICE LEAK requires no victim queries, labels, or fine-tuning. The adversary knows neither the private weights nor the secret permutation, scales, injection coefficients, hidden direction, or generation seed, and has no victim prediction oracle. Ground-truth weights and secret parameters are used only for evaluation, never as attack inputs. 
+
+Defender’s Goal. The defender aims to prevent the exposed matrices from revealing private weights or enabling recon-struction of a functional surrogate. The protection must also preserve correct inference and keep trusted correction substan-tially below the O(n2ℓ) cost of the original linear computation; otherwise, offloading provides little benefit. The goal is there-fore to protect model confidentiality without moving dense matrix computation back into the TEE. 
+
+Defender’s Capability. The defender controls model provi-sioning and the TEE. Before offloading, it transforms the private weights using ArrowCloak or our proposed B UTTER -
+
+> FLY
+
+CLOAK and keeps all secret transformation parameters inside the TEE. We assume that the transformation design, model architecture, and public system parameters are known to the adversary, while the secret coefficients, permutations, and keyed parameters remain protected. 
+
+Scope. We evaluate both the released ArrowCloak imple-mentation over the reals and a field-wide mod-Q realization constructed according to its published LWE-based security analysis. The modular realization is constructed by this work and is not part of the released implementation. Our attacks apply to shared direction schemes whose exposed matrices have the form Y = P(D + rk ⊤)W ; we do not claim that all weight obfuscation schemes or all TEE partitioning systems are insecure. We consider only model confidentiality and as-sume no TEE compromise, physical attack, trusted-memory leakage, rollback, or malformed inference. Input and output privacy, integrity, availability, and generic attacks against the underlying TEE are out of scope. Our evaluation of B UTTER -
+
+> FLY
+
+CLOAK demonstrates resistance to the concrete attacks studied here, not a general cryptographic security guarantee. 
+
+## 4 Shared Rank-One Reuse 4.1 A Diagonal-Plus-Rank-One Structure 
+
+Given the notation defined in Section 2.2, ArrowCloak sam-ples an invertible diagonal matrix D, coefficient vectors r and 
+
+k, and a row permutation P. The shared hidden direction is determined by 
+
+v⊤ = k⊤W. (4) The exposed matrix can therefore be expressed as 
+
+Y = P DW + rv ⊤ = P(D + rk ⊤)W. (5) Because D is invertible, D + rk ⊤ is a rank-one update of a diagonal matrix. Whenever 1 + k⊤D−1r̸ = 0, its inverse follows the standard Sherman–Morrison identity [26]; Ar-rowCloak rejects the singular parameter case so that trusted correction remains well defined. The injected component rv ⊤ has rank at most one. Al-though each row uses a different scaling and injection coef-ficient, every exposed row contains a scalar multiple of the same row-form direction v⊤. The secret row permutation 5does not remove this shared low-rank dependence. Thus, al-though the transformation perturbs each vector individually, the complete exposed matrix remains coupled through the same rank-one component. This reuse is also what makes correction lightweight. Be-cause every injected row depends on the same v, the TEE com-putes the corresponding correction once and reuses it across all rows, retaining O(nℓ) trusted work. Thus, lightweight correction and shared rank-one reuse stem from the same design choice. The central security question is whether this matrix-level relation remains observable under the arithmetic exposed to the attacker. 
+
+## 4.2 Real Valued Leakage View 
+
+In the released implementation over the reals, each injected row component has the form riv⊤. Its magnitude varies with 
+
+ri, but its direction is always v. When this shared variation dominates the row-specific variation in DW , the first princi-pal component of the centered exposed matrix estimates the reused direction. This creates a direct spectral manifestation of shared rank-one reuse under the released parameter regime. Estimating the shared direction is useful because removing it exposes the private component hidden by the injection. Let ˆv denote the PC1 estimate of v, and define the orthogonal projector 
+
+Π⊥ ˆv = I − ˆv ˆv⊤
+
+∥ ˆv∥22
+
+.
+
+Before the secret row permutation, an exposed row is yi =
+
+diwi + riv⊤. Because wi and yi are row vectors, projection is applied on the right: 
+
+yiΠ⊥ ˆv = diwiΠ⊥ ˆv + riv⊤Π⊥ ˆv ≈ diwiΠ⊥ ˆv.
+
+The approximation holds when ˆ v accurately estimates the reused direction. The remaining factor di changes magnitude but not direction. Consequently, removing the shared com-ponent restores the directional relation between private rows and their counterparts in the public ancestor. We verify that this restoration is specific to the leaked shared component, rather than a generic consequence of di-mensionality reduction. For matching exposed and public rows, we compare cosine distance in the original space ( δori ), after removing a random direction ( δrand ), and after remov-ing PC1 ( δpc1 ). Lower distance indicates stronger directional alignment. Table 2 shows that removing a random direction leaves the average cosine distance unchanged at 0 .8998, whereas removing PC1 reduces it to 0 .0016. The same pattern holds across all twelve task settings. Thus, ArrowCloak does not eliminate the directional relation between the victim and its public ancestor; in the released implementation, it largely hides that relation behind one reusable matrix-level compo-nent. Section 5 develops this observation into the complete SPECTRAL LEAK attack. Table 2: Restoration of direction similarity after PC1 removal.                                                      
+
+> Model Dataset δori ↓δrand ↓δpc1 ↓
+> ViT-Base
+> C10 0.8992 0.8992 0.0011
+> C100 0.8992 0.8992 0.0013
+> F101 0.8992 0.8992 0.0016 BERT-Base
+> MNLI 0.8993 0.8993 0.0022
+> QQP 0.8994 0.8994 0.0033
+> SST2 0.8992 0.8992 0.0011
+> QNLI 0.8992 0.8992 0.0016 GPT2-Base
+> MNLI 0.8998 0.8998 0.0017
+> QQP 0.8997 0.8998 0.0015
+> SST2 0.8997 0.8997 0.0014
+> QNLI 0.8997 0.8998 0.0015 GPT2-XL SST2 0.9042 0.9042 0.0005 Avg. –0.8998 0.8998 0.0016
+> Note: δori ,δrand , and δpc1 denote cosine distance in the original space, after removing a random direction, and after removing PC1, respectively. Lower is better.
+
+## 4.3 Leakage under Mod-Q Arithmetic 
+
+Mod-Q instantiation. To determine whether the leakage per-sists beyond real arithmetic, we further evaluate the shared direction transformation using field-wide mod-Q arithmetic. Both the encoded weights and the obfuscation coefficients are computed modulo Q.Let bW denote the original real weight matrix, let f = 16 denote the fixed-point exponent, and let s = 2 f denote the corresponding public scale. We encode the matrix as 
+
+W =
+
+j
+
+s bW
+
+m
+
+mod Q,
+
+where f = 16, s = 216 , and Q = 231 − 1. Signed values are decoded by centered lifting followed by division by s. The coefficients D, r, and k are sampled directly as field elements without further encoding. The matrix exposed to the accelerator is 
+
+Y = P(D + rk ⊤)W (mod Q). (6) We evaluate two coefficient settings. The first maps the small integer ranges used by the released implementation into FQ.The second is a stronger, defense-favorable setting in which r
+
+and k are sampled uniformly from FQ, and the diagonal entries of D are sampled uniformly from F× 
+
+> Q
+
+. We reject samples for which D + rk ⊤ is singular, ensuring exact inversion inside the TEE. 
+
+Spectral suppression. Under the field-wide setting, additions and multiplications wrap modulo Q throughout the exposed matrix. Mapping the resulting residues back to real values does not preserve the Euclidean geometry that makes the shared direction spectrally dominant. As shown in Section 8, this removes the PC1 signal exploited by S PECTRAL LEAK 
+
+and reduces correspondence recovery to near-random levels. Field-wide mod-Q arithmetic therefore defeats the real-valued spectral attack. 6Modular wrap removes the real-valued manifestation of rank-one reuse, but not the underlying relation. Equation (6) still holds algebraically over FQ. Thus, although the rela-tion no longer appears as a dominant principal direction, all exposed rows remain coupled through the same rank-one structure. PCA can no longer recover the shared direction, but finite-field linear combinations can still cancel it. To expose this cancellation structure, consider a block I
+
+containing b exposed rows. After accounting for the hidden row permutation, the block is 
+
+YI = DIWπ(I) + rI v⊤ (mod Q),
+
+where DI and rI contain the scales and injection coefficients associated with the block. Any c ∈ FbQ satisfying c⊤rI = 0cancels the shared term: 
+
+c⊤YI = c⊤DIWπ(I) (mod Q).
+
+Provided that rI̸ = 0, these coefficient vectors form a subspace of dimension b − 1. Thus, although modular arithmetic pre-vents PCA from recovering the shared direction, it preserves a structured cancellation space. This cancellation space provides the algebraic basis for LATTICE LEAK . As detailed in Section 6, the attack recovers hidden row spans from small blocks and intersects overlap-ping spans to isolate private weight rows. 
+
+## 5 SPECTRAL LEAK : Breaking Real Valued Ar-rowCloak 
+
+Section 4.2 showed that shared rank-one reuse produces a dominant component in the released implementation over the reals. Removing this component restores the directional relation between the exposed weights and their public ances-tors. We now turn this leakage into an end-to-end model reconstruction attack. SPECTRAL LEAK requires only the obfuscated matrices visible to the accelerator and the corresponding public an-cestor model. It does not know the victim weights, scaling or injection coefficients, shared hidden direction, or secret permutation. As shown in Figure 4, the attack has four stages: shared component removal, correspondence recovery, weight reconstruction, and surrogate construction. For one protected layer, let W ∈ Rm×d denote the private victim matrix, Y ∈ Rm×d the exposed obfuscated matrix, and 
+
+U ∈ Rm×d the corresponding public pre-trained matrix. We write w j, yi, and u j for their respective rows. Because the secret permutation changes row positions, exposed row yi
+
+need not correspond to victim row wi; we write π(i) = j
+
+when yi originates from victim row w j.
+
+## 5.1 Shared Component Removal 
+
+For each exposed matrix Y ∈ Rm×d , S PECTRAL LEAK centers its rows and computes the first principal component, denoted by bv. Only the one-dimensional subspace spanned by bv is used. The corresponding orthogonal projector is 
+
+Π⊥ = I − bvbv⊤
+
+∥bv∥22
+
+. (7) After the secret permutation, exposed row yi corresponds to victim row wπ(i) and can be written as yi = diwπ(i) + riv⊤,where di and ri denote its scaling and injection coefficients. Because the weights are represented as row vectors, projection is applied on the right: 
+
+yiΠ⊥ = diwπ(i)Π⊥ + riv⊤Π⊥ ≈ diwπ(i)Π⊥. (8) The approximation holds because bv estimates the reused di-rection, making v⊤Π⊥ ≈ 0. Projection therefore suppresses the component introduced by ArrowCloak while retaining the private component in the orthogonal subspace. 
+
+## 5.2 Correspondence Recovery 
+
+After removing the shared component, the attacker must re-cover the secret row permutation. S PECTRAL LEAK projects both the exposed rows yi and the corresponding public ances-tor rows u j using Π⊥. Following the direction-based compar-ison used in ArrowCloak [37], we evaluate each candidate pair in the projected space using 
+
+si j = cos (yiΠ⊥, u jΠ⊥) . (9) The absolute value makes the score invariant to the sign of the unknown scale di. If the released implementation restricts 
+
+di to positive values, the absolute value can be omitted without changing the assignment. Rather than matching rows independently, S PECTRAL -LEAK enforces the one-to-one structure of the secret per-mutation and solves 
+
+bπ = arg max 
+
+> π∈Sm
+> m
+
+# ∑
+
+> i=1
+
+si,π(i), (10) where Sm is the set of permutations of m rows and bπ(i) = j
+
+denotes the public/victim row position assigned to exposed row yi. The true secret correspondence π is unknown to the attacker; bπ is its estimate recovered from the projected-space scores. The public model is used only as a correspondence reference; the victim-specific residual information remains in the projected exposed rows. The novelty here is not the directional similarity metric itself, which follows the comparison used in ArrowCloak, but the space in which it becomes effective. ArrowMatch per-forms direction matching directly in the exposed space, where ArrowCloak suppresses the useful cosine signal. S PECTRAL -LEAK first removes the leaked shared component and applies the directional comparison only after the victim–public rela-tion reappears in the projected space. 7Obfuscated 
+
+> Public
+
+Vector Matching 
+
+> Weights
+> Weights
+
+Attacker's Inputs  Weight  Reconstruction   
+
+> Projected Space from from
+
+Surrogate Recovery    
+
+> fine-tune
+> recovers the
+> functionality of
+> Public Weight Vector Obfuscated Weight Vector
+> Public Weight Vector Projected onto Obfuscated Weight Vector onto
+> Reconstructed Weight Vector Surrogate Weight Vector
+> Public Weight Vector Projected onto
+
+Figure 4: Overview of S PECTRAL LEAK against the released implementation over the reals. The attacker removes the shared component, recovers vector correspondence in the projected space, reconstructs the protected weights, and assembles a surrogate model. 
+
+## 5.3 Weight Reconstruction 
+
+Projection removes the shared injection but also discards the victim’s legitimate component along bv. SPECTRAL -LEAK therefore reconstructs each matched victim row from two components, as illustrated in Figure 5: an orthogo-nal component recovered from the exposed row and a one-dimensional parallel component completed from its matched public ancestor. Consider an exposed row yi matched to public row u j,where j = bπ(i). The attack treats u j as the public ances-tor of the unknown victim row w j. After projection, yi ap-proximately preserves the direction of w j in the orthogonal subspace but remains affected by its unknown scale. Follow-ing the public-weight-based scale correction used in Arrow-Cloak [37], we use the matched public row as the scaling reference in the projected space. The corresponding rescaling factor is 
+
+αi j = sign [cos (yiΠ⊥, u jΠ⊥)] ∥u jΠ⊥∥2
+
+∥yiΠ⊥∥2
+
+. (11) The resulting estimate of the victim row’s orthogonal compo-nent is 
+
+bw j,⊥ = αi j yiΠ⊥. (12) Following the same public-reference principle, this correc-tion uses the projected public norm as an approximation to the unknown victim norm rather than recovering the private scale di exactly. Here, αi j is an approximate rescaling factor inferred from the matched public row; it is not an estimate of d−1 
+
+> i
+
+. The reconstructed component therefore retains the victim-specific direction and residual information carried by the exposed row. The scale correction above follows ArrowCloak’s public-reference strategy, but projection introduces an additional problem specific to S PECTRAL LEAK : the victim’s legitimate component along bv is removed together with the shared injec-tion. This component cannot be separated from the shared injection using a single exposed row. We therefore use only the matched public row’s one-dimensional projection along bv
+
+as a completion term: 
+
+bw j,∥ = u j
+
+bvbv⊤
+
+∥bv∥22
+
+. (13) The final reconstructed victim row combines the recovered and completed components: 
+
+bw j = bw j,⊥ + bw j,∥. (14) Thus, the public ancestor contributes only the one-dimensional information lost during projection, while the remaining d − 1 dimensional component is recovered from the exposed victim row. Section 8.2 evaluates how closely these reconstructed weights match the victim and how much model utility they recover. 
+
+## 5.4 Surrogate Construction 
+
+After reconstructing the protected rows, S PECTRAL LEAK 
+
+uses bπ to restore their model ordering and assembles the recovered matrices in the victim architecture. Replacing the protected linear weights with these matrices yields an initial reconstructed model Mrec . Small errors in correspondence, scale correction, and component completion may accumulate across layers. We therefore initialize a surrogate Msur from 
+
+Mrec and optionally fine-tune it using at most 1% of the public task training split. This refinement requires no victim queries, victim outputs, or private training data. 8Reconstructed 
+
+weight 
+
+> dim 1
+> dim 2
+> dim 1
+> dim 2
+> dim 1
+> dim 2
+
+-direction 
+
+component from 
+
+-direction 
+
+component from Figure 5: Two-component reconstruction in S PECTRAL LEAK .The projected exposed row provides the orthogonal compo-nent after scale correction, while the matched public row supplies only the missing component along bv.Accordingly, S PECTRAL LEAK targets functional recovery :it reconstructs weights from the exposed matrices and public ancestor, then uses limited public data to recover residual utility. In contrast, Section 6 introduces a modular attack that reconstructs encoded victim weights without queries, labels, or fine-tuning. 
+
+## 5.5 Security Implications 
+
+SPECTRAL LEAK neither recovers secret obfuscation parame-ters nor compromises the TEE. It uses only the transformed matrices intentionally exposed to the accelerator. Reusing one hidden direction enables lightweight correction, but also cou-ples the exposed vectors through a shared rank-one relation. Thus, ArrowCloak hides vector-level directional similarity, but the shared rank-one reuse remains observable at the matrix level. 
+
+## 6 LATTICE LEAK : Breaking Modular Arrow-Cloak 
+
+Field-wide mod-Q arithmetic suppresses the Euclidean PC1 signal exploited by S PECTRAL LEAK , but it does not remove ArrowCloak’s shared rank-one relation. L ATTICE LEAK tar-gets this algebraic residue: it cancels the reused mask within small row blocks, recovers the victim row span of each block, and intersects overlapping spans to isolate individual encoded victim rows. 
+
+## 6.1 Attack Target and Overview 
+
+LATTICE LEAK is a new attack, whereas the finite-field target it analyzes follows the reduction to LWE problem formulation presented by the ArrowCloak [37]. We operationalize that formulation by applying fixed-point encoding and field-wide mod-Q arithmetic consistently to the exposed weights and all secret coefficients. This completion favors the defense and preserves the original diagonal-plus-rank-one structure. Under this realization, the accelerator observes 
+
+Y = P(D + rk ⊤)W (mod Q), (15) where W is the fixed-point victim matrix, D is diagonal, P is a secret row permutation, and rk ⊤ is the reused rank-one mask. The attacker knows Y and the public system parameters but not W , D, r, k, or P.The attack has three stages. First, it uses fixed-dimensional lattice reduction to recover the victim row span associated with each small exposed row block. Second, it arranges over-lapping blocks so that pairwise span intersections isolate indi-vidual victim rows. Third, it validates every candidate using the complete accelerator-visible matrix. A public ancestor, when available, is used only after algebraic recovery to deter-mine row signs and semantic positions. 
+
+## 6.2 Recovering Hidden Row Spans 
+
+Consider a block I containing b exposed rows. From Sec-tion 4.3, 
+
+YI = DIWπ(I) + rI v⊤ (mod Q), (16) where Wπ(I) contains the corresponding victim rows. Any blockwise coefficient vector c ∈ Fb×1 
+
+> Q
+
+satisfying c⊤rI = 0cancels the shared term: 
+
+c⊤YI = β⊤Wπ(I) (mod Q), β = DI c. (17) Thus, a short combination of exposed rows can become a short combination of victim rows even though neither the cancellation coefficients nor the victim rows are known. The integer lifts of the unknown cancellation coefficients form a determinant-Q lattice. LATTICE LEAK selects t
+
+accelerator-visible coordinates from YI , constructs the corre-sponding Construction A lattice, and applies LLL [14]. Each returned combination is then applied to all d coordinates and retained only if it passes the public consistency checks in Section 6.4. Appendix E gives the complete lattice construc-tion and the short-vector separation conditions. Under those conditions, b independent accepted combinations recover 
+
+SI = span Q
+
+Wπ(i) : i ∈ I . (18) Only the selected t coordinates determine the lattice instance, but the accepted coefficients recover the span over all d victim coordinates. We use b = 8 and t = 24 throughout the evaluation. This fixed operating point balances span dimension, block cov-erage, and short-vector separation, while keeping every lat-tice instance 24-dimensional and independent of the full row width d. We therefore use b = 8,t = 24 unchanged across architectures rather than tuning them per model. 96.3 Recovering Individual Victim Rows 
+
+The recovered space SI contains a block of victim rows but does not identify them individually. Let exposed blocks I and 
+
+J share exactly one index i. If the victim rows associated with 
+
+I ∪ J are linearly independent over Q, then 
+
+SI ∩ SJ = span Q
+
+ Wπ(i)
+
+ . (19) Indeed, a vector in the intersection has one expansion over 
+
+I and another over J. Subtracting the expansions creates a dependence over I ∪ J; linear independence forces every coef-ficient outside I ∩ J = {i} to vanish. The attack checks that the intersection is one-dimensional and rejects the candidate otherwise. Because W uses a fixed-point integer encoding, exact ratio-nal intersection returns a projective integer row. Dividing by the coordinate gcd yields its primitive representative. If the encoded victim row is primitive, this representative equals the victim row up to sign. If its gcd is greater than one, the absolute integer scale remains ambiguous; we therefore re-strict claims of exact encoded-row recovery to checkpoints that pass the primitive-row audit in Section 8.4. We realize the required overlaps with a grid schedule. For a block size b, place b2 exposed rows in a b × b grid and recover the spans of its b row blocks and b column blocks. Each cell belongs to exactly one row block and one column block, so their intersection isolates the victim row at that cell. A group therefore needs 2 b lattice reductions and b2 span intersections. With our default b = 8, each 64-row group uses 16 reductions and 64 intersections—this is why the imple-mentation uses an 8 × 8 grid. More generally, a matrix with 
+
+m rows needs 2 m/b reductions when m is divisible by b2;hence the evaluated 768- and 3,072-row matrices require 192 and 768 reductions, respectively. Every reduction remains 24-dimensional, independent of the full row width d.
+
+## 6.4 Validation and Row Labeling 
+
+LATTICE LEAK validates recovery without a victim prediction oracle. First, each horizontal/vertical span pair must have a one-dimensional intersection. Second, coefficient relations learned from the selected coordinates must remain consistent over every accelerator-visible coordinate. If either check fails, the attacker discards the coordinate window and retries with a disjoint one. These checks and retries use no victim row, secret coefficient, correct permutation, task label, or victim output. The algebraic stage returns an unordered set of signed prim-itive rows. When a public ancestor is available, a global one-to-one cosine assignment determines their signs and semantic positions. The public model contributes no new weight coor-dinate and does not determine integer magnitude; both come from algebraic recovery. Without a public ancestor, L ATTICE -LEAK still returns the unordered projective row set but cannot generally place those rows into an executable model. We therefore report algebraic row recovery and public-ancestor labeling separately. 
+
+## 6.5 Scope and Guarantees 
+
+LATTICE LEAK is not a general polynomial-time algorithm for arbitrary hidden lattice problems. It works well for the tar-geted models in our specific parameter settings. It relies on the codimension-one cancellation relation created by rank-one reuse, which decomposes full-model recovery into fixed-size lattice instances. Exact encoded-row recovery additionally requires separation between target and unrelated lattice vec-tors, independence of the overlapping row spans, and a known integer scale (primitive rows in our implementation). We val-idate these conditions on the exact-recovery configurations reported in Section 8.4. The result therefore has a precise interpretation: field-wide arithmetic can hide the spectral manifestation of Ar-rowCloak’s reused direction [37], but the same reuse still creates publicly testable cancellation relations. Removing that relation, rather than merely changing its arithmetic repre-sentation, motivates the maximal-rank mitigation in the next section. 
+
+## 7 BUTTERFLY CLOAK : Removing Shared Rank-One Reuse 
+
+SPECTRAL LEAK and L ATTICE LEAK operate in different arithmetic domains, but they succeed for the same structural reason: ArrowCloak reuses one mask direction across every protected row. Its injected matrix rv ⊤ has rank one. Over the reals, S PECTRAL LEAK estimates the repeated direction and projects it away; over mod Q, L ATTICE LEAK finds nonzero row combinations that cancel the same repeated direction. Thus, changing the arithmetic hides one manifestation of the leakage without removing its common primitive. A natural repair is to replace the rank-one mask with a rank-
+
+ρ mask. For constant ρ, a factored mask can still be corrected with O(ρnℓ) trusted work for an n × n layer. However, this only expands the leaked component into a ρ-dimensional prin-cipal subspace. In our rank-2 and rank-3 ablations, projecting out the first two or three principal components restores the private–public row correspondence. Increasing the rank by a small constant therefore delays adaptive PCA rather than elim-inating its primitive. Resistance to such subspace removal requires the mask rank to scale to n. A generic full-rank mask provides this protection but incurs O(n2ℓ) trusted cor-rection, eliminating the computational benefit of offloading. BUTTERFLY CLOAK resolves this tension through a keyed full-rank butterfly transform [5]. It provides rank-n protec-tion with O(nℓ log n) trusted correction—only a logarithmic factor above ArrowCloak’s O(nℓ) cost and asymptotically below dense masking. For rectangular layers, it achieves the 10 Table 3: Trusted correction for an m × d layer and ℓ input activations. For a square layer with m = d = n, the three costs reduce to O(nℓ), O(nℓ log n), and O(n2ℓ), respectively. Costs are asymptotic and do not imply equal constants or measured TEE latency.                   
+
+> Correction mask Mask rank TEE work
+> ARROW CLOAK shared direction 1O(ℓ(m+d))
+> BUTTERFLY CLOAK butterfly mask min (m,d)O(ℓmax {m,d}log d)
+> Independent dense mask min (m,d)O(ℓmd )
+
+maximal rank min (m, d) with O(ℓ max {m, d} log d) trusted work. 
+
+## 7.1 Keyed Maximal-Rank Butterfly Mask 
+
+For a row-oriented layer W ∈ Rm×d , B UTTERFLY CLOAK 
+
+samples an invertible diagonal matrix D, a row permutation P,a mask strength α, and a keyed mask Mθ ∈ Rm×d . It exposes 
+
+Y = P(DW + αMθ). (20) The construction guarantees rank (Mθ) = min (m, d). (21) Consequently, a square mask is full rank, while a rectangular mask has the largest rank allowed by its dimensions. Un-like ArrowCloak’s rv ⊤ term, the rows of Mθ are not scalar multiples of one reused direction. For a square layer, Mθ = SZ θ, where S is a keyed sign diagonal and Zθ is a product of L = ⌈log 2 d⌉ sparse butterfly stages. Each stage pairs coordinates and applies independent invertible 2 × 2 rotations. Every stage is full rank, so their product is full rank. For m < d, the construction retains m
+
+rows of a keyed d ×d mask; for m > d, it stacks independently keyed d × d masks and truncates to m rows. Appendix F gives the complete construction and rank argument. 
+
+## 7.2 Trusted Correction and Cost 
+
+Suppose the accelerator receives Y and returns 
+
+Oobf = XY ⊤,
+
+where X ∈ Rℓ×d contains ℓ input activations. From Equa-tion (20), the TEE obtains the desired layer output as 
+
+XW ⊤ =
+
+
+
+Oobf P − αXM ⊤
+
+> θ
+
+
+
+D−1. (22) Materializing Mθ does not make trusted correction efficient: a dense implementation of XM ⊤ 
+
+> θ
+
+would still cost O(ℓmd ).BUTTERFLY CLOAK instead applies the keyed butterfly stages directly. Each stage contains disjoint 2 × 2 operations and costs linear work in its width. Accounting for rectangular layers, the trusted mask correction costs 
+
+O(ℓ max {m, d} log d) . (23) This is a logarithmic factor above ArrowCloak’s O(ℓ(m + d)) 
+
+correction and asymptotically below dense masking’s O(ℓmd )
+
+cost. Table 3 states both the general rectangular-layer costs and their square-layer shorthand. 
+
+## 7.3 Why the Attacks Lose Their Primitive 
+
+SPECTRAL LEAK . ArrowCloak exposes many rows con-taining the same direction v, creating a dominant rank-one component that PC1 can estimate. B UTTERFLY CLOAK re-places that outer product with a maximal-rank mask whose rows span different directions. There is therefore no sin-gle reused component whose projection restores every pri-vate/public row relation. Section 8.5 verifies this claim against both PC1 removal and adaptive removal of multiple principal components. 
+
+ArrowMatch. Maximal rank alone does not guarantee that each exposed row is far from its public ancestor. The mask strength α is therefore chosen relative to the victim tensor’s row norm so that each row receives a substantial, row-specific directional perturbation. We measure one-to-one correspon-dence recovery directly rather than treating rank as a proxy for resistance. 
+
+LATTICE LEAK . Within an ArrowCloak block, all mask rows are multiples of one vector, leaving a codimension-one family of nonzero coefficients that cancel the mask. For a BUTTERFLY CLOAK block I whose mask rows are linearly independent, 
+
+c⊤Mθ,I = 0 =⇒ c = 0. (24) The nonzero cancellation space required by L ATTICE LEAK 
+
+is therefore absent. Appendix F gives the detailed argument, and Section 8.5 tests the transferred attack on every protected BERT tensor. 
+
+## 7.4 Security Scope 
+
+The analysis above explains why B UTTERFLY CLOAK re-moves the concrete rank-one primitives used by S PECTRAL -LEAK and L ATTICE LEAK .Increasing α strengthens directional hiding but also in-creases the trusted correction in Equation (22), creating a floating-point cancellation tradeoff. Our evaluation therefore measures correspondence recovery, adaptive spectral recov-ery, blockwise cancellation, output error, task accuracy, and trusted arithmetic cost. These experiments support B UTTER -
+
+> FLY
+
+CLOAK as a mitigation against the attacks evaluated in this paper. 11 8 Evaluation 
+
+We answer four questions: (1) Does S PECTRAL LEAK re-cover useful models from the released real-valued scheme? (2) Which modular key distributions remove the PC1? (3) Does L ATTICE LEAK recover full models after field-wide mod-Q protection? and (4) Can the root-cause repair in Sec-tion 7 suppress correspondence and spectral leakage, remove LATTICE LEAK ’s cancellation primitive, and preserve model utility? 
+
+## 8.1 Experimental Setup 
+
+We evaluate ViT-Base [7] on CIFAR-10, CIFAR-100 [13], and Food-101 [1]; BERT-Base [6] and GPT2-Base [22] on MNLI, QQP, SST-2, and QNLI from GLUE [34]; and GPT2-XL on SST-2. Together, these form 12 task settings across seven datasets. Victim models are fine-tuned from public check-points, and all ArrowMatch values are our re-runs against the same victims. We report end-to-end accuracy, correspon-dence recovery, spectral energy, weight similarity, and exact encoded row recovery. S PECTRAL LEAK uses at most 1% of the public task training split, whereas L ATTICE LEAK uses no victim queries, labels, or fine-tuning. We additionally evaluate model scale using Qwen3-8B [40], Llama-3.1-8B [9], and Gemma-4-E2B [8], each fine-tuned on SST-2 as causal label completion. We protect all two-dimensional attention and MLP projections, covering 224– 275 tensors, 0.94–1.40 million rows, and 1.86–6.98 billion coordinates per model. These experiments use one fixed key seed and no public-data refinement, so the reported SPECTRAL LEAK accuracy reflects reconstruction alone. Ap-pendix G provides the complete checkpoints, protected ob-jects, and platform settings. 
+
+## 8.2 RQ1: The Released Scheme 
+
+Table 4 gives all per-task end-to-end results. Directly running the obfuscated models outside the TEE yields 35 .64% average accuracy, so the public matrices are not trivially usable. The prior direction-matching attack re-run reaches 55 .89%. After removing the shared component, S PECTRAL LEAK reaches 87 .98%, within 1.87 percentage points of the 89 .85% white-box average. The internal measurements explain the task result. Pro-jected assignment recovers every correspondence for BERT, GPT2-Base, and GPT2-XL and at least 99 .89% for ViT. Reconstructed-weight cosine similarity ranges from 98 .15% to 99 .98%. Appendix B gives the per-task values. These mea-surements rule out an explanation based only on fine-tuning: the correspondence and weights are already recovered before the small-data refinement. Table 4: End-to-end accuracy (%) against released real-valued ARROW CLOAK . ArrowMatch is our re-run against the same victim checkpoints.                                                           
+
+> Model Task Exposed ArrowMatch re-run SPECTRAL LEAK Victim
+> ViT-Base C10 10.00 54.00 96.02 98.85 C100 1.00 46.03 86.97 92.35 F101 0.99 29.03 79.15 88.79 BERT-Base MNLI 32.74 45.88 83.42 83.69 QQP 63.18 73.84 90.52 90.90 SST2 50.92 73.85 90.83 91.86 QNLI 49.46 59.66 90.92 90.70 GPT2-Base MNLI 31.82 46.16 80.53 81.17 QQP 37.07 74.06 86.43 87.23 SST2 50.92 54.70 90.71 91.40 QNLI 50.50 54.35 85.67 86.62 GPT2-XL SST2 49.08 59.06 94.61 94.61
+> Average –35.64 55.89 87.98 89.85
+
+Table 5: Arithmetic hardening on BERT/SST-2 ( Q = 231 − 1, 
+
+s = 216 ; victim accuracy 91 .6284%).                   
+
+> Instantiation PC1 energy |cos (PC1 ,v)|Perm. Pre-FT acc.
+> Real 99.9924 100.0000 100.0000 91.7431 mod-Q, small keys 99.9923 100.0000 100.0000 91.6284 mod-Q, full-field 0.4048 2.5012 0.0808 50.9174
+> Values are percentages. The maximum wrap fraction is 0 for small keys and 1 for full-field keys.
+
+## 8.3 RQ2: Spectral Leakage under Modular Protection 
+
+Table 5 isolates the effect of the key distribution. Small keys produce no wrap and preserve the real spectral component. With field-wide keys, every tested tensor has wrapped coor-dinates, PC1 alignment and permutation recovery become chance, and the unrecovered model stays at the public-control accuracy. Thus, the stronger arithmetic idea does stop S PEC -
+
+> TRAL
+
+LEAK when field-wide randomness actually induces wrap; merely adding a modulus to the released small keys does not. The result generalizes. Across ViT/CIFAR-10, CIFAR-100, Food-101, GPT2-Base/SST-2, and GPT2-XL/SST-2, small keys retain at least 99 .99% PC1 energy and 99 .89% permutation recovery. Full-field keys reduce PC1 energy to 0 .19–0 .41% and permutation recovery to 0 .045–0 .094%. Appendix C reports each pair. 
+
+## 8.4 RQ3: Recovery under Mod-Q Protection 
+
+On the BERT anchor, L ATTICE LEAK exactly recovers all 72 protected tensors, comprising 82,944 rows and 84,934,656 fixed-point coordinates, in 233.44 seconds including evalua-tion. The reconstructed model retains the victim’s 91 .6284% 12 Table 6: Scale extension to modern language models fine-tuned on SST-2. All values are percentages. “Corr.” denotes row correspondence recovery; “proj. cos.” denotes row-weighted projected cosine similarity before refinement; “post-PCA” reports the best correspondence after removing 1, 8, or 32 exposed principal components. 
+
+Metric Qwen3-8B Llama-3.1-8B Gemma-4-E2B 
+
+Released real-valued scheme 
+
+Victim accuracy 96.56 96.22 96.45 Exposed accuracy 49.54 49.08 50.00 ArrowMatch corr. / accuracy 9.096 / 50.34 9.080 / 90.48 9.151 / 49.77 SPECTRAL LEAK PC1 energy / mask alignment 99.9984 / 100.0000 99.9984 / 100.0000 99.9969 / 100.0000 SPECTRAL LEAK corr. / proj. cos. 99.606 / 99.885 100.000 / 99.932 99.996 / 99.951 SPECTRAL LEAK accuracy (no refinement) 96.22 96.56 96.45 BUTTERFLY CLOAK at 256 × the median victim-row norm 
+
+PC1 energy / raw corr. / post-PCA corr. 0.0454 / 0.2051 / 0.2033 0.0464 / 0.0432 / 0.0424 0.1835 / 0.0550 / 0.0536 Protected / victim accuracy 96.67 / 96.56 96.45 / 96.22 96.22 / 96.45 Butterfly / dense operations (%) 0.516 0.544 1.278 
+
+task accuracy. Appendix Table 11 gives the cross-architecture audit: GPT2-Base is recovered exactly on both tasks, while the few imperfect rows in ViT and GPT2-XL leave task ac-curacy effectively unchanged. Appendix D provides the per-shape recovery diagnostics, including short-vector scales, can-didate gaps, and coordinate-window retries. 
+
+## 8.5 RQ4: Attack Mitigation with B UTTERFLY -CLOAK 
+
+With independent tensor keys and a mask strength of 512 ×
+
+the median victim-row norm, full-model BERT protection preserves the victim’s 91 .6284% accuracy while reducing PC1 energy and raw correspondence recovery to 0 .13049% and 0 .11695%, respectively. The transferred L ATTICE LEAK 
+
+implementation recovers none of the 82,944 victim rows. Appendix Tables 12 and 13 provide the complete numerical diagnostics and attack-transfer results, respectively. 
+
+## 8.6 Scale Extension to Modern LLMs 
+
+We evaluate whether the observed leakage and the proposed mitigation extend to Qwen3-8B, Llama-3.1-8B, and Gemma-4-E2B. Unlike the preceding experiments, this evaluation uses no public-data refinement; the reported S PECTRAL LEAK 
+
+accuracies therefore measure reconstruction alone. As shown in Table 6, the shared-direction leakage persists at this scale. S PECTRAL LEAK recovers 99 .606%–100% of row correspondences and reconstructs models within 0 .34 percentage points of victim accuracy. In contrast, Arrow-Match recovers only 9 .080%–9 .151% of correspondences. Its 90 .48% accuracy on Llama-3.1-8B should not be interpreted as successful parameter recovery: correspondence recovery remains 9 .080%, and the functional result largely comes from the public ancestor. BUTTERFLY CLOAK reduces PC1 energy to 0 .0454%– 0.1835% and keeps both direct and adaptive PCA correspon-dence recovery below 0 .206%. Protected accuracy differs from victim accuracy by at most two of the 872 validation examples. Butterfly correction requires only 0 .516%–1 .278% of the operations of the protected dense layers. These values are arithmetic operation counts rather than measured TEE latency. Appendix Tables 14 and 15 provide the protected-object audit and detailed numerical results. 
+
+## 9 Conclusion 
+
+This paper studies the security of matrix-level weight ob-fuscation in TEE-shielded model partitioning and identifies shared rank-one reuse as a fundamental source of information leakage. We propose S PECTRAL LEAK and L ATTICE LEAK 
+
+to exploit this structure over the real numbers and a finite field, respectively. Our experiments further show that the real-valued leakage persists in Qwen3-8B, Llama-3.1-8B, and Gemma-4-E2B, covering models with 5.1–8.2 billion param-eters. To mitigate this leakage, we introduce B UTTERFLY -CLOAK , a keyed maximal-rank butterfly mask that eliminates shared low-rank reuse while preserving the measured model utility. Our evaluation demonstrates that B UTTERFLY CLOAK 
+
+suppresses the evaluated spectral and correspondence attacks at this scale, with an O(ℓ max {m, d} log d) trusted-side cor-rection for an m × d linear layer. More broadly, our findings show that lightweight trusted correction should avoid reusing hidden directions across an exposed matrix. Future defenses should consider both per-vector concealment and matrix-level leakage when protecting accelerator-visible weights. 13 References 
+
+[1] Lukas Bossard, Matthieu Guillaumin, and Luc Van Gool. Food-101—mining discriminative components with ran-dom forests. In European Conference on Computer Vision (ECCV) , pages 446–461, 2014. [2] Yufei Chen, Chao Shen, Cong Wang, and Yang Zhang. Teacher model fingerprinting attacks against transfer learning. In 31st USENIX Security Symposium (USENIX Security 22) , pages 3593–3610, 2022. [3] James Hsin-yu Chiang, Sheila Zingg, Kari Kostiainen, and Srdjan Capkun. Mosaic: Masked outsourcing of se-cure ai computations. arXiv preprint arXiv:2607.29221 ,2026. [4] John H. Conway and Neil J. A. Sloane. Sphere Packings, Lattices and Groups . Springer, 3rd edition, 1999. [5] Tri Dao, Albert Gu, Matthew Eichhorn, Atri Rudra, and Christopher Ré. Learning fast algorithms for linear transforms using butterfly factorizations. In Proceed-ings of the 36th International Conference on Machine Learning (ICML) , volume 97 of Proceedings of Machine Learning Research , pages 1517–1527, 2019. [6] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidi-rectional transformers for language understanding. In 
+
+Proceedings of the 2019 Conference of the North Amer-ican Chapter of the Association for Computational Lin-guistics , pages 4171–4186, 2019. [7] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. An image is worth 16 ×16 words: Transformers for image recognition at scale. In 
+
+International Conference on Learning Representations (ICLR) , 2021. [8] Gemma Team, Sherif El Abd, Vaibhav Aggarwal, et al. Gemma 4 technical report. arXiv preprint arXiv:2607.02770 , 2026. [9] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, et al. The Llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [10] Eliahu Horwitz, Jonathan Kahana, and Yedid Hoshen. Recovering the pre-fine-tuning weights of generative models. In Proceedings of the 41st International Con-ference on Machine Learning (ICML) , pages 18882– 18904, 2024. [11] Ian T. Jolliffe. Principal Component Analysis . Springer, 2nd edition, 2002. [12] Ian T. Jolliffe and Jorge Cadima. Principal com-ponent analysis: A review and recent developments. 
+
+Philosophical Transactions of the Royal Society A ,374(2065):20150202, 2016. [13] Alex Krizhevsky. Learning multiple layers of fea-tures from tiny images. Technical report, University of Toronto, 2009. [14] Arjen K. Lenstra, Hendrik W. Lenstra, Jr., and László Lovász. Factoring polynomials with rational coeffi-cients. Mathematische Annalen , 261(4):515–534, 1982. [15] Ding Li, Ziqi Zhang, Mengyu Yao, Yifeng Cai, Yao Guo, and Xiangqun Chen. TEESlice: Protecting sensi-tive neural network models in trusted execution environ-ments when attackers have pre-trained models. ACM Transactions on Software Engineering and Methodol-ogy , 34(6):166:1–166:49, 2025. [16] Qinfeng Li, Zhiqiang Shen, Zhenghan Qin, Yangfan Xie, Xuhong Zhang, Tianyu Du, Sheng Cheng, Xun Wang, and Jianwei Yin. TransLinkGuard: Safeguard-ing transformer models against model stealing in edge deployment. In Proceedings of the 32nd ACM Inter-national Conference on Multimedia (ACM MM) , pages 3479–3488, 2024. [17] Beijie Liu, Junyi Ouyang, Haoxuan Xu, Vin-cent Quentin Ulitzsch, Potung Yu, Yajie Zhao, and Mengyuan Li. Hiding directions, leaking structure: Breaking ArrowCloak through Low-Rank structure. 
+
+arXiv preprint arXiv:2608.21615 , 2026. [18] Fan Mo, Ali Shahin Shamsabadi, Kleomenis Katevas, Soteris Demetriou, Ilias Leontiadis, Andrea Cavallaro, and Hamed Haddadi. DarkneTZ: Towards model pri-vacy at the edge using trusted execution environments. In Proceedings of the 18th International Conference on Mobile Systems, Applications, and Services (MobiSys) ,pages 161–174, 2020. [19] Tushar Nayan, Qiming Guo, Mohammed Al Duniawi, Marcus Botacin, Selcuk Uluagac, and Ruimin Sun. SoK: All you need to know about on-device ML model extraction—the gap between research and practice. In 
+
+33rd USENIX Security Symposium (USENIX Security 24) , pages 5233–5250, 2024. [20] Phong Q. Nguyen and Jacques Stern. The two faces of lattices in cryptology. In Cryptography and Lattices (CaLC) , volume 2146 of Lecture Notes in Computer Science , pages 146–180, 2001. 14 [21] Tribhuvanesh Orekondy, Bernt Schiele, and Mario Fritz. Knockoff nets: Stealing functionality of black-box mod-els. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,pages 4954–4963, 2019. [22] Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. Language models are unsupervised multitask learners. Technical report, OpenAI, 2019. [23] Adnan Siraj Rakin, Md Hafizul Islam Chowdhuryy, Fan Yao, and Deliang Fan. DeepSteal: Advanced model extractions leveraging efficient weight stealing in mem-ories. In 43rd IEEE Symposium on Security and Privacy (SP) , pages 1157–1174, 2022. [24] Oded Regev. On lattices, learning with errors, random linear codes, and cryptography. Journal of the ACM ,56(6):34:1–34:40, 2009. [25] Tianxiang Shen, Ji Qi, Jianyu Jiang, Xian Wang, Siyuan Wen, Xusheng Chen, Shixiong Zhao, Sen Wang, Li Chen, Xiapu Luo, Fengwei Zhang, and Heming Cui. SOTER: Guarding black-box inference for general neu-ral networks at the edge. In 2022 USENIX Annual Technical Conference (USENIX ATC 22) , pages 723– 738, 2022. [26] Jack Sherman and Winifred J. Morrison. Adjustment of an inverse matrix corresponding to a change in one element of a given matrix. The Annals of Mathematical Statistics , 21(1):124–127, 1950. [27] Supraja Sridhara, Andrin Bertschi, Benedict Schlüter, Mark Kuhne, Fabio Aliberti, and Shweta Shinde. ACAI: Protecting accelerator execution with Arm confidential computing architecture. In 33rd USENIX Security Sym-posium (USENIX Security 24) , pages 3423–3440, 2024. [28] Yu Sun, Gaojian Xiong, Jianhua Liu, Zheng Liu, and Jian Cui. TSQP: Safeguarding real-time inference for quantization neural networks on edge devices. In 2025 IEEE Symposium on Security and Privacy (SP) , pages 2114–2132, 2025. [29] Zhichuang Sun, Ruimin Sun, Changming Liu, Am-rita Roy Chowdhury, Long Lu, and Somesh Jha. Shad-owNet: A secure and efficient on-device model infer-ence system for convolutional neural networks. In 2023 IEEE Symposium on Security and Privacy (SP) , pages 1596–1612, 2023. [30] Zhichuang Sun, Ruimin Sun, Long Lu, and Alan Mis-love. Mind your weight(s): A large-scale study on in-sufficient machine learning model protection in mobile apps. In 30th USENIX Security Symposium (USENIX Security 21) , pages 1955–1972, 2021. [31] Florian Tramèr and Dan Boneh. Slalom: Fast, verifi-able and private execution of neural networks in trusted hardware. In International Conference on Learning Representations (ICLR) , 2019. [32] Florian Tramèr, Fan Zhang, Ari Juels, Michael K. Re-iter, and Thomas Ristenpart. Stealing machine learning models via prediction APIs. In 25th USENIX Secu-rity Symposium (USENIX Security 16) , pages 601–618, 2016. [33] Stavros Volos, Kapil Vaswani, and Rodrigo Bruno. Graviton: Trusted execution environments on GPUs. In 13th USENIX Symposium on Operating Systems De-sign and Implementation (OSDI 18) , pages 681–696, 2018. [34] Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel R. Bowman. GLUE: A multi-task benchmark and analysis platform for natural language understanding. In Proceedings of the 2018 EMNLP Workshop BlackboxNLP , pages 353–355, 2018. [35] Bolun Wang, Yuanshun Yao, Bimal Viswanath, Haitao Zheng, and Ben Y. Zhao. With great training comes great vulnerability: Practical attacks against trans-fer learning. In 27th USENIX Security Symposium (USENIX Security 18) , pages 1281–1297, 2018. [36] Chenxu Wang, Fengwei Zhang, Yunjie Deng, Kevin Leach, Jiannong Cao, Zhenyu Ning, Shoumeng Yan, and Zhengyu He. CAGE: Complementing Arm CCA with GPU extensions. In 31st Annual Network and Distributed System Security Symposium (NDSS) , 2024. [37] Pengli Wang, Bingyou Dong, Yifeng Cai, Zheng Zhang, Junlin Liu, Huanran Xue, Ye Wu, Yao Zhang, and Ziqi Zhang. Game of Arrows: On the (In-)security of weight obfuscation for On-Device TEE-Shielded LLM parti-tion algorithms. In 34th USENIX Security Symposium (USENIX Security 25) , pages 279–298, 2025. [38] Rongwu Xu and Zhixuan Fang. Tempo: Confidential-ity preservation in cloud-based neural network training. In 2024 International Joint Conference on Neural Net-works (IJCNN) , pages 1–10, 2024. [39] Mengjia Yan, Christopher W. Fletcher, and Josep Tor-rellas. Cache telepathy: Leveraging shared resource attacks to learn DNN architectures. In 29th USENIX Security Symposium (USENIX Security 20) , pages 2003– 2020, 2020. [40] An Yang, Anfeng Li, Baosong Yang, et al. Qwen3 tech-nical report. arXiv preprint arXiv:2505.09388 , 2025. 15 [41] Yuanyuan Yuan, Zhibo Liu, Sen Deng, Yanzuo Chen, Shuai Wang, Yinqian Zhang, and Zhendong Su. Hyper-Theft: Thieving model weights from TEE-shielded neu-ral networks via ciphertext side channels. In Proceed-ings of the 2024 ACM SIGSAC Conference on Computer and Communications Security (CCS) , pages 4346–4360, 2024. [42] Yuanyuan Yuan, Zhibo Liu, Sen Deng, Yanzuo Chen, Shuai Wang, Yinqian Zhang, and Zhendong Su. Cipher-Steal: Stealing input data from TEE-shielded neural networks with ciphertext side channels. In 2025 IEEE Symposium on Security and Privacy (SP) , pages 4136– 4154, 2025. [43] Zheng Zhang, Na Wang, Ziqi Zhang, Yao Zhang, Tianyi Zhang, Jianwei Liu, and Ye Wu. GroupCover: A secure, efficient and scalable inference framework for on-device model protection based on TEEs. In Proceedings of the 41st International Conference on Machine Learn-ing (ICML) , volume 235 of Proceedings of Machine Learning Research , pages 59992–60003, 2024. [44] Ziqi Zhang, Chen Gong, Yifeng Cai, Yuanyuan Yuan, Bingyan Liu, Ding Li, Yao Guo, and Xiangqun Chen. No privacy left outside: On the (In-)security of TEE-Shielded DNN partition for On-Device ML. In 45th IEEE Symposium on Security and Privacy (SP) , pages 3327–3345, 2024. [45] Tong Zhou, Yukui Luo, Shaolei Ren, and Xiaolin Xu. NNSplitter: An active defense solution for DNN model via automated weight obfuscation. In Proceedings of the 40th International Conference on Machine Learn-ing , volume 202 of Proceedings of Machine Learning Research , pages 42614–42624. PMLR, 2023. [46] Yuankun Zhu, Yueqiang Cheng, Husheng Zhou, and Yantao Lu. Hermes attack: Steal DNN models with lossless inference accuracy. In 30th USENIX Security Symposium (USENIX Security 21) , pages 1973–1988, 2021. 
+
+## A Ethical Considerations 
+
+This work evaluates the confidentiality of a research proto-type for TEE-assisted model deployment. All experiments use models we trained from public checkpoints and public datasets; they contain no personal or user data. The attacks begin only after an adversary has obtained the obfuscated weights that the design intentionally releases to an untrusted accelerator, and they do not bypass a TEE or another hard-ware isolation mechanism. The main dual-use risk is that the analysis could assist extraction of a model protected by a similar scheme. We mitigate that risk by reporting the design Input vectors  Project onto  
+
+> candidate directions
+> dim1
+> dim2
+> Any unit direction can
+> be a candidate
+> dim1
+> dim2
+> Select PC1
+> projected mean
+> projected
+> variance
+> max
+
+Figure 6: Visual intuition for PC1: among candidate direc-tions, it maximizes the variance of the centered row projec-tions. This standard estimator is used by S PECTRAL LEAK ;the vulnerability is the protocol’s repeated component, not PCA itself. root cause and defense tradeoffs, avoiding attacks on third-party deployments, and preparing coordinated disclosure to the authors before public artifact release. To our knowledge, ArrowCloak is not deployed in a production system. 
+
+## B Detailed Spectral Diagnostics 
+
+Principal component analysis. Given a matrix X ∈ Rn×d
+
+whose rows are the input vectors, let μ ∈ Rd×1 denote the mean vector in column form. Its centered form is 
+
+Xc = X − 1μ⊤,
+
+where 1 ∈ Rn×1. The first principal component is 
+
+u1 = arg max 
+
+> ∥u∥2=1
+
+∥Xcu∥22,
+
+or equivalently the leading right singular vector of Xc. Unlike a per-vector analysis, PCA identifies the dominant variation shared across the complete collection of rows. We use this standard estimator to test whether shared-direction injection produces a prominent component in the accelerator visible matrix. Tables 7 and 8 consolidate the internal measurements be-hind Section 8.2. The extracted PC1 aligns with the true injected direction at 100 .00% to reported precision in every row. Removing a random direction leaves the cosine distance equal to Dori to four decimals; it is omitted for space. Figure 6 gives the geometric intuition for the PC1 estimator used in these measurements. 16 Table 7: Per-task spectral diagnostics. ρ1 is PC1 energy and 
+
+dcos is cosine distance. 
+
+Model Task ρ1(W ) ρ1(Y ) dori dPC1 
+
+ViT-Base C10 2.27 99.99 0.8992 0.0011 C100 2.27 99.99 0.8992 0.0013 Food-101 2.27 99.99 0.8992 0.0016 BERT-Base MNLI 1.87 99.99 0.8993 0.0022 QQP 1.87 99.99 0.8994 0.0033 SST2 1.87 99.99 0.8992 0.0011 QNLI 1.87 99.99 0.8992 0.0016 GPT2-Base MNLI 2.80 99.99 0.8998 0.0017 QQP 2.80 99.99 0.8997 0.0015 SST2 2.80 99.99 0.8997 0.0014 QNLI 2.80 99.99 0.8997 0.0015 GPT2-XL SST2 1.44 100.00 0.9042 0.0005 
+
+Table 8: Per-task correspondence recovery and reconstructed-weight cosine similarity (%).                             
+
+> Model Task Match Similarity
+> ViT-Base C10 99.90 98.96 C100 99.89 98.77 Food-101 99.90 98.15 BERT-Base MNLI 100.00 99.81 QQP 100.00 99.72 SST2 100.00 99.93 QNLI 100.00 99.86 GPT2-Base MNLI 100.00 99.93 QQP 100.00 99.96 SST2 100.00 99.98 QNLI 100.00 99.97 GPT2-XL SST2 100.00 99.97
+
+## C Finite-Field Extension Results 
+
+Table 9 repeats the small-key/full-field comparison on the extension checkpoints. Small keys preserve the spectral leak on every architecture; full-field keys suppress it on every architecture. 
+
+## D LATTICE LEAK Exact-Recovery Diagnostics 
+
+Per-shape behavior. Table 10 separates the BERT anchor by tensor shape. All public validations pass; one tall tensor needs a second coordinate window. Table 9: Small-key / full-field results for the modular exten-sion models. All entries are percentages.                         
+
+> Model Task PC1 energy Perm. rec. Pre-FT acc.
+> ViT-Base C10 99.9925 / 0.4038 99.8951 / 0.0784 98.61 / 10.00 ViT-Base C100 99.9925 / 0.4053 99.8915 / 0.0940 91.33 / 0.74 ViT-Base Food-101 99.9925 / 0.4052 99.8855 / 0.0832 85.89 / 1.00 GPT2-Base SST2 99.9932 / 0.4063 100.0000 / 0.0796 91.8578 / 52.0642 GPT2-XL SST2 99.9984 / 0.1940 100.0000 / 0.0447 93.2339 / 49.0826
+
+Table 10: Per-shape BERT results (eight workers). 
+
+Shape Tensors Exact rows Avg. s Min gap Retries 
+
+768 × 768 48 36,864 / 36,864 12.27 3,864 × 0768 × 3072 12 9,216 / 9,216 28.73 4,876 × 03072 × 768 12 36,864 / 36,864 48.14 3,579 × 1
+
+Total 72 82,944 / 82,944 – – 1
+
+## E More Details on the L ATTICE LEAK Reduc-tion 
+
+The hidden coefficient lattice. For a block I of b exposed rows, define 
+
+aI = D−1 
+
+> I
+
+rI .
+
+The integer coefficient vectors that cancel the shared compo-nent belong to 
+
+LI =
+
+n
+
+β ∈ Zb : β⊤aI = 0 (mod Q)
+
+o
+
+.
+
+For nonzero aI , consider the homomorphism 
+
+φI : Zb → FQ, φI (β) = β⊤aI mod Q.
+
+The map is surjective and LI = ker φI . Consequently, LI is a full-rank integer lattice in Zb with index and determinant Q.Although the cancellation space over FQ has dimension b − 1, its integer preimage has rank b.
+
+Expected short-vector scale. The Gaussian heuristic gives a characteristic short-vector scale of Q1/b. With b = 8 and 
+
+Q = 231 − 1, this scale is approximately 14 .7. Minkowski’s theorem guarantees a nonzero vector with norm bounded on the order of √bQ 1/b, but neither statement guarantees that b
+
+independent cancellation vectors appear in an LLL-reduced basis. The attack therefore treats LLL outputs as candidates and validates them using only public information. 
+
+Public Construction A lattice. The attacker cannot con-struct LI directly because aI is secret. Instead, it chooses a public coordinate set T ⊆ [d] of size t and forms 
+
+CI,T = rowspan FQ (YI,T ) ⊆ FtQ,
+
+17 where YI,T restricts YI to the selected coordinates. The associ-ated Construction A lattice is 
+
+ΛI,T = z ∈ Zt : z mod Q ∈ CI,T .
+
+Every modular combination of the selected exposed rows has an integer lift in ΛI,T . If a coefficient vector cancels the shared component, then 
+
+c⊤YI,T = β⊤Wπ(I),T (mod Q).
+
+Because the fixed-point victim weights and relevant integer coefficients are small relative to Q, their centered lifts can be substantially shorter than ordinary modular codewords. 
+
+Conditional span recovery. Suppose lattice reduction re-turns b independent lifted codewords z1, . . . , zb associated with cancellation coefficients β1, . . . , βb ∈ LI , without cen-tered wrap. Let 
+
+B =
+
+
+
+β⊤
+
+> 1
+
+...
+
+β⊤
+
+> b
+
+ .
+
+If B is nonsingular over Q, applying the recovered public row-code coefficients to all coordinates gives 
+
+Z = BW π(I).
+
+It follows that rowspan Q(Z) = rowspan Q(Wπ(I)) = SI .
+
+This implication is exact. The empirical step is whether LLL separates the required cancellation combinations from unre-lated lattice vectors. 
+
+Public acceptance checks. The implementation requires the selected candidates to be linearly independent, measures their separation from the first rejected LLL candidate, ap-plies the recovered coefficients to complete exposed rows, and checks that overlapping spans have the expected one-dimensional intersections. If a check fails, it retries with a disjoint public coordinate window. These checks require no victim weights, secret parameters, correct permutation, labels, or model predictions. They do not constitute a general certificate that every ac-cepted projective row equals a victim row. Exact equality is measured separately by the challenger-only element-wise audit reported in Section 8.4. 
+
+## F ButterflyCloak Construction and Analysis 
+
+Square masks. For a square layer with m = d, B UTTERFLY -CLOAK constructs 
+
+Mθ = SZ θ, Zθ = BLBL−1 · · · B1, L = ⌈log 2 d⌉,
+
+where S is a keyed random sign diagonal matrix. Each stage 
+
+B j pairs coordinates according to the key and applies inde-pendent invertible 2 × 2 rotations. Every stage is full rank, so their product Zθ is full rank. Multiplication by S preserves rank, giving rank (Mθ) = d.
+
+The TEE does not store or apply Mθ as a dense matrix. It stores the stage pairings, signs, and rotation parameters and applies the stages sequentially. 
+
+Rectangular masks. When m ≤ d, the construction retains the first m rows of a keyed d × d butterfly mask. When m >
+
+d, it stacks ⌈m/d⌉ independently keyed d × d masks and truncates the result to m rows. Under the stated independent-key construction, the resulting mask satisfies rank (Mθ) = min (m, d).
+
+This covers the 768 ×3072 and 3072 ×768 matrices evaluated in our experiments. 
+
+Effect on S PECTRAL LEAK . ArrowCloak injects an outer-product term rv ⊤, causing many exposed rows to share one dominant direction. S PECTRAL LEAK estimates this compo-nent with PC1 and projects it away. In B UTTERFLY CLOAK ,the injected term is instead αMθ, whose rows span a maximal-rank space. There is therefore no single shared direction whose removal restores all exposed rows to their public an-cestor directions. 
+
+Effect on ArrowMatch. Removing rank-one reuse alone does not prevent vector matching if each exposed row remains close to its public ancestor. B UTTERFLY CLOAK therefore chooses α so that each exposed row contains a substantial contribution from a distinct mask row. The evaluation mea-sures correspondence recovery directly rather than assuming that maximal rank alone defeats ArrowMatch. 
+
+Effect on L ATTICE LEAK . For an ArrowCloak block, all mask rows are scalar multiples of one vector, creating a codimension-one family of coefficients that cancel the mask. For a B UTTERFLY CLOAK block I whose mask rows are lin-early independent, 
+
+c⊤Mθ,I = 0implies c = 0. The nonzero cancellation space required by LATTICE LEAK is therefore absent. 
+
+Security scope. These arguments explain why B UTTERFLY -CLOAK removes the primitives exploited by the attacks eval-uated in this work; they do not provide a cryptographic confi-dentiality proof. The butterfly family remains structured, and we do not rule out attacks that jointly estimate public weights, diagonal scales, the hidden permutation, and butterfly param-eters. Increasing α also strengthens directional hiding while increasing floating-point cancellation during trusted correc-tion. We therefore evaluate B UTTERFLY CLOAK as a systems mitigation rather than a cryptographic endpoint. 
+
+Complete cross-architecture recovery audit. Table 11 gives the complete L ATTICE LEAK audit referenced in Section 8.4. 18 Table 11: L ATTICE LEAK against field-wide mod-Q protection. “Exact rows” is a challenger-only element-wise audit after public-reference sign and position assignment. Public checks accept every reported tensor but do not themselves guarantee an exact encoded row.                                         
+
+> Model Task Protected tensors Exact rows Max integer error Recovered / victim acc. (%)
+> ViT-Base C10 72 82,876 / 82,944 7,905 98.70 / 98.69 ViT-Base C100 72 82,884 / 82,944 7,888 91.66 / 91.68 ViT-Base Food-101 72 82,884 / 82,944 7,787 88.51 / 88.51 BERT-Base SST2 72 82,944 / 82,944 091.6284 / 91.6284 GPT2-Base SST2 72 82,944 / 82,944 091.06 / 91.06 GPT2-Base QNLI 72 82,944 / 82,944 087.75 / 87.75 GPT2-XL SST2 288 691,192 / 691,200 10,022 92.7752 / 92.7752
+
+Table 12: Full BERT/SST-2 B UTTERFLY CLOAK evaluation over 72 tensors and 82,944 exposed rows. Entries except accuracy are percentages. 
+
+α PC1 Raw match Rm. 1 Rm. 8 Rm. 32 Accuracy 
+
+256 × 0.13065 0.13744 0.13383 0.10007 0.10971 91.6284 512 × 0.13049 0.11695 0.11454 0.07595 0.09283 91.6284 
+
+> “Rm.” projects both exposed and public rows away from the indicated number of exposed principal components. The victim accuracy is 91 .6284%; maximum sampled float32 output error is 0 .00338.
+
+Table 13: Full-BERT L ATTICE LEAK transfer stress test against 512 × BUTTERFLY CLOAK . “Public checks” are inter-nal consistency tests, not an exact-recovery oracle.       
+
+> Metric Result
+> Real mask blocks with row rank 8 20,736 / 20,736 Tensors passing public checks 28 / 72 Exact victim rows (up to sign) 0 / 82,944 Primitive exposed rows returned 6,876 / 82,944 Wall-clock time (8 workers) 183.54 s
+
+Tables 12 and 13 give the full-BERT mitigation and transfer details referenced in Section 8.5. The transfer’s 28 internally consistent outputs contain no exact victim row; 44 tensors reject all 16 public coordinate windows. For 6,876 rows the output is instead the primitive form of the already public, mask-dominated exposed row. The compact correction performs 3,538,944 rotation scalar operations per token versus 169,869,312 for the protected dense layers (2 .083%). This count excludes permutation, scaling, and memory traffic. 
+
+## G Experimental Setup 
+
+Models and datasets. Following the original evaluation, we use ViT-Base on CIFAR-10, CIFAR-100, and Food-101; BERT-Base and GPT2-Base on MNLI, QQP, SST-2, and QNLI; and GPT2-XL on SST-2. All victim models are fine-tuned from public checkpoints. The real-valued and modular experiments use their corresponding trained checkpoints, and each result table includes the paired victim control. All Ar-rowMatch results are our reruns on these checkpoints. 
+
+Attack parameters. Our modular anchor is BERT-Base on SST-2 with seed 42 and 872 validation examples. We use a fixed-point exponent of f = 16, corresponding to the scale s =
+
+216 , and modulus Q = 231 − 1. S PECTRAL LEAK fine-tunes its reconstructed surrogate for three epochs using 673 public examples, less than 1% of the training split, with learning rate 10 −5 and batch size 32. L ATTICE LEAK uses no task labels or fine-tuning. 
+
+Metrics and audit. We report task accuracy, correspondence recovery, PC1 energy, and weight cosine similarity. For L AT -
+
+> TICE
+
+LEAK , exact recovery means element-wise equality with the defender’s fixed-point integer matrix. The recovery code receives only one accelerator-visible residue matrix and the public system parameters. Private weights, keys, and permu-tations are loaded only by a separate challenger after recovery for evaluation. Cached results are bound to the checkpoint and complete attack configuration; reported BERT and GPT2-XL runtimes are uncached. 
+
+Platforms. Real-valued training and evaluation use two NVIDIA A6000 GPUs. Modular experiments use RTX 4090 Laptop and RTX 4080 GPUs for model evaluation and an NVIDIA H20-3e GPU for GPT2-XL training. LATTICE -LEAK itself is CPU-only and uses eight workers with exact SymPy arithmetic for lattice reduction and span intersection. 
+
+## G.1 Modern LLM Extension 
+
+Checkpoints and training. The public check-points are Qwen/Qwen3-8B-Base revision 
+
+49e3418fbbbca6ecbdf9608b4d22e5a407081db4 ,
+
+meta-llama/Llama-3.1-8B revision 
+
+d04e592bb4f6aa9cfee91e2e20afa771667e1d4b , and 
+
+google/gemma-4-E2B revision d29ff6b45f081a49ee27 33a859c9c9c2d95d1a6f . All checkpoints were verified against their reported revision hashes. The three training runs complete at optimizer step 25,257, and the resulting checkpoints are used throughout the corresponding attack and defense experiments. All models use the prompt Review: <sentence> 
+
+19 Sentiment: and predict a single negative or positive la-bel token. We fine-tune for three epochs with seed 42, learning rate 10 −5, weight decay 0.01, warmup ratio 0.06, sequence length 128, batch size 8, bfloat16, and gradient checkpointing. Qwen and Llama update all parameters using 8-bit AdamW. Gemma updates its text backbone and language model head using fused AdamW, while its unused vision and audio tow-ers remain frozen. Table 14 reports the exact parameter and protected object counts. 
+
+Protected tensors. Rows of each protected matrix are treated as weight vectors. For Qwen and Llama, we protect ev-ery two-dimensional q/k/v/o/gate/up/down_proj matrix in the text transformer. For Gemma, we protect the cor-responding attention and MLP projections together with 
+
+per_layer_input_gate and per_layer_projection . Ta-ble 14 reports the resulting tensor, row, and coordinate counts, while the complete shape histograms are retained in the machine-readable experiment manifests. Embeddings, nor-malization parameters, and output heads remain unchanged, consistent with the protected layer scope used in the GPT2 experiments. 
+
+Keys, seeds, and attack settings. All ArrowCloak and B UT -
+
+> TERFLY
+
+CLOAK runs use key seed 42, with an independently derived random generator for each tensor. The ArrowCloak experiments use its original real-valued coefficient distribu-tions. B UTTERFLY CLOAK uses a mask strength of 256 × the median victim row norm, and the adaptive PCA test removes 1, 8, or 32 exposed principal components. Cached results are bound to the algorithm version, check-point, tensor, arithmetic parameters, seed, and attack config-uration. The machine-readable manifests record the corre-sponding SHA-256 checksums. 
+
+Software and hardware. Training and evaluation use Py-Torch 2.13.0+cu130, Transformers 5.15.1, Datasets 5.0.1, and bitsandbytes 0.50.1 on a single NVIDIA H20-3e GPU. Peak allocated training memory is 53.198, 51.645, and 39.659 GiB for Qwen, Llama, and Gemma, respectively. The modern model overlays and evaluations also run on the H20-3e. Peak CPU memory and production TEE latency were not instru-mented and are therefore outside the reported measurements. 
+
+Defense diagnostics. For each protected tensor, we compute the sampled mean absolute output error. Table 15 reports the median and 95th percentile of this quantity across tensors, together with the maximum sampled error. It also reports correspondence recovery before and after removing 1, 8, or 32 exposed principal components. 
+
+## H Additional Scope and Limitations 
+
+Relation to LWE. Neither S PECTRAL LEAK nor L ATTICE -LEAK solves Learning with Errors (LWE) [24]. The original analysis derives a relation among the public ancestor, vic-tim weights, and exposed weights, quantizes it over a large prime field, and interprets the resulting expression through an LWE-style argument. The released implementation, however, performs real arithmetic and does not instantiate standard LWE. To evaluate the stronger modular security intuition directly, we construct a defense-favorable realization in which the ex-posed weights and secret coefficients participate in arithmetic over the complete field. This realization retains the protocol’s structured diagonal-plus-rank-one transformation. Our result is therefore narrower than an attack on LWE: it shows that the concrete structured matrices available to the accelerator do not obtain confidentiality merely from an analogy to LWE. 
+
+Scope of the maximal-rank mitigation. BUTTERFLY CLOAK 
+
+removes the shared rank-one primitive instead of increasing its rank by a small constant. In our experiments, correspon-dence and adaptive PCA recovery fall to near-random levels without reducing BERT accuracy and remain below 0 .21% on the three larger language models. The transferred L AT -
+
+> TICE
+
+LEAK attack recovers no victim row in the full-BERT stress test. These results establish resistance to the attacks evaluated in this work, not cryptographic indistinguishability. The but-terfly key family remains structured, and we do not rule out an adaptive attacker that jointly estimates public weights, di-agonal scales, permutations, and butterfly parameters. The mask strength also introduces a numerical tradeoff: increas-ing it improves directional hiding but increases floating-point cancellation during trusted correction. Our implementation is a correctness-oriented prototype rather than a production TEE benchmark. Although its arith-metic count remains below dense matrix multiplication, fu-ture work should evaluate optimized trusted implementations, define a matrix-level security game, analyze adaptive fac-torization attacks, and compare measured trusted cost with cryptographic and TEE-only baselines under the same confi-dentiality target. 
+
+Conditions for exact lattice recovery. The exact L ATTICE -LEAK result depends on fixed-point victim combinations re-maining sufficiently small relative to Q. Exact encoded row recovery also requires the relevant row spans to be indepen-dent and each recovered integer row to have a known scale. In our implementation, dividing by the coordinate gcd returns the primitive representative. If the encoded victim row is not primitive, the absolute integer scale remains ambiguous without an additional source of scale information. We audit these conditions in our exact-recovery evaluation. Every protected nonzero row is primitive in the evaluated BERT-Base and GPT2-Base checkpoints, and the required short-combination condition holds across all reported config-urations and independent keys. Other weight distributions and quantization protocols require separate measurement. 
+
+Finite field realization. The finite field (mod-Q) version fol-lows the reduction to LWE of ArrowCloak. The original system does not specify a complete layer by layer finite field activation protocol covering signed rescaling, rounding, and 20 Table 14: Checkpoint and protected object audit for the modern language models. Parameter, row, and coordinate counts are exact; accuracy is measured on all 872 SST-2 validation examples. 
+
+Model Total params. Trainable params. Tensors Rows Coordinates Victim acc. (%) 
+
+Qwen3-8B 8,190,735,360 8,190,735,360 252 1,400,832 6,945,767,424 96.5596 Llama-3.1-8B 8,030,261,248 8,030,261,248 224 1,376,256 6,979,321,856 96.2156 Gemma-4-E2B 5,104,297,504 4,628,569,344 275 941,312 1,863,057,408 96.4450 
+
+Table 15: B UTTERFLY CLOAK diagnostics on modern language models at a mask strength of 256 × the median victim row norm. “Rm. k” denotes correspondence recovery after removing the first k exposed principal components. Errors report the median and 95th percentile of tensor mean absolute output error, followed by the maximum sampled error.                                    
+
+> Model PC1 energy (%) Correspondence recovery (%) Mean error med. / p95 Max error Protected / victim acc. (%) Raw Rm. 1 Rm. 8 Rm. 32
+> Qwen3-8B 0.04542 0.20509 0.20331 0.19453 0.18289 1.43 ×10 −4/ 4 .49 ×10 −46.03 ×10 −396.6743 / 96.5596 Llama-3.1-8B 0.04638 0.04316 0.04243 0.04149 0.04076 7.65 ×10 −5/ 2 .27 ×10 −42.58 ×10 −396.4450 / 96.2156 Gemma-4-E2B 0.18349 0.05503 0.05365 0.04642 0.05184 5.28 ×10 −5/ 1 .47 ×10 −41.53 ×10 −396.2156 / 96.4450
+
+wrap semantics. Our modular realization therefore evaluates exact protection and recovery of encoded weights, followed by ordinary floating point model inference. It does not claim to implement an unspecified end-to-end integer inference sys-tem. This construction deliberately favors the defense by applying field-wide randomness and modular arithmetic con-sistently to the exposed weights and secret coefficients. 
+
+Role of public ancestry. Public ancestry serves different pur-poses in the two attacks. S PECTRAL LEAK uses the public ancestor to recover vector correspondences and to complete the one-dimensional weight component removed during pro-jection. L ATTICE LEAK instead recovers primitive integer row representatives algebraically and uses the public weights only to determine their signs and semantic positions. Without a public ancestor, L ATTICE LEAK still returns the complete unordered projective row set under the stated re-covery conditions, but converting that set into an executable model requires another source of row labels. This limita-tion narrows the final model reconstruction claim without changing the demonstrated breach in the public ancestry de-ployment setting considered by A RROW CLOAK .21

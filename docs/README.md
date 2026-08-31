@@ -6,188 +6,176 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-24
-- 运行时间：2026-08-24 03:44:43 UTC
+- 最新运行日期：2026-08-31
+- 运行时间：2026-08-31 07:25:28 UTC
 - 运行状态：成功
-- 本次总论文数：55
-- 精读区：40
-- 速读区：15
+- 本次总论文数：51
+- 精读区：39
+- 速读区：12
 
 ### 今日简报（AI）
-- 今日共生成 55 篇推荐（精读 40 篇，速读 15 篇）
-- 精读：《Security of Foundation-Model-Powered Embodied Agents: Attack Surfaces, Attacks, Defenses, and Evaluation》（10.0/10）, 《SAUL: Sharpness-Aware Augmented-Lagrangian Unlearning》（9.0/10）
-- 速读：《A Policy Algebra for Trust-Preserving Agentic AI Execution》（8.0/10）, 《Towards Safer RAG: Only Agents Capable of System 2 Thinking may Access Untrusted Documents》（8.0/10）, 《Model Card for OpenAI Privacy Filter》（8.0/10）
+- 今日共生成 51 篇推荐（精读 39 篇，速读 12 篇）
+- 精读：《MMJailBench: A Factorized Benchmark for Disentangling Multimodal Jailbreak Vulnerabilities》（10.0/10）, 《SPA: Securing Persistent LLM Agents Across Queries with Plan-First Information-Flow Control》（10.0/10）
+- 速读：《RePolicy: Reinforcement Learning for Safety-Policy Invocation in Agent Safeguards》（8.0/10）, 《LMSM: LLM Security Framework Inspired by Linux Security Modules》（8.0/10）, 《Pointing the Way, Hiding the Destination: Practical Private Dense Retrieval at Scale》（8.0/10）
 - 这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。
-- 详情：[/202608/24/README](/202608/24/README)
+- 详情：[/202608/31/README](/202608/31/README)
 
 ### 精读区论文标签
-1. [Security of Foundation-Model-Powered Embodied Agents: Attack Surfaces, Attacks, Defenses, and Evaluation](/202608/24/2608.16843v1-security-of-foundation-model-powered-embodied-agents-attack-surfaces-attacks-defenses-and-evaluation)  
+1. [MMJailBench: A Factorized Benchmark for Disentangling Multimodal Jailbreak Vulnerabilities](/202608/31/2608.25490v1-mmjailbench-a-factorized-benchmark-for-disentangling-multimodal-jailbreak-vulnerabilities)  
+   标签：评分：10.0/10、query:llm-security
+   evidence：多模态越狱漏洞的因子化基准
+2. [SPA: Securing Persistent LLM Agents Across Queries with Plan-First Information-Flow Control](/202608/31/2608.27234v1-spa-securing-persistent-llm-agents-across-queries-with-plan-first-information-flow-control)  
    标签：评分：10.0/10、query:agent-security
-   evidence：具身代理攻击面、攻击、防御与评估的调查
-2. [SAUL: Sharpness-Aware Augmented-Lagrangian Unlearning](/202608/24/2608.16249v1-saul-sharpness-aware-augmented-lagrangian-unlearning)  
+   evidence：计划优先的信息流控制防御持久LLM智能体中的攻击者控制数据
+3. [ROPE: Routed Origin Policy Enforcement against Indirect Prompt Injection](/202608/31/2608.27496v1-rope-routed-origin-policy-enforcement-against-indirect-prompt-injection)  
+   标签：评分：10.0/10、query:agent-security
+   evidence：基于信任策略执行的间接提示注入防御
+4. [Circuit Discovery Helps Detect LLM Jailbreaking: A Mechanistic Interpretability Study](/202608/31/2608.27504v1-circuit-discovery-helps-detect-llm-jailbreaking-a-mechanistic-interpretability-study)  
+   标签：评分：10.0/10、query:llm-security
+   evidence：识别导致越狱肯定响应的计算回路；消融这些回路最多降低80%攻击成功率
+5. [AgentFlow: A Flow-Centric Policy Language and Framework for Securing LLM Agent Systems](/202608/31/2608.22868v1-agentflow-a-flow-centric-policy-language-and-framework-for-securing-llm-agent-systems)  
+   标签：评分：9.0/10、query:agent-security
+   evidence：面向LLM代理系统的流中心策略语言与运行时实施
+6. [Unlearning Is Not Just Erasing: Temporal Decoupling via Generation Inequality](/202608/31/2608.23020v1-unlearning-is-not-just-erasing-temporal-decoupling-via-generation-inequality)  
    标签：评分：9.0/10、query:machine-unlearning
-   evidence：面向LLM的高效约束遗忘方法，结合锐度感知增强拉格朗日
-3. [Security Assessment of DeepSeek Harness with A.I.G: Evaluating Resistance to Indirect Prompt Injection](/202608/24/2608.16393v2-security-assessment-of-deepseek-harness-with-aig-evaluating-resistance-to-indirect-prompt-injection)  
-   标签：评分：9.0/10、query:agent-security
-   evidence：评估代理框架中间接提示注入的抵抗力
-4. [JailbreakSkill: Scaling Automated Red-Teaming with Reusable and Ever-Evolving Skills](/202608/24/2608.16465v1-jailbreakskill-scaling-automated-red-teaming-with-reusable-and-ever-evolving-skills)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：自动化红队测试与可复用攻击技能
-5. [What to Remember, What to Reveal: Privacy-Aware Memory for Conversational Agents](/202608/24/2608.16551v1-what-to-remember-what-to-reveal-privacy-aware-memory-for-conversational-agents)  
-   标签：评分：9.0/10、query:agent-security
-   evidence：面向对话智能体记忆的隐私保护
-6. [BabelSteering: Multilingual Safety Alignment via English Steering Vectors](/202608/24/2608.16577v1-babelsteering-multilingual-safety-alignment-via-english-steering-vectors)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：通过激活引导实现多语言安全对齐
-7. [Learning to Unlearn: Machine Unlearning via Learning the Unlearning Behaviors](/202608/24/2608.16700v1-learning-to-unlearn-machine-unlearning-via-learning-the-unlearning-behaviors)  
+   evidence：通过注意力路径解耦实现LLM遗忘
+7. [ST$^2$U: Stateful Test-Time Unlearning via Restricted Knowledge Boundary Control](/202608/31/2608.23034v1-st2u-stateful-test-time-unlearning-via-restricted-knowledge-boundary-control)  
    标签：评分：9.0/10、query:machine-unlearning
-   evidence：通过学习遗忘行为实现高效数据删除的机器遗忘方法
-8. [Breaking Planner Integrity Boundary: Enviroment State-Text Injection Attack on LLM-Driven Embodied Agents](/202608/24/2608.16806v2-breaking-planner-integrity-boundary-enviroment-state-text-injection-attack-on-llm-driven-embodied-agents)  
+   evidence：通过激活编辑实现LLM测试时遗忘
+8. [InjecMEM: Memory Injection Attack on LLM Agent Memory Systems](/202608/31/2608.23471v1-injecmem-memory-injection-attack-on-llm-agent-memory-systems)  
    标签：评分：9.0/10、query:agent-security
-   evidence：提出一种环境状态文本注入攻击，操纵规划器可见状态以诱导具身智能体产生对抗执行
-9. [Fool's Gold: Defensive Deception Against Safety-Removal Attacks on Open-Weight Models](/202608/24/2608.17202v1-fools-gold-defensive-deception-against-safety-removal-attacks-on-open-weight-models)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：通过诱饵硬化防御针对LLM的消融安全移除攻击
-10. [PACE: Policy-Attested Contract Execution for Safe AI Agents in Decentralized Finance](/202608/24/2608.17220v1-pace-policy-attested-contract-execution-for-safe-ai-agents-in-decentralized-finance)  
+   evidence：针对LLM智能体记忆系统的记忆注入攻击
+9. [TrustShiftProbe: Characterizing, Benchmarking, and Defending Staged Trust Attacks on MCP Servers](/202608/31/2608.23763v1-trustshiftprobe-characterizing-benchmarking-and-defending-staged-trust-attacks-on-mcp-servers)  
    标签：评分：9.0/10、query:agent-security
-   evidence：通过策略证明执行防御DeFi智能体提示注入
-11. [COMIC: Reference-Aware Safety Gating for Multimodal Large Language Models](/202608/24/2608.17234v1-comic-reference-aware-safety-gating-for-multimodal-large-language-models)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：针对多模态越狱的参考感知安全门控
-12. [Fair ASR: Re-Evaluating Black-Box Jailbreaks under Shared Target-Call Budgets](/202608/24/2608.17360v1-fair-asr-re-evaluating-black-box-jailbreaks-under-shared-target-call-budgets)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：提出Fair-ASR协议以公平评估黑盒越狱攻击
-13. [HarnessRisk: A Lifecycle-Oriented Benchmark for Agent Harness Safety](/202608/24/2608.17597v1-harnessrisk-a-lifecycle-oriented-benchmark-for-agent-harness-safety)  
+   evidence：针对MCP服务器的阶段性信任攻击的特征分析、基准测试与防御
+10. [Beyond the Mandate: A Systematic Security Analysis of the Agent Payments Protocol (AP2)](/202608/31/2608.23858v1-beyond-the-mandate-a-systematic-security-analysis-of-the-agent-payments-protocol-ap2)  
    标签：评分：9.0/10、query:agent-security
-   evidence：面向智能体harness安全的全生命周期基准，包含对抗指令
-14. [MobileWorldSafety: Benchmarking GUI Agent Safety Against Environmental Injection Attacks in Android Apps](/202608/24/2608.17659v1-mobileworldsafety-benchmarking-gui-agent-safety-against-environmental-injection-attacks-in-android-apps)  
-   标签：评分：9.0/10、query:agent-security
-   evidence：针对环境注入攻击的GUI智能体安全基准
-15. [GraphWake: Group Polarization via Memory-Mediated Polarization Cascade in LLM-Agent Communities](/202608/24/2608.17665v1-graphwake-group-polarization-via-memory-mediated-polarization-cascade-in-llm-agent-communities)  
-   标签：评分：9.0/10、query:agent-security
-   evidence：提出LLM智能体社区中的记忆介导极化级联攻击
-16. [Leveraging Association Context Retrieval in Knowledge Edit- ing to Build White-Box Attacks on LLMs](/202608/24/2608.17836v1-leveraging-association-context-retrieval-in-knowledge-edit--ing-to-build-white-box-attacks-on-llms)  
+   evidence：对LLM驱动的智能体支付协议的系统安全分析，关注提示注入攻击
+11. [NeuronGuard: Robust LLM Safety Alignment via Ablation-Aware Safety Signal Redistribution](/202608/31/2608.23959v1-neuronguard-robust-llm-safety-alignment-via-ablation-aware-safety-signal-redistribution)  
    标签：评分：9.0/10、query:llm-security
-   evidence：通过知识编辑构建诱导LLM不安全行为的白盒攻击
-17. [Redakto - The Incognito Tab for LLMs](/202608/24/2608.18260v1-redakto---the-incognito-tab-for-llms)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：LLM输入前的PII脱敏与假名化工具
-18. [FedLNS: Leverage LayerNorm Signature Modeling to Mitigate Adversarial Manipulation in Federated LLMs](/202608/24/2608.18736v1-fedlns-leverage-layernorm-signature-modeling-to-mitigate-adversarial-manipulation-in-federated-llms)  
-   标签：评分：9.0/10、query:byzantine
-   evidence：利用LayerNorm签名的联邦LLM恶意更新筛查服务端框架
-19. [Breaking the weakest link to evade vision language models](/202608/24/2608.18938v1-breaking-the-weakest-link-to-evade-vision-language-models)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：对视觉输入施加对抗扰动以规避视觉语言模型
-20. [Beyond the Transcript: Detecting Covert Co ordination in Latent Multi-Agent Communication](/202608/24/2608.19161v1-beyond-the-transcript-detecting-covert-co-ordination-in-latent-multi-agent-communication)  
+   evidence：通过安全信号再分配防御越狱和神经元级攻击
+12. [WebMCP-Phalanx: Enforcing and Characterizing Trust Boundaries for Browser-Integrated LLM Agents](/202608/31/2608.24017v1-webmcp-phalanx-enforcing-and-characterizing-trust-boundaries-for-browser-integrated-llm-agents)  
    标签：评分：9.0/10、query:agent-security
-   evidence：针对多智能体系统隐蔽有害协调的激活感知监控框架
-21. [AEGIS: Attention-Embedding Gradient Isolation Shield - Triple-Channel Gradient Masking for Privacy-Preserving Federated LLM Fine-Tuning](/202608/24/2608.19534v1-aegis-attention-embedding-gradient-isolation-shield---triple-channel-gradient-masking-for-privacy-preserving-federated-llm-fine-tuning)  
+   evidence：双层代理运行时缓解语义提示注入
+13. [What Guides the Agent? Adjudicating Unauthorized Behavior via Localizing Behavior-Guiding Instructions](/202608/31/2608.24022v1-what-guides-the-agent-adjudicating-unauthorized-behavior-via-localizing-behavior-guiding-instructions)  
+   标签：评分：9.0/10、query:agent-security
+   evidence：运行时框架定位行为引导指令以防御LLM智能体注入攻击
+14. [Retrieved But Not Reliable: A Survey on Attacks, and Defenses in Retrieval-Augmented Generation](/202608/31/2608.24977v1-retrieved-but-not-reliable-a-survey-on-attacks-and-defenses-in-retrieval-augmented-generation)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：综述RAG中的攻击与防御，涵盖语料投毒、后门、隐私泄露
+15. [Rethinking the Transferable Adversarial Attacks and Robust Defense in Federated Learning](/202608/31/2608.25133v1-rethinking-the-transferable-adversarial-attacks-and-robust-defense-in-federated-learning)  
    标签：评分：9.0/10、query:fl-security
-   evidence：通过三通道梯度掩码防御联邦LLM微调中的梯度反转攻击
-22. [Differential Privacy in Feature Reconstruction Aided Federated Learning for Agent's Semantic Communication Model Update](/202608/24/2608.19649v1-differential-privacy-in-feature-reconstruction-aided-federated-learning-for-agents-semantic-communication-model-update)  
-   标签：评分：9.0/10、query:fl-security
-   evidence：联邦学习中基于特征重建的差分隐私
-23. [TempJail: Temporal Jailbreak Attack against Large Vision-Language Models via Subtitle Scheduling](/202608/24/2608.19737v1-tempjail-temporal-jailbreak-attack-against-large-vision-language-models-via-subtitle-scheduling)  
+   evidence：分析联邦学习中可迁移对抗攻击与鲁棒防御
+16. [Groundhog Bit-Flip Attack: Seeding Infinite Generation Loops in Mixture-of-Experts LLMs through Bit Flips](/202608/31/2608.25276v1-groundhog-bit-flip-attack-seeding-infinite-generation-loops-in-mixture-of-experts-llms-through-bit-flips)  
    标签：评分：9.0/10、query:llm-security
-   evidence：针对大视觉语言模型的时间维越狱攻击
-24. [Inadvertent Context Leakage in Language Models](/202608/24/2608.19857v1-inadvertent-context-leakage-in-language-models)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：研究语言模型中敏感上下文的泄露，采用黑盒自适应攻击
-25. [MaliciousSkillBench: A Comprehensive Benchmark for Malicious Agent Skill Detection](/202608/24/2608.19901v1-maliciousskillbench-a-comprehensive-benchmark-for-malicious-agent-skill-detection)  
-   标签：评分：9.0/10、query:agent-security
-   evidence：恶意智能体技能检测基准
-26. [COPA: Continual Preference Optimization for Adaptive Prompt Injection Defense](/202608/24/2608.19982v1-copa-continual-preference-optimization-for-adaptive-prompt-injection-defense)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：持续偏好优化实现自适应提示注入防御
-27. [ConceptGuard: Benchmarking Context-Sensitive Unlearning in Large Language Models](/202608/24/2608.20338v1-conceptguard-benchmarking-context-sensitive-unlearning-in-large-language-models)  
+   evidence：对MoE大模型的比特翻转攻击导致拒绝钱包服务
+17. [Distance Is Not Enough: Forget-Retain Alignment Gap Predicts LLM Relearning Robustness](/202608/31/2608.25429v1-distance-is-not-enough-forget-retain-alignment-gap-predicts-llm-relearning-robustness)  
    标签：评分：9.0/10、query:machine-unlearning
-   evidence：面向LLM概念级遗忘的基准测试，评估有害行为移除
-28. [aiXamine: Unified Black-Box Evaluation of Cross-Dimensional Trade-offs in LLM Safety, Security, and Privacy](/202608/24/2608.20554v1-aixamine-unified-black-box-evaluation-of-cross-dimensional-trade-offs-in-llm-safety-security-and-privacy)  
+   evidence：提出遗忘-保留对齐差距来预测大语言模型机器遗忘后的再学习鲁棒性
+18. [MACGen: Toward Functionally Correct and Secure Code Generation via Multi-Agent Collaboration](/202608/31/2608.25457v1-macgen-toward-functionally-correct-and-secure-code-generation-via-multi-agent-collaboration)  
    标签：评分：9.0/10、query:llm-security
-   evidence：自动红队评估LLM安全、安全、隐私权衡的平台
-29. [Keyed Provenance Watermarking with Complementary Lattice-Based Secure Aggregation for Federated Learning](/202608/24/2608.20580v1-keyed-provenance-watermarking-with-complementary-lattice-based-secure-aggregation-for-federated-learning)  
-   标签：评分：9.0/10、query:fl-security
-   evidence：提出结合可验证格基安全聚合与水印的联邦学习框架
-30. [The Claws in Plain Sight: Unauthorized Context Disclosure through LLM Agent Tool Calls](/202608/24/2608.20658v1-the-claws-in-plain-sight-unauthorized-context-disclosure-through-llm-agent-tool-calls)  
+   evidence：多智能体框架生成功能正确且安全的代码，缓解LLM安全漏洞
+19. [Reassembling Distributed Risk: Trajectory-Conditioned Action Generation for Multi-Turn Agent Safety](/202608/31/2608.25711v1-reassembling-distributed-risk-trajectory-conditioned-action-generation-for-multi-turn-agent-safety)  
    标签：评分：9.0/10、query:agent-security
-   evidence：提出一种权威压力攻击，导致LLM智能体工具调用参数中泄露未经授权的上下文信息
-31. [Certified Multi-Turn Robustness for LLM Safety via Compositional Bounds and Safety Persistence](/202608/24/2608.20820v1-certified-multi-turn-robustness-for-llm-safety-via-compositional-bounds-and-safety-persistence)  
+   evidence：针对工具使用LLM智能体多轮分解攻击的生成时防御
+20. [Are LLM-Enhanced GNNs Privacy-Safe?](/202608/31/2608.25727v1-are-llm-enhanced-gnns-privacy-safe)  
    标签：评分：9.0/10、query:llm-security
-   evidence：针对LLM多轮越狱攻击的认证防御
-32. [Can Scientific Claims Be Removed from Large Language Models? A Systematic Evaluation of Claim-Level Unlearning](/202608/24/2608.20960v1-can-scientific-claims-be-removed-from-large-language-models-a-systematic-evaluation-of-claim-level-unlearning)  
+   evidence：对LLM增强GNN的隐私攻击与防御进行系统评估
+21. [SkillShield: Prompt-Space Security Skills for LLM Coding Agents](/202608/31/2608.25817v1-skillshield-prompt-space-security-skills-for-llm-coding-agents)  
+   标签：评分：9.0/10、query:agent-security
+   evidence：通过合成安全技能的系统提示防御，抵御编码智能体的恶意请求
+22. [A Self-Evolving Multi-Agent Framework Defense against LLM Jailbreak Attacks](/202608/31/2608.26008v1-a-self-evolving-multi-agent-framework-defense-against-llm-jailbreak-attacks)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：具有持久规则记忆的自进化测试时防御，抵御LLM越狱攻击
+23. [NeuronFuzz: Safety Neuron Guided Fuzzing for LLM Safety Evaluation](/202608/31/2608.26222v1-neuronfuzz-safety-neuron-guided-fuzzing-for-llm-safety-evaluation)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：安全神经元引导的LLM越狱评估模糊测试
+24. [Privacy Without Regret: Differentially Private Inference-Time Alignment](/202608/31/2608.26324v1-privacy-without-regret-differentially-private-inference-time-alignment)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：用于LLM推理时对齐的差分隐私Best-of-N采样
+25. [A Single Suffix to Break Them All: Basin-Aware Jailbreaks for Merged Model Families](/202608/31/2608.26506v1-a-single-suffix-to-break-them-all-basin-aware-jailbreaks-for-merged-model-families)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：盆地感知越狱提示泛化到共享预训练主干的合并LLM家族
+26. [Beyond Vector Hiding: Breaking and Mitigating Shared-Direction Weight Obfuscation in TEE-Offloaded Large Language Models](/202608/31/2608.26651v1-beyond-vector-hiding-breaking-and-mitigating-shared-direction-weight-obfuscation-in-tee-offloaded-large-language-models)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：攻击与缓解TEE卸载LLM中共享方向权重混淆方案
+27. [Daydreaming: Stealing Hidden Agent Skills through Black-Box Task Interaction](/202608/31/2608.26733v1-daydreaming-stealing-hidden-agent-skills-through-black-box-task-interaction)  
+   标签：评分：9.0/10、query:agent-security
+   evidence：通过黑盒任务交互窃取隐藏智能体技能的仅执行攻击
+28. [Graph-Guided Selective Unlearning for Language Models: Controlling Support Routes Beyond Forget Seeds](/202608/31/2608.26743v1-graph-guided-selective-unlearning-for-language-models-controlling-support-routes-beyond-forget-seeds)  
    标签：评分：9.0/10、query:machine-unlearning
-   evidence：大模型中的声明级机器遗忘
-33. [Trustworthy RAG: An Evaluation Agent for Detecting Misinformation and Knowledge Poisoning in Generative AI Systems](/202608/24/2608.21095v1-trustworthy-rag-an-evaluation-agent-for-detecting-misinformation-and-knowledge-poisoning-in-generative-ai-systems)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：检测RAG系统中的知识投毒和错误信息
-34. [ReFrame: Evidence-Guided Test-Time Safety Alignment in Multimodal Large Language Models](/202608/24/2608.21100v1-reframe-evidence-guided-test-time-safety-alignment-in-multimodal-large-language-models)  
-   标签：评分：9.0/10、query:llm-security
-   evidence：针对多模态越狱的测试时安全对齐
-35. [ClawSentry: A Progressive Multi-Tier Security Monitor for Safeguarding Autonomous LLM Agents](/202608/24/2608.21101v1-clawsentry-a-progressive-multi-tier-security-monitor-for-safeguarding-autonomous-llm-agents)  
+   evidence：图引导的选择性遗忘方法，扩展语言模型删除范围到遗忘种子之外
+29. [The Framing Gap: Indirect Prompt-Injection Exfiltration Defeats Surface-Level Defenses in Tool-Using Agents](/202608/31/2608.27092v1-the-framing-gap-indirect-prompt-injection-exfiltration-defeats-surface-level-defenses-in-tool-using-agents)  
    标签：评分：9.0/10、query:agent-security
-   evidence：用渐进多层安全监视器保护自主LLM智能体
-36. [TraceGrant: A Contract-Governed Security Framework for the Task-Effect Lifecycle of Networked LLM Agents](/202608/24/2608.21126v1-tracegrant-a-contract-governed-security-framework-for-the-task-effect-lifecycle-of-networked-llm-agents)  
-   标签：评分：9.0/10、query:agent-security
-   evidence：通过合约治理任务-效果生命周期防御网络LLM智能体中的间接提示注入
-37. [BackDFL: A Unified Benchmark For Backdoor Attacks and Defenses In Decentralized Federated Learning](/202608/24/2608.21137v1-backdfl-a-unified-benchmark-for-backdoor-attacks-and-defenses-in-decentralized-federated-learning)  
+   evidence：间接提示注入导致秘密外泄，尽管有表层防御
+30. [SecureDrive-FL: Joint Differential Privacy and Gradient-Aware Selective Homomorphic Encryption for Federated Driver Monitoring](/202608/31/2608.27108v1-securedrive-fl-joint-differential-privacy-and-gradient-aware-selective-homomorphic-encryption-for-federated-driver-monitoring)  
    标签：评分：9.0/10、query:fl-security
-   evidence：去中心化联邦学习中后门攻击与防御的基准测试
-38. [Personalized Privacy Control in LLMs via Attention Head Intervention](/202608/24/2608.21209v1-personalized-privacy-control-in-llms-via-attention-head-intervention)  
+   evidence：结合差分隐私与选择性同态加密防御联邦学习中的梯度窃听与模型投毒
+31. [Personalized Federated Learning for Tensor Regression](/202608/31/2608.27191v1-personalized-federated-learning-for-tensor-regression)  
+   标签：评分：9.0/10、query:fl-security
+   evidence：隐私保护的个性化联邦张量回归及其精度权衡
+32. [Fully Unleashing the Multimodal Attacker: Meta-Adaptive Jailbreaking of Vision-Language Models](/202608/31/2608.27531v1-fully-unleashing-the-multimodal-attacker-meta-adaptive-jailbreaking-of-vision-language-models)  
    标签：评分：9.0/10、query:llm-security
-   evidence：LLM个性化隐私控制的注意力头干预
-39. [Utility Under Attack: Agent Memory Poisoning and the Limits of Content Screening and Provenance Ranking](/202608/24/2608.21230v1-utility-under-attack-agent-memory-poisoning-and-the-limits-of-content-screening-and-provenance-ranking)  
+   evidence：提出针对视觉语言模型的元自适应多模态越狱攻击
+33. [Memorization Is Not Extraction: Tight Differential-Privacy Bounds and Audit Blind Spots](/202608/31/2608.27782v1-memorization-is-not-extraction-tight-differential-privacy-bounds-and-audit-blind-spots)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：LLM记忆与提取的紧致差分隐私界限与审计
+34. [FISGuard: Defending Against Membership Inference via Fixed Input Subspaces](/202608/31/2608.27836v1-fisguard-defending-against-membership-inference-via-fixed-input-subspaces)  
+   标签：评分：9.0/10、query:fl-security
+   evidence：联邦LLM微调中防御成员推理攻击
+35. [CAITLYN: Can LLM Agents Autonomously Synthesize Defenses against Emerging Injection Attacks?](/202608/31/2608.27990v1-caitlyn-can-llm-agents-autonomously-synthesize-defenses-against-emerging-injection-attacks)  
    标签：评分：9.0/10、query:agent-security
-   evidence：智能体记忆投毒攻击与内容筛选局限性
-40. [CLEAR: Continuous Latent Adapter Routing for Utility-Preserving LLM Safety Alignment](/202608/24/2608.21278v1-clear-continuous-latent-adapter-routing-for-utility-preserving-llm-safety-alignment)  
+   evidence：与智能体无关的中间件持续合成针对新兴注入攻击的防御
+36. [AIM: Anchor Identity Features, Then Match for Multimodal Large Language Model Unlearning](/202608/31/2608.28312v1-aim-anchor-identity-features-then-match-for-multimodal-large-language-model-unlearning)  
+   标签：评分：9.0/10、query:machine-unlearning
+   evidence：无需保留图像的多模态大语言模型身份遗忘
+37. [GRACE:Gradient-guided Coreset Selection for LLM Unlearning](/202608/31/2608.28361v1-gracegradient-guided-coreset-selection-for-llm-unlearning)  
+   标签：评分：9.0/10、query:machine-unlearning
+   evidence：梯度引导的核心集选择用于构建LLM遗忘中的遗忘集和保留集
+38. [CamoDocs: A Poisoning Attack Against Retrieval-Augmented Language Models Using Camouflaged Documents](/202608/31/2608.28389v1-camodocs-a-poisoning-attack-against-retrieval-augmented-language-models-using-camouflaged-documents)  
    标签：评分：9.0/10、query:llm-security
-   evidence：连续潜在适配器路由实现效用保持的LLM安全对齐
+   evidence：针对RAG的隐蔽文档投毒攻击
+39. [LongPIBench: A Long-Context Benchmark for Prompt Injection](/202608/31/2608.28411v1-longpibench-a-long-context-benchmark-for-prompt-injection)  
+   标签：评分：9.0/10、query:llm-security
+   evidence：长上下文场景下的提示注入基准
 
 ### 速读区论文标签
-1. [A Policy Algebra for Trust-Preserving Agentic AI Execution](/202608/24/2608.16402v1-a-policy-algebra-for-trust-preserving-agentic-ai-execution)  
+1. [RePolicy: Reinforcement Learning for Safety-Policy Invocation in Agent Safeguards](/202608/31/2608.24275v2-repolicy-reinforcement-learning-for-safety-policy-invocation-in-agent-safeguards)  
    标签：评分：8.0/10、query:agent-security
-   evidence：定义策略代数以在身份、数据、记忆、预算等约束下实现可靠执行
-2. [Towards Safer RAG: Only Agents Capable of System 2 Thinking may Access Untrusted Documents](/202608/24/2608.17153v1-towards-safer-rag-only-agents-capable-of-system-2-thinking-may-access-untrusted-documents)  
-   标签：评分：8.0/10、query:agent-security
-   evidence：针对RAG智能体知识投毒的安全原则
-3. [Model Card for OpenAI Privacy Filter](/202608/24/2608.18274v1-model-card-for-openai-privacy-filter)  
+   evidence：基于强化学习的智能体防护，调用安全策略进行轨迹评估
+2. [LMSM: LLM Security Framework Inspired by Linux Security Modules](/202608/31/2608.25697v1-lmsm-llm-security-framework-inspired-by-linux-security-modules)  
    标签：评分：8.0/10、query:llm-security
-   evidence：用于数据最小化的个人身份信息检测与脱敏模型
-4. [Task-Conditioned Least-Privilege Learning for Executable Terminal and MCP Agents](/202608/24/2608.18351v1-task-conditioned-least-privilege-learning-for-executable-terminal-and-mcp-agents)  
-   标签：评分：8.0/10、query:agent-security
-   evidence：最小权限学习减少工具型LLM智能体的越权错误
-5. [Geometric Data Perturbation with Noisy-Anchor Alignment for Privacy-Preserving Collaborative Learning](/202608/24/2608.18749v1-geometric-data-perturbation-with-noisy-anchor-alignment-for-privacy-preserving-collaborative-learning)  
+   evidence：集成可解释性信号的LLM安全框架用于提示攻击防御
+3. [Pointing the Way, Hiding the Destination: Practical Private Dense Retrieval at Scale](/202608/31/2608.25735v1-pointing-the-way-hiding-the-destination-practical-private-dense-retrieval-at-scale)  
+   标签：评分：8.0/10、query:llm-security
+   evidence：为托管RAG提供私有稠密检索，隐藏查询和结果
+4. [Revisiting Continuous Noise Sampling for Multi-Party Differential Privacy](/202608/31/2608.27766v1-revisiting-continuous-noise-sampling-for-multi-party-differential-privacy)  
    标签：评分：8.0/10、query:fl-security
-   evidence：通过几何扰动实现隐私保护协作学习，抵御共谋攻击
-6. [Enhancing Privacy in Federated Learning via Dual Obfuscation of Gradients and Training Images](/202608/24/2608.19650v1-enhancing-privacy-in-federated-learning-via-dual-obfuscation-of-gradients-and-training-images)  
-   标签：评分：8.0/10、query:fl-security
-   evidence：梯度与图像双重混淆防御梯度泄露攻击
-7. [TINA+: Probing Residual Visual Knowledge in Unlearned Diffusion Models via Diffusion-Consistent Text-Free Inversion](/202608/24/2608.17747v1-tina-probing-residual-visual-knowledge-in-unlearned-diffusion-models-via-diffusion-consistent-text-free-inversion)  
-   标签：评分：7.0/10、query:machine-unlearning
-   evidence：通过扩散一致性反演探测未学习扩散模型中的残余视觉知识
-8. [Cross-Domain Generalization in Machine Unlearning via Label-Conditioned Energy Magnitude Regularization](/202608/24/2608.17942v1-cross-domain-generalization-in-machine-unlearning-via-label-conditioned-energy-magnitude-regularization)  
-   标签：评分：7.0/10、query:machine-unlearning
-   evidence：基于能量模型的标签条件正则化实现类别遗忘
-9. [FedGuard-DC: Privacy-Preserving Federated Load Forecasting and Cyber-Attack Detection for Data-Center Loads in Transmission Systems](/202608/24/2608.19155v1-fedguard-dc-privacy-preserving-federated-load-forecasting-and-cyber-attack-detection-for-data-center-loads-in-transmission-systems)  
-   标签：评分：7.0/10、query:fl-security
-   evidence：用于隐私保护负荷预测和虚假数据注入攻击检测的联邦学习框架
-10. [One Success Isn't Reliability: Thinkingbox, a Sandbox and Benchmark for Agents in Stateful Business Workflows](/202608/24/2608.19741v1-one-success-isnt-reliability-thinkingbox-a-sandbox-and-benchmark-for-agents-in-stateful-business-workflows)  
+   evidence：安全多方计算与差分隐私结合，噪声采样存在漏洞
+5. [Are Android GUI Agents Robust Against Runtime Anomalies? AnTrap: Evaluating Agents in Dynamic Adversarial Environments](/202608/31/2608.24099v1-are-android-gui-agents-robust-against-runtime-anomalies-antrap-evaluating-agents-in-dynamic-adversarial-environments)  
    标签：评分：7.0/10、query:agent-security
-   evidence：沙箱中为代理提供隔离的MCP兼容工具会话
-11. [Towards Risk-free AI Agent Deployment](/202608/24/2608.16411v1-towards-risk-free-ai-agent-deployment)  
+   evidence：AnTrap基准注入运行时异常评估Android GUI代理鲁棒性
+6. [Vulnerable Code Search: Transferable Attack for Code Language Models](/202608/31/2608.26031v1-vulnerable-code-search-transferable-attack-for-code-language-models)  
+   标签：评分：7.0/10、query:llm-security
+   evidence：针对代码语言模型的可迁移对抗攻击
+7. [Five Primitives for Governing Autonomous AI Agents at Runtime](/202608/31/2608.26696v1-five-primitives-for-governing-autonomous-ai-agents-at-runtime)  
+   标签：评分：7.0/10、query:agent-security
+   evidence：自主AI代理安全治理原语
+8. [An Accurate and Single-Communication Federated Inference Algorithm](/202608/31/2608.27063v1-an-accurate-and-single-communication-federated-inference-algorithm)  
+   标签：评分：7.0/10、query:fl-security
+   evidence：单次通信联邦推断保护隐私
+9. [Trust-Aware Sequential Decision Making and Rollout Planning for Resilient Multi-Robot Systems](/202608/31/2608.25690v1-trust-aware-sequential-decision-making-and-rollout-planning-for-resilient-multi-robot-systems)  
    标签：评分：6.0/10、query:agent-security
-   evidence：基于智能体轨迹的测试与调试以降低部署风险
-12. [Benchmarking the Benchmarks: Evaluating Automated Safety Benchmarks for Small Language Models](/202608/24/2608.17183v1-benchmarking-the-benchmarks-evaluating-automated-safety-benchmarks-for-small-language-models)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：评估小型语言模型自动化安全基准的鲁棒性
-13. [Learning What to Fail On: Failure-Mode Contextual Bandits for Adversarial Data Curation](/202608/24/2608.18681v1-learning-what-to-fail-on-failure-mode-contextual-bandits-for-adversarial-data-curation)  
-   标签：评分：6.0/10、query:llm-security
-   evidence：通过失败模式上下文bandit进行对抗数据策展以提升NLU鲁棒性
-14. [A Federated Learning Framework for Privacy-Preserving Oral Cancer Screening on Smartphones](/202608/24/2608.19462v1-a-federated-learning-framework-for-privacy-preserving-oral-cancer-screening-on-smartphones)  
+   evidence：信任感知监控器对抗多机器人系统中的定位欺骗攻击
+10. [SLIDE: Shuffle Shamir Secret Shares Uniformly with Linear Online Communication and Guaranteed Output Delivery](/202608/31/2608.27129v1-slide-shuffle-shamir-secret-shares-uniformly-with-linear-online-communication-and-guaranteed-output-delivery)  
    标签：评分：6.0/10、query:fl-security
-   evidence：用于隐私保护口腔癌筛查的联邦学习框架
-15. [Beyond End-to-End Success: Diagnosing Failures in Long-Horizon Security LLM Agents](/202608/24/2608.20563v1-beyond-end-to-end-success-diagnosing-failures-in-long-horizon-security-llm-agents)  
-   标签：评分：6.0/10、query:agent-security
-   evidence：针对长时安全LLM智能体的失败瓶颈诊断方法
+   evidence：提出高效的Shamir秘密共享洗牌协议，可应用于安全多方计算和安全聚合
+11. [Securing Cooperative Sensing in UAV Swarms Against Conformity-Driven Byzantine Attacks](/202608/31/2608.28017v1-securing-cooperative-sensing-in-uav-swarms-against-conformity-driven-byzantine-attacks)  
+   标签：评分：6.0/10、query:byzantine
+   evidence：无人机群中基于演化博弈和MAP的拜占庭弹性融合
+12. [Performative Privacy: When Differential Privacy Maximizes Utility](/202608/31/2608.28198v1-performative-privacy-when-differential-privacy-maximizes-utility)  
+   标签：评分：6.0/10、query:fl-security
+   evidence：引入表现性隐私，差分隐私可提升长期效用
 
 
 <div class="dpr-home-promo-card">

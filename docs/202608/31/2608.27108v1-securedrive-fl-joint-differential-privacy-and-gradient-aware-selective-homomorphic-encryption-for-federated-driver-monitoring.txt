@@ -1,0 +1,532 @@
+Title: SecureDrive-FL: Joint Differential Privacy and Gradient-Aware Selective Homomorphic Encryption for Federated Driver Monitoring
+
+URL Source: https://arxiv.org/pdf/2608.27108v1
+
+Published Time: Fri, 28 Aug 2026 01:04:38 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# SecureDrive-FL: Joint Differential Privacy and Gradient-Aware Selective Homomorphic Encryption for Federated Driver Monitoring 
+
+Baran Can G¨ ul ∗, Hanuma Siddhartha Tunuguntla †, Anjana Arvind Naik ∗, Abhishek Vijay Potekar ∗,Nasser Jazdi ∗, and Michael Weyrich ∗∗Institute of Industrial Automation and Software Engineering, University of Stuttgart, Stuttgart, Germany 
+
+†EngD Automotive Systems Design, Eindhoven University of Technology (TU/e), Eindhoven, The Netherlands Email: baran-can.guel@ias.uni-stuttgart.de, h.s.tunuguntla@tue.nl, st189825@stud.uni-stuttgart.de, 
+
+st191608@stud.uni-stuttgart.de, nasser.jazdi@ias.uni-stuttgart.de, michael.weyrich@ias.uni-stuttgart.de 
+
+Abstract —Federated Learning (FL) enables privacy-aware dis-tributed training, yet gradient updates remain exploitable: Man-in-the-Middle (MitM) interception exposes updates in transit, while model poisoning corrupts global convergence. We first introduce GASHE (Gradient-Aware Selective Homomorphic En-cryption), a novel selective encryption strategy that dynamically identifies and encrypts only the gradient components exceeding a DP-calibrated sensitivity threshold, rather than encrypting all parameters uniformly as in static layer-based or full-parameter CKKS schemes. Building on GASHE, we introduce SecureDrive-FL, a federated driver monitoring framework that couples DP-SGD with GASHE to create the first closed-loop DP + HE privacy pipeline: DP-SGD calibration parameters directly derive the GASHE encryption mask, unifying training-time privacy and communication-time confidentiality. Evaluated on a ten-class dis-tracted driver classification task under non-IID federated splits, SecureDrive-FL matches DP-SGD alone’s poisoning resistance (73 .6% vs. 74 .0% accuracy, 3.9% Attack Success Rate for both) while additionally withstanding MitM interception, where DP-SGD alone collapses to near-random accuracy ( 78 .2% vs. 10 .4% ), all under only ≈8–10% additional runtime overhead relative to DP-SGD alone—under DP-SGD noise injection with per-round privacy parameter ε0=4 .
+
+Index Terms —Federated Learning, Differential Privacy, Ho-momorphic Encryption, Driver Monitoring, Privacy-Preserving Machine Learning, Adversarial Robustness, Connected Vehicles 
+
+I. I NTRODUCTION 
+
+The rapid growth of Internet of Things (IoT) devices and connected vehicles has led to the generation of large-scale dis-tributed datasets covering driver behavior analysis, intelligent transportation systems, and autonomous driving [1]. Federated Learning (FL) has emerged as a compelling paradigm to exploit these distributed datasets without centralizing sensitive raw data: local models are trained on edge devices and only gradient updates are transmitted to a central aggregator [2]. Yet, FL provides no formal privacy guarantee by itself. A growing body of evidence shows that adversaries can re-construct sensitive information from gradient updates through model inversion [3], membership inference [4], GAN-based reconstruction [5], and deep gradient leakage [6]. The threat surface is further expanded in automotive deployments, where model updates traverse shared cloud infrastructure operated by OEMs, insurers, and third-party service providers, each representing a potential interception point [7]. Two primary families of Privacy-Enhancing Technologies (PETs) have been studied independently for FL. Fully Ho-momorphic Encryption (FHE) allows the server to aggregate encrypted updates without ever decrypting them [8], but en-crypting every model parameter incurs prohibitive memory and latency overhead on resource-constrained edge devices [9]. Differential Privacy (DP), realized via DP-SGD [10], pro-vides rigorous, quantifiable privacy guarantees by injecting calibrated Gaussian noise into gradient updates; however, the well-known privacy-utility trade-off means that high privacy levels substantially degrade model accuracy [11]. Prior hybrid works [12]–[14] treat DP and HE as largely independent, orthogonally applied modules. In contrast, our key insight is to derive the encryption decision directly from the DP-SGD calibration itself: the clipping norm C and noise scale σ used in DP-SGD already identify which gradients dominate the DP noise floor and are therefore most informa-tive, and most dangerous if transmitted in plaintext. This DP-informed gradient sensitivity threshold is used as the GASHE mask, creating a principled, closed-loop coupling between training-time privacy and communication-time confidentiality. The specific contributions of this work are:  
+
+> •
+
+GASHE: We introduce Gradient-Aware Selective Homo-morphic Encryption, a novel, architecture-agnostic selec-tive encryption strategy that dynamically targets CKKS encryption to the k gradient components whose mag-nitudes exceed the DP-calibrated threshold τi, retaining formal privacy semantics without encrypting the full pa-rameter vector. GASHE can be deployed as a standalone communication-security primitive, independently of DP-SGD.  
+
+> •
+
+DP-GASHE coupling (SecureDrive-FL): To the best of our knowledge, SecureDrive-FL is the first framework to explicitly derive HE encryption decisions from DP-SGD sensitivity bounds, creating a unified privacy pipeline with DP-SGD noise injection at training time (per-round 
+
+ε0=4 , σ=1 .2112 , C=1 .2, δ=10 −5) and IND-CPA con-arXiv:2608.27108v1 [cs.CR] 27 Aug 2026 fidentiality at communication time (Theorem 1).  
+
+> •
+
+Multi-threat robustness evaluation: We evaluate SecureDrive-FL against model poisoning and MitM gra-dient interception, showing that the joint DP+GASHE design closes the MitM attack surface while matching DP-SGD alone’s poisoning resistance. Under poisoning, SecureDrive-FL attains accuracy (73 .6% vs. 74 .0% ), Macro-F1 ( 73 .3% vs. 73 .7% ), and Attack Success Rate (3.9% vs. 3.9% ) comparable to DP-SGD alone, with a marginal Macro-Precision gain ( 75 .9% vs. 75 .7% ), while additionally preventing the accuracy collapse DP-SGD alone suffers under MitM (78 .2% vs. 10 .4% ). Undefended FedAvg and FL+GASHE-only, by contrast, both collapse under poisoning ( ≈10 –14% accuracy), so their nominally low ASR reflects training failure, not robustness.  
+
+> •
+
+Automotive use-case validation: We demonstrate practi-cal feasibility on a ten-class distracted driver recognition task with non-IID, user-partitioned FL and lightweight MobileNetV2-Tiny, achieving ≈74% accuracy under ac-tive attack with DP-SGD configured at per-round ε0=4 .The remainder of the paper is organized as follows: Section II reviews related work, Section III presents the SecureDrive-FL framework, and Section IV details the threat model and our adversarial evaluation methodology. Section V describes the implementation and experimental results and Section VI provides the summary of this work. II. R ELATED WORK 
+
+We review privacy threats in FL, DP and HE mechanisms, and hybrid robustness-oriented frameworks, then position SecureDrive-FL against their limitations. 
+
+A. Privacy Threats in Federated Learning 
+
+Standard FL is vulnerable to a range of inference and interception attacks that exploit the shared model updates exchanged between clients and the server. Model inversion attacks demonstrated in [3] exploit model confidence scores to reconstruct sensitive input attributes, while membership inference attacks introduced in [4] reveal whether specific records were part of the training set. GAN-based information leakage in collaborative learning is analyzed in [5], and unintended feature leakage through shared representations is examined in [15]. Deep gradient leakage is investigated in [6], showing that raw training samples can often be reconstructed directly from gradient updates under standard FL. More recent analyses of gradient leakage in federated environments are provided in [16]. These works collectively establish that data locality alone is insufficient: exchanged gradients remain an exploitable attack surface that can be targeted both passively (eavesdropping) and actively (manipulation). 
+
+B. Differential Privacy in Federated Learning 
+
+Differential Privacy provides a formal framework for bound-ing the information that individual records contribute to model outputs [17]. The DP-SGD mechanism proposed in [10] real-izes this in deep learning via per-example gradient clipping and calibrated Gaussian noise injection, achieving formal (ε, δ )-DP guarantees. Its adaptation to the federated setting is studied in [18], where client-level DP is enforced across commu-nication rounds, and a client-level perspective with adaptive clipping is developed in [11] to reduce utility degradation. Tighter privacy accounting using R´ enyi DP is introduced in [19] and extended in [20], enabling more efficient budget management over many rounds. Despite these advances, a key limitation remains: as shown in [6], gradient inversion can partially succeed even in the presence of DP noise when the signal-to-noise ratio is fa-vorable, particularly for small batch sizes. Furthermore, DP-SGD operates only during local training and provides no confidentiality guarantee for the gradient updates transmitted over the network, leaving them exposed to Man-in-the-Middle interception. 
+
+C. Homomorphic Encryption in Federated Learning 
+
+Fully Homomorphic Encryption, initially constructed in [8], allows computation on encrypted data and has been adopted for secure aggregation in FL. BatchCrypt [13] reduces HE overhead via quantization and batching; secret-sharing-based secure aggregation [21] enables servers to recover only the aggregate; and TenSEAL [22] with [14] bring CKKS-based encryption to general ML and IoT FL pipelines respectively. However, all of the above approaches suffer from a critical practical limitation: they encrypt all model parameters uni-formly, incurring computational and memory overhead that is prohibitive on resource-constrained edge devices. Partial or layer-based encryption schemes attempt to reduce this cost by encrypting only selected layers, but they rely on static, architecture-dependent rules that do not adapt to the actual privacy sensitivity of individual gradient components during training. 
+
+D. Hybrid Privacy Frameworks and Robustness 
+
+A comprehensive survey of FL attacks and defenses is provided in [23], and strong multi-round poisoning attacks circumventing many existing defenses are introduced in [24]. Hybrid DP–HE approaches [12] apply noise-based privacy and encrypted aggregation as independently configured mod-ules, without directing encryption toward the most sensitive gradients. A representative hybrid defense [25] combines DP and SMC to improve accuracy over single-mechanism baselines, but DP and SMC are configured independently: the DP calibration does not inform which updates SMC protects, and robustness to poisoning is not evaluated. SecureDrive-FL instead derives the HE mask directly from the DP-SGD clipping norm C and noise scale σ, and evaluates the resulting pipeline against both inference and poisoning adversaries in a realistic automotive FL setting. III. S ECURE DRIVE -FL F RAMEWORK 
+
+We describe the overall design of SecureDrive-FL, detailing the system model, threat assumptions, and the integration of client-side DP-SGD with Gradient-Aware Selective Homomor-phic Encryption for secure and efficient aggregation. 
+
+A. System Overview 
+
+SecureDrive-FL integrates two orthogonal privacy mech-anisms applied at different stages of the FL pipeline, as illustrated in Fig. 1: (i) DP-SGD during local model training to ensure formal statistical indistinguishability of individual client contributions in the final model, and (ii) GASHE during gradient communication to prevent raw gradient exposure under honest-but-curious or compromised server scenarios. 
+
+B. Threat Model 
+
+We target an honest-but-curious server : the aggregator fol-lows the FL protocol faithfully but attempts to infer private information from received model updates, intermediate ag-gregation states, and server-side logs. This threat model is highly relevant in the automotive domain, where aggregation servers are typically operated by third-party cloud providers or shared OEM infrastructure. We additionally evaluate active adversaries that inject malicious updates (model poisoning) and network-layer eavesdroppers that intercept gradient trans-missions (MitM attacks); see Section IV for the full adversarial evaluation. Note that, we do not target Byzantine-tolerant ag-gregation or Sybil attacks in the core protocol design, as robust aggregation is orthogonal to the confidentiality guarantees of GASHE and is left as future work. 
+
+C. Data Collection and Preprocessing 
+
+Each participating vehicle (client i) passively collects sensor data Di during operation. In accordance with FL principles, 
+
+Di is never transmitted. Each raw sample x(t) 
+
+> i
+
+is locally preprocessed to extract relevant features: 
+
+z(t) 
+
+> i
+
+= P(x(t) 
+
+> i
+
+), (1) and Di is partitioned into training and validation subsets: 
+
+Di = Dtrain  
+
+> i
+
+∪ Deval  
+
+> i
+
+, Dtrain  
+
+> i
+
+∩ Deval  
+
+> i
+
+= ∅. (2) 
+
+D. Local Training with DP-SGD 
+
+The local model fi(·; Wi) is trained using DP-SGD. For each mini-batch, per-sample gradients are clipped to L2-norm 
+
+C, and calibrated Gaussian noise is added: 
+
+Wi ← Wi − η ∇Wi L + N 0, σ 2C2I (3) where C is the ℓ2 clipping norm and σ is the noise multiplier; the product σC is the standard deviation of the injected noise, consistent with Algorithm 1. 
+
+E. GASHE: Gradient-Aware Selective Homomorphic Encryp-tion 
+
+After local training, client i computes the model update 
+
+∆wi = Wi − W global and derives a DP-informed sensitivity threshold: 
+
+τi = C
+
+q
+
+2 ln  1.25 /δ 
+
+ε0
+
+(4) where ε0 is the per-round noise calibration parameter, δ is the failure probability, and C is the clipping norm from DP-SGD. This threshold equals the minimum noise standard deviation prescribed by the closed-form Gaussian mechanism for the configured (ε, δ ) budget [26]; gradient components whose magnitudes exceed τi dominate the DP noise floor and con-stitute the most privacy-sensitive parameters when transmitted in plaintext. In this configuration, τi is set to coincide with the operational noise standard deviation σC (calibrated via R´ enyi DP accounting), so that a single calibration input ε0 jointly determines the DP noise scale and the GASHE threshold. A binary mask Mi is then derived from the threshold τi,selecting the gradient components whose magnitudes dominate the DP noise floor: 
+
+Mi[j] = 1 ∆wi[j] ≥ τi
+
+ (5) Only the masked subset is encrypted under the server’s public key, while the remaining low-magnitude parameters are transmitted in plaintext alongside a compact bitmask: 
+
+ci = FHE.Enc (Mi ⊙ ∆wi; pk ). (6) This selective strategy directly reduces the fraction of en-crypted parameters, cutting both ciphertext size and FHE evaluation time proportionally to the sparsity of Mi.
+
+Theorem 1 (SecureDrive-FL Privacy and Security Guarantee) .
+
+Let each client i execute DP-SGD for T local steps per round across N communication rounds, with per-sample gra-dient clipping norm C, Gaussian noise multiplier σ, and mini-batch sampling rate q = B/n over a local dataset of size n.Then the local training mechanism satisfies (ε, δ )-DP with 
+
+εtotal = O q
+
+pT N ln(1 /δ )
+
+σ
+
+!
+
+(7) via R´ enyi DP composition [19], [20], where q = B/n 
+
+is the per-round sampling rate, T is the number of local gradient steps per round, and N is the number of commu-nication rounds. For the configuration in Section IV ( C=1 .2,
+
+σ=1 .2112 , N =120 , δ=10 −5), the R´ enyi DP accountant re-ports εtotal ≈48 .94 .
+
+F. Homomorphic Aggregation 
+
+The server aggregates all encrypted updates using the CKKS additive homomorphic operation: 
+
+Cagg = ⊞i∈C n ci ≡ FHE .Enc  P  
+
+> i∈C n
+
+Mi ⊙ ∆wi; pk  (8) where Cn is the set of selected clients in round n. The server never decrypts individual client updates, preserving privacy even under insider threats. Since client masks Mi may differ, each reflecting the local gradient magnitude distribution, the element-wise sum implicitly applies zero for components below threshold in each client; CKKS handles these as exact Fig. 1. SecureDrive-FL overview. DP-SGD protects privacy during local model training, while GASHE selectively encrypts high-sensitivity gradient components before transmission to the aggregation server. 
+
+zeros with no additional ciphertext overhead. The global model update is recovered by clients: 
+
+∆W = FHE.Dec (Cagg ), W ← W + 1
+
+|C n| ∆W. (9) Each client also receives the server-side element-wise sum of plaintext low-magnitude components, Pagg = P
+
+> i
+
+(1 −
+
+Mi)⊙∆wi, transmitted without encryption. The full aggregate gradient is recovered as 
+
+∆Wfull = FHE .Dec (Cagg ; sk ) + Pagg ,W ← W + 1 
+
+> |C n|
+
+∆Wfull 
+
+(10) This two-stream design ensures that all d gradient dimen-sions contribute to the global update, while only the k
+
+high-sensitivity components incur FHE overhead. The full SecureDrive-FL protocol is given in Algorithm 1. IV. S YSTEM AND ADVERSARIAL EVALUATION SETUP 
+
+In this section, we give the details of the system config-uration, datasets, models, and attack/defence setups used to evaluate SecureDrive-FL. 
+
+A. Use-Case and Dataset 
+
+We evaluate on a ten-class distracted-driver classification task combining the State Farm Distracted Driver Detection dataset [27] and the AUC Distracted Driver dataset [28], yielding over 50,000 labelled images of naturalistic driving across ten distraction categories: safe driving, texting (right/left hand), phone call (right/left hand), radio operation, drinking, reaching behind, hair/makeup adjustment, and talking to a passenger. To emulate realistic federated data locality, we adopt a user-based partition where each client holds images from 3–5
+
+unique drivers, inducing non-IID heterogeneity representative of real-world driver diversity. Labels are one-hot encoded; images are resized to 224 × 224 , normalised, and augmented locally via random horizontal flips and brightness jitter. The automotive context motivates strict GDPR compliance [29], as driver behavioural data is classified as sensitive personal data. 
+
+B. Model and Federated Learning Configuration 
+
+We use MobileNetV2-Tiny as the convolutional backbone for its favourable accuracy-to-compute trade-off on embedded platforms. Feature maps are reduced via global average pool-ing and passed to a softmax classifier ( ≈ 2.2M parameters). We run 120 FL rounds with six clients per round and a local batch size of 32 .All DP-enabled runs use DP-SGD with clipping norm 
+
+C=1 .2, noise multiplier σ=1 .2112 (derived from a single-shot calibration input ε0=4 ), and δ=10 −5. Privacy accounting via R´ enyi DP composition [19] over N =120 rounds yields a cumulative budget of εtotal ≈48 .94 , consistent with the known growth of composed DP guarantees across FL rounds [18]. 
+
+C. Software and Hardware Environment 
+
+We instantiated DP-SGD via TensorFlow Privacy [30] using 
+
+DPKerasSGDOptimizer and R´ enyi DP accounting. Homo-morphic operations use TenSEAL [22] with CKKS configured as: polynomial modulus degree 8192 , scaling factor 240 , and coefficient modulus chain [60 , 40 , 40 , 60] . Experiments run on a single host with Python 3.10, TensorFlow 2.14, 128 GB RAM, and six logical FL clients. To ensure statistical reliability, each configuration was ex-ecuted independently with three random seeds (42, 123, 456) Algorithm 1 SecureDrive-FL 
+
+Require: Server holds public key pk ; each client i holds sk i
+
+Ensure: Global model W 
+
+> 1:
+
+Initialize global model W 
+
+> 2:
+
+for n = 1 to N do  
+
+> 3:
+
+Cn ← random subset of clients  
+
+> 4:
+
+for all i ∈ C n (executed in parallel) do  
+
+> 5:
+
+Enc (∆ wi) ← CLIENT UPDATE (i, W, pk ) 
+
+> 6:
+
+end for  
+
+> 7:
+
+Cagg ← ⊞i Enc (∆ wi) 
+
+> 8:
+
+Broadcast Cagg to all clients  
+
+> 9:
+
+Each client decrypts: ∆W ← Dec sk i (Cagg ) 
+
+> 10:
+
+W ← W + 1 
+
+> |C n|
+
+∆W 
+
+> 11:
+
+end for  
+
+> 12:
+
+return W 
+
+> 13: 14:
+
+function CLIENT UPDATE (i, W, pk ) 
+
+> 15:
+
+Input: C, σ, B, η, ε, δ  
+
+> 16:
+
+Split Dtrain  
+
+> i
+
+into B microbatches {xb}Bb=1  
+
+> 17:
+
+g ← 0 
+
+> 18:
+
+for b = 1 to B do  
+
+> 19:
+
+gb ← ∇ ℓ(W ; xb) 
+
+> 20:
+
+gb ← gb · min {1, C/ ∥gb∥2} 
+
+> 21:
+
+g ← g + gb 
+
+> 22:
+
+end for  
+
+> 23:
+
+˜g ← g + N (0 , σ 2C2I) 
+
+> 24:
+
+∆wi ← − η ˜g 
+
+> 25:
+
+Compute τi via Eq. (4)  
+
+> 26:
+
+Build mask Mi via Eq. (5)  
+
+> 27:
+
+Enc (∆ wi) ← FHE.Enc (Mi ⊙ ∆wi; pk ) 
+
+> 28:
+
+return Enc (∆ wi)
+
+governing FL client selection, local SGD initialisation, and DP noise sampling. Tables I and II report the mean across these three runs. Variance across seeds was consistently low (accuracy: σ < 1.5 pp; ASR: σ < 2.5 pp; runtime: σ < 2% ), confirming that reported differences reflect systematic effects rather than stochastic variation. 
+
+D. Adversarial Threats and Defence Mechanisms 1) Man-in-the-Middle (MitM) Gradient Interception: Anetwork-level adversary intercepts gradient transmissions be-tween clients and the server. In the passive case, the adversary stores all intercepted traffic; in the active case, it attempts to replace client updates with manipulated gradients before forwarding them. Formally, let A denote a network-layer adversary. In the 
+
+passive MitM setting, A observes all transmissions between client i and the aggregation server: 
+
+Obs A =  (c(n) 
+
+> i
+
+, M (n) 
+
+> i
+
+) : i ∈ C n, n = 1 , . . . , N , (11) where c(n) 
+
+> i
+
+= FHE .Enc (M (n) 
+
+> i
+
+⊙ ∆w(n) 
+
+> i
+
+; pk ) is the encrypted high-sensitivity stream and M (n) 
+
+> i
+
+is the publicly transmitted bitmask. A’s goal is to recover sensitive training data from this observation, either via gradient inversion [6] or by exploiting the plaintext low-magnitude stream. In the active case, A
+
+additionally replaces a ciphertext with a crafted update before forwarding: 
+
+˜c(n) 
+
+> i
+
+= FHE .Enc  fA(∆ w(n) 
+
+> i
+
+, {c(n) 
+
+> j
+
+}j ); pk , (12) where fA is the adversary’s manipulation function (e.g., gra-dient scaling or replacement). GASHE protects high-sensitivity components via CKKS semantic security, leaving only low-magnitude, DP-noise-dominated parameters in plaintext. To detect active manipu-lation, the server verifies that aggregated ciphertexts decrypt consistently and monitors the global update ∆W . The server maintains a running mean μL and standard deviation sL of the per-round validation loss over a held-out clean probe set. Round n is flagged if |L(n) − μL| > 3 sL (3-sigma rule); the corresponding Cagg is discarded and the global model retains the weights W (n−1) from the previous round. 
+
+2) Model Poisoning: Following [24], a fraction ρ of clients are compromised ( ρ = 2 /6≈0.33 in our evaluation). Each malicious client m ∈ M submits a crafted update designed to embed a backdoor trigger t targeting class ytar :
+
+∆w(n) 
+
+> m
+
+= α ∆wtarget + (1 − α) ∆ wbenign  
+
+> m
+
+, α ∈ (0 , 1] ,
+
+(13) where ∆wtarget is the gradient direction that amplifies the target-class logit and α controls poisoning intensity. For the multi-round consistency variant of [24], the adversary addi-tionally enforces ∥∆w(n) 
+
+> m
+
+−∆w(n−1)  
+
+> m
+
+∥2 ≤ γ to evade round-to-round anomaly detectors. The Attack Success Rate is measured as: 
+
+ASR = Pr 
+
+> x∼D test
+
+[f (x ⊕ t; W ) = ytar ] , (14) where x ⊕ t denotes a test sample with the backdoor trigger overlaid (class 5, phone call, right hand, in our experiments), and W is the poisoned global model after N rounds. While SecureDrive-FL is designed as a confidentiality framework, GASHE yields implicit robustness: only coordinates exceeding 
+
+τi are encrypted and transmitted, so the aggregate sensitivity of each client’s contribution is bounded. We additionally employ FedAvg with norm clipping, following Reference [23]. V. E XPERIMENTAL RESULTS 
+
+We compare SecureDrive-FL against DP-SGD alone, Full-CKKS, and GASHE-only as natural baselines representing the privacy–efficiency spectrum, together with TrimmedMean, Krum, BatchCrypt, and FedProx as additional non-DP ref-erences covering robust aggregation, encrypted aggregation, and proximal-regularised FL. SecureDrive-FL is the only con-figuration that simultaneously provides formal DP, IND-CPA communication security, and poisoning resistance on par with DP-SGD alone, incurring only ≈ 8–10% overhead relative to DP-SGD alone. TABLE I FINAL ACCURACY , ASR, AND MACRO -F1 UNDER CLEAN , M IT M, AND POISONING CONDITIONS . U NDER MIT M, 0% ASR FOR FED AVG , DP-SGD, AND             
+
+> FED PROX REFLECTS TRAINING FAILURE (≈10% ACCURACY ), NOT DEFENCE ; T RIMMED MEAN AND KRUM RETAIN HIGH ACCURACY INSTEAD (WITHOUT CONFIDENTIALITY ). GASHE-ONLY AND FULL -CKKS LACK FORMAL DP ( ε=∞)AND COLLAPSE UNDER POISONING (≈14% ,NEAR FED AVG ).
+
+Configuration DP Accuracy (%) Poisoning Metrics Clean MitM Poison ASR (%) Macro-F1 (%) Macro-Prec. (%) (1) Standard FL (FedAvg) × 93 .8 10 .4 10 .4 0.0 1.9 1.0
+
+(2) FL + DP-SGD ( ε0=4 ) ✓ 80 .0 10 .4 74 .0 3.9 73 .7 75 .7
+
+(3) FL + GASHE-only × 95 .8 95 .0 14 .0 0.0 8.0 25 .4
+
+(4) FL + Full-CKKS × 95 .8 94 .8 13 .8 0.0 11 .9 70 .8
+
+(5) SecureDrive-FL (DP+GASHE, ε0=4 ) ✓ 82 .2 78 .2 73 .6 3.9 73 .3 75 .9
+
+(6) TrimmedMean × 94 .4 95 .2 91 .4 0.0 91 .3 91 .9
+
+(7) Krum × 84 .4 92 .8 90 .2 1.9 90 .0 90 .9
+
+(8) BatchCrypt × 95 .0 86 .6 32 .8 0.0 37 .2 79 .8
+
+(9) FedProx × 95 .0 10 .4 10 .4 0.0 1.9 1.0
+
+A. Federated Utility 
+
+In the clean setting, FedAvg and GASHE-only reach 93 .8% 
+
+and 95 .8% accuracy respectively, confirming that GASHE’s selective CKKS encryption introduces negligible utility over-head because it does not modify the local optimisation trajec-tory. DP-SGD and SecureDrive-FL reach 80 .0% and 82 .2% 
+
+in the clean setting, an 11 .6–13 .8 percentage point drop from the unencrypted FedAvg baseline ( 93 .8% ) that reflects the expected accuracy cost of the tighter per-round privacy budget (ε0=4 ). Notably, SecureDrive-FL is not less accurate than DP-SGD alone in the clean setting ( +2 .2 pp), confirming that GASHE itself contributes no measurable additional utility cost on top of DP-SGD. 
+
+B. Robustness to Active Attacks 1) Attack Success Rate: Table I summarises robustness across MitM and poisoning attacks. Under MitM, FedAvg, DP-SGD alone, and FedProx collapse to near-random accuracy (≈10% ). In contrast, GASHE-only, BatchCrypt, Trimmed-Mean, Krum, and SecureDrive-FL all maintain high utility, achieving 95 .0% , 86 .6% , 95 .2% , 92 .8% , and 78 .2% ac-curacy respectively. This confirms that encrypting sensitive gradients effectively removes the interception attack surface for GASHE-based methods, while TrimmedMean and Krum, which use no encryption, are similarly robust to MitM in the updated results, though, unlike GASHE-based methods, they offer no formal confidentiality guarantee for the transmitted gradients themselves. Robust-aggregation and encrypted-aggregation baselines that carry no DP guarantee perform strongly under poisoning: TrimmedMean and Krum reach 91 .4% and 90 .2% accuracy respectively with 0.0% and 1.9% ASR, and BatchCrypt par-tially resists poisoning ( 32 .8% accuracy). This indicates that coordinate-wise robust aggregation is, on its own, an effective defence against the poisoning attack evaluated here. How-ever, none of TrimmedMean, Krum, or BatchCrypt provide a formal (ε, δ )-DP guarantee, and only BatchCrypt provides communication-time confidentiality against MitM intercep-tion. SecureDrive-FL remains the only evaluated configuration to simultaneously offer formal DP, IND-CPA communication security, and poisoning resistance on par with DP-SGD alone. 
+
+2) Convergence Behaviour: Fig. 2 shows test accuracy over FL rounds. FedAvg collapses under both attack types. Under MitM, DP-SGD alone also collapses ( 10 .4% final ac-curacy), while GASHE-only closely tracks the clean baseline (≈95% accuracy), confirming that protecting high-sensitivity gradients is sufficient to preserve convergence against a pas-sive/active interception adversary. Under model poisoning, however, GASHE-only no longer tracks the clean baseline: without DP-SGD’s bounded update norm, encrypting high-magnitude components does not prevent a poisoned client’s crafted update from entering the aggregate, and accuracy collapses to 14 .0% , close to undefended FedAvg’s ≈10% .DP-SGD alone and SecureDrive-FL are the only two con-figurations that converge under poisoning, reaching 74 .0% 
+
+and 73 .6% accuracy respectively; SecureDrive-FL further con-verges to 78 .2% under MitM, where DP-SGD alone collapses. Under poisoning, SecureDrive-FL’s accuracy, Macro-F1, and ASR are essentially unchanged relative to DP-SGD alone (within 0.4 pp, and an identical ASR of 3.9% ; Table I), with a marginal Macro-Precision gain, indicating that GASHE’s principal benefit in this configuration is closing the MitM attack surface rather than adding further poisoning robustness beyond that already provided by DP-SGD’s bounded update norm. 
+
+C. Computational Overhead 
+
+Table II reports measured runtime and peak RSS memory over 120 rounds. Standard FL completes in 360 .7–390 .1 s with peak RSS 0.64 –0.83 GB. GASHE-only increases runtime to 
+
+1,130 .4–1,538 .6 s ( ≈3.0–4.1× FedAvg clean) and memory to 
+
+1.88 –2.09 GB. DP-SGD alone is substantially more expensive: 
+
+8,388 .7–8,847 .7 s (≈22 .2–23 .4×) with 0.77 –0.86 GB peak RSS. SecureDrive-FL combines both mechanisms at a modest additional cost: 9,218 .0–9,637 .6,s ( ≈24 .3–25 .5× the FedAvg baseline), representing only ≈8–10% overhead relative to DP-SGD alone, with 1.76 –1.94 ,GB peak RSS. The marginal Fig. 2. Test accuracy vs. communication round under Man-in-the-Middle (left) and model-poisoning (right) attacks, against a clean-training benchmark. Under MitM, FedAvg, FedProx, and FL+DP-SGD collapse to near-random accuracy, while FL+GASHE, BatchCrypt, TrimmedMean, Krum, and SecureDrive-FL retain useful accuracy. Under poisoning, FedAvg, FedProx, and FL+GASHE collapse instead, while FL+DP-SGD, SecureDrive-FL, and (more slowly) BatchCrypt retain partial accuracy. Final-round values are given in Table I. 
+
+cost of adding GASHE on top of DP-SGD is therefore low, while eliminating the MitM attack surface provides substantial 
+
+TABLE II MEASURED EXECUTION TIME AND PEAK RSS MEMORY OVER 120 FL 
+
+> ROUNDS
+
+. O VERHEAD RELATIVE TO FED AVG (CLEAN , 378 .7 S). V ALUES ARE REPORTED AS MEAN OVER THREE RANDOM SEEDS (42, 123, 456). Configuration Time (s) Overhead Peak RSS (MB) FedAvg (clean) 378 .7 1.0× 655 .3
+
+FedAvg (MitM) 390 .1 1.0× 822 .2
+
+FedAvg (Poison) 360 .7 1.0× 830 .0
+
+GASHE-only (clean) 1254 .3 3.3× 2119 .8
+
+GASHE-only (MitM) 1538 .6 4.1× 2142 .4
+
+GASHE-only (Poison) 1130 .4 3.0× 1928 .6
+
+Full-CKKS (clean) 1238 .2 3.3× 1876 .8
+
+Full-CKKS (MitM) 1481 .3 3.9× 1928 .1
+
+Full-CKKS (Poison) 1227 .3 3.2× 1839 .1
+
+DP-SGD (clean) 8847 .7 23 .4× 876 .0
+
+DP-SGD (MitM) 8805 .8 23 .3× 786 .4
+
+DP-SGD (Poison) 8388 .7 22 .2× 848 .4
+
+SecureDrive-FL (clean) 9588 .4 25 .3× 1986 .8
+
+SecureDrive-FL (MitM) 9637 .6 25 .5× 1799 .7
+
+SecureDrive-FL (Poison) 9218 .0 24 .3× 1813 .9
+
+TrimmedMean (clean) 355 .9 0.9× 1567 .8
+
+TrimmedMean (MitM) 372 .5 1.0× 1593 .7
+
+TrimmedMean (Poison) 366 .1 1.0× 731 .9
+
+Krum (clean) 354 .6 0.9× 1643 .0
+
+Krum (MitM) 371 .5 1.0× 1787 .8
+
+Krum (Poison) 347 .3 0.9× 830 .9
+
+BatchCrypt (clean) 4958 .8 13 .1× 1483 .2
+
+BatchCrypt (MitM) 8601 .6 22 .7× 1574 .9
+
+BatchCrypt (Poison) 4992 .4 13 .2× 1621 .7
+
+FedProx (clean) 591 .9 1.6× 875 .6
+
+FedProx (MitM) 610 .3 1.6× 1033 .6
+
+FedProx (Poison) 623 .7 1.6× 1043 .8
+
+security benefits. TrimmedMean and Krum remain close to FedAvg’s own runtime ( ≈0.9–1.0×, 347 .3–372 .5 s) with peak RSS 0.71 –
+
+1.75 GB, and, per the updated results in Table I, both now also resist poisoning ( 91 .2% and 89 .4% accuracy). Neither, how-ever, provides a formal DP guarantee or communication-time confidentiality against MitM interception, unlike SecureDrive-FL. BatchCrypt, which applies quantised/batched CKKS en-cryption to the full parameter set, incurs ≈13 .1–22 .7×
+
+overhead ( 4,958 .8–8,601 .6 s) with peak RSS 1.45 –1.58 GB; FedProx adds a comparatively modest ≈1.6× overhead (591 .9–623 .7 s) with peak RSS 0.86 –1.02 GB, reflecting its lightweight proximal-term regularisation rather than any en-cryption cost. For reference, a full-parameter CKKS baseline is measured at 1,227 .3–1,481 .3 s and 1.80 –1.88 GB peak RSS, comparable to and in some cases exceeding GASHE-only. Despite encrypt-ing a smaller subset of gradient components, GASHE does not yield a proportional runtime or memory reduction relative to Full-CKKS in the current implementation, as the per-round threshold computation, mask construction, and plain-text/ciphertext stream-splitting introduce bookkeeping over-head that offsets the savings from the reduced encrypted-parameter count. VI. C ONCLUSION AND FUTURE WORK 
+
+We presented SecureDrive-FL, a hybrid privacy-preserving federated learning framework coupling DP-SGD with Gradient-Aware Selective Homomorphic Encryption (GASHE) for secure driver monitoring in connected vehicles. The key novelty is the principled, closed-loop derivation of HE encryption decisions from DP-SGD sensitivity bounds, enabling GASHE to automatically target the most privacy-critical gradient components while aligning communication-time protection with training-time privacy calibration. Evaluated against MitM interception and model poisoning, SecureDrive-FL improves clean accuracy over DP-SGD alone ( 82 .2% vs. 80 .0% ), maintains 78 .2% accuracy under MitM where DP-SGD alone collapses to 10 .4% , and retains comparable performance under poisoning ( 73 .6% vs. 
+
+74 .0% , both at 3.9% ASR), all under only ≈8–10% additional runtime overhead above DP-SGD alone. Future directions include: (i) scaling SecureDrive-FL to larger, heterogeneous vehicle fleets with varying compute and bandwidth profiles; (ii) integrating Byzantine-robust aggrega-tion rules (e.g., BALANCE) for stronger protection against adaptive, multi-round adversaries; and (iv) deployment on a physical in-vehicle cockpit prototype to benchmark end-to-end latency, energy, and FHE performance on embedded automotive hardware. ACKNOWLEDGMENT 
+
+This publication is carried out as part of the Hardware Abstraction Layer for Software Defined Vehicle (HAL4SDV) Project No. 101139789, which is co-funded by the European Union (Chips JU). REFERENCES [1] B. G¨ ul, N. Devarakonda, D. Dittler, N. Jazdi, and M. Weyrich, “Using federated learning in the context of software-defined mobility systems for predictive quality of service,” vol. 2419, 2023. [2] B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas, “Communication-efficient learning of deep networks from decentralized data,” in Proceedings of the 20th International Conference on Artificial Intelligence and Statistics (AISTATS) , ser. Proceedings of Machine Learning Research, vol. 54. PMLR, 2017, pp. 1273–1282. [Online]. Available: https://proceedings.mlr.press/v54/mcmahan17a.html [3] M. Fredrikson, S. Jha, and T. Ristenpart, “Model inversion attacks that exploit confidence information and basic countermeasures,” in 
+
+Proceedings of the 22nd ACM SIGSAC Conference on Computer and Communications Security (CCS) . ACM, 2015, pp. 1322–1333. [4] R. Shokri, M. Stronati, C. Song, and V. Shmatikov, “Membership inference attacks against machine learning models,” in 2017 IEEE Symposium on Security and Privacy (S&P) . IEEE, 2017, pp. 3–18. [5] B. Hitaj, G. Ateniese, and F. Perez-Cruz, “Deep models under the GAN: Information leakage from collaborative deep learning,” in Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (CCS) . ACM, 2017, pp. 603–618. [6] L. Zhu, Z. Liu, and S. Han, “Deep leakage from gradients,” in 
+
+Advances in Neural Information Processing Systems (NeurIPS) , vol. 32, 2019. [Online]. Available: https://proceedings.neurips.cc/paper/2019/ hash/60a6c4002cc7b29142def8871531281a-Abstract.html [7] B. C. G¨ ul, D. Dittler, N. Jazdi, and M. Weyrich, “Federated learning for comfort features in vehicles with collaborative sensing: A review,” in 2024 IEEE 29th International Conference on Emerging Technologies and Factory Automation (ETFA) , 2024, pp. 1–7. [8] C. Gentry, “Fully homomorphic encryption using ideal lattices,” in Pro-ceedings of the 41st Annual ACM Symposium on Theory of Computing (STOC) . ACM, 2009, pp. 169–178. [9] S. Gupta, R. Cammarota, and T. ˇS. Rosing, “MemFHE: End-to-end computing with fully homomorphic encryption in memory,” ACM Trans-actions on Embedded Computing Systems , vol. 21, no. 6, 2022. [10] M. Abadi, A. Chu, I. Goodfellow, H. B. McMahan, I. Mironov, K. Talwar, and L. Zhang, “Deep learning with differential privacy,” in 
+
+Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications Security (CCS) . ACM, 2016, pp. 308–318. [11] R. C. Geyer, T. Klein, and M. Nabi, “Differentially private federated learning: A client level perspective,” arXiv preprint arXiv:1712.07557 ,2017. [Online]. Available: https://arxiv.org/abs/1712.07557 [12] S. Truex, N. Li, T. Steinke, M. F. Gaboardi, Y. Cao, and L. Fan, “A hybrid approach to privacy-preserving federated learning,” in Proceedings of the 2020 Network and Distributed System Security Symposium (NDSS) , 2020, poster. [Online]. Available: https://www.ndss-symposium.org/ndss2020/posters/ a-hybrid-approach-to-privacy-preserving-federated-learning/ [13] C. Zhang, S. Li, J. Xia, W. Wang, F. Yan, and Y. Liu, “BatchCrypt: Efficient homomorphic encryption for cross-silo federated learning,” in Proceedings of the 2020 USENIX Annual Technical Conference (ATC ’20) . USENIX Association, 2020, pp. 493– 506. [Online]. Available: https://www.usenix.org/conference/atc20/ presentation/zhang-chengliang [14] N. M. Hijazi, M. Aloqaily, M. Guizani, B. Ouni, and F. Karray, “Secure federated learning with fully homomorphic encryption for IoT communications,” IEEE Internet of Things Journal , vol. 11, no. 3, pp. 4289–4300, 2024. [15] L. Melis, C. Song, E. D. Cristofaro, and V. Shmatikov, “Exploiting unintended feature leakage in collaborative learning,” in 2019 IEEE Symposium on Security and Privacy (S&P) . IEEE, 2019, pp. 691– 706. [16] H. Ren, J. Deng, and X. Xie, “Gradient leakage attacks in federated learning environments,” arXiv preprint arXiv:2510.23931 ,2025. [Online]. Available: https://arxiv.org/abs/2510.23931 [17] C. Dwork, “Differential privacy,” in Proceedings of the 33rd Interna-tional Colloquium on Automata, Languages and Programming (ICALP 2006), Part II , ser. Lecture Notes in Computer Science, vol. 4052. Springer, 2006, pp. 1–12. [18] H. B. McMahan, D. Ramage, K. Talwar, and L. Zhang, “Learning differentially private recurrent language models,” in International Conference on Learning Representations (ICLR) , 2018. [Online]. Available: https://openreview.net/forum?id=BJ0hF1Z0b [19] I. Mironov, “R´ enyi differential privacy,” in Proceedings of the 30th IEEE Computer Security Foundations Symposium (CSF) . IEEE, 2017, pp. 263–275. [20] M. Bun and T. Steinke, “Concentrated differential privacy: Simplifi-cations, extensions, and lower bounds,” in Theory of Cryptography Conference (TCC) , ser. Lecture Notes in Computer Science, vol. 9985. Springer, 2016, pp. 635–658. [21] K. Bonawitz, V. Ivanov, B. Kreuter, A. Marcedone, H. B. McMahan, S. Patel, D. Ramage, A. Segal, and K. Seth, “Practical secure aggregation for privacy-preserving machine learning,” in Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (CCS) . ACM, 2017, pp. 1175–1191. [22] A. Benaissa, B. Retiat, B. Cebere, and A. E. Belfedhal, “TenSEAL: A library for encrypted tensor operations using homomorphic encryption,” arXiv preprint arXiv:2104.03152 , 2021, iCLR 2021 Workshop on Distributed and Private Machine Learning (DPML). [Online]. Available: https://arxiv.org/abs/2104.03152 [23] L. Lyu, H. Yu, X. Ma, C. Chen, L. Sun, J. Zhao, Q. Yang, and P. S. Yu, “Privacy and robustness in federated learning: Attacks and defenses,” 
+
+IEEE Transactions on Neural Networks and Learning Systems , vol. 35, no. 7, pp. 8726–8746, 2024. [24] Y. Xie, M. Fang, and N. Z. Gong, “Model poisoning attacks to federated learning via multi-round consistency,” in Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) . IEEE / Computer Vision Foundation, 2025, pp. 15 454–15 463. [25] S. Truex, N. Baracaldo, A. Anwar, T. Steinke, H. Ludwig, and R. Zhang, “A hybrid approach to privacy-preserving federated learning,” in Pro-ceedings of the 12th ACM Workshop on Artificial Intelligence and Security (AISec) , 2019. [26] C. Dwork and A. Roth, “The algorithmic foundations of differential privacy,” Found. Trends Theor. Comput. Sci. , vol. 9, no. 3–4, p. 211–407, Aug. 2014. [Online]. Available: https://doi.org/10.1561/0400000042 [27] State Farm and Kaggle, “State farm distracted driver detection,” https: //www.kaggle.com/c/state-farm-distracted-driver-detection, 2016. [28] Y. Abouelnaga, H. M. Eraqi, and M. N. Moustafa, “Real-time distracted driver posture classification,” arXiv preprint arXiv:1706.09498 , 2017. [Online]. Available: https://arxiv.org/abs/1706.09498 [29] European Parliament and Council, “Regulation (EU) 2016/679 of the European Parliament and of the Council (GDPR),” Official Journal of the European Union, Tech. Rep., 2016, l 119/1. [30] Google, “TensorFlow privacy,” https://github.com/tensorflow/privacy, 2024.

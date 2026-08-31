@@ -1,0 +1,632 @@
+Title: Groundhog Bit-Flip Attack: Seeding Infinite Generation Loops in Mixture-of-Experts LLMs through Bit Flips
+
+URL Source: https://arxiv.org/pdf/2608.25276v1
+
+Published Time: Thu, 27 Aug 2026 00:22:48 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+## Groundhog Bit-Flip Attack: Seeding Infinite Generation Loops in Mixture-of-Experts LLMs through Bit Flips 
+
+Huakang Lin 1*, Tiancheng Zheng 2∗, Mingxuan Sun 3∗, Tianhong Xu 4, Fan Zhang 5, Yunsi Fei 4, Ruyi Ding 11Louisiana State University, USA 2University of California, Los Angeles, USA 
+
+> 3
+
+Southeast University, China 4Northeastern University, USA 5Zhejiang University, China 
+
+hlin29@lsu.edu , zhengtiancheng@g.ucla.edu , msun@seu.edu.cn , ruyiding@lsu.edu 
+
+Abstract 
+
+Mixture-of-Experts (MoE) architectures enable scalable and efficient large language models (LLMs) by selectively activating expert sub-networks through a routing mechanism. How-ever, this adaptive design introduces a new at-tack surface: specific experts become dispro-portionately correlated with certain tokens (e.g., end-of-sequence), allowing adversaries to ma-nipulate model behavior via lightweight per-turbations. In this work, we present Ground-hog Bit-Flip Attack (GBFA) , the first bit-flip-based Denial-of-Wallet availability attack 
+
+against MoE-based LLMs. By identifying and flipping routing-layer bits associated with re-lated expert activations, we demonstrate that GBFA substantially extends the decoding token usage across three different LLM modes: con-versational, reasoning, and agentic tasks, while largely preserving semantic fidelity. Across four main real-world MoE-based LLMs, man-ually deactivating on average fewer than 4 ex-perts drives average output inflation to 5912 %,with the majority of test samples reaching max tokens. These results reveal a robustness vul-nerability of MoE architectures to bit flip, and highlight the potential of GBFA as an availabil-ity attack against LLMs. 
+
+1 Introduction 
+
+To reduce the inference cost of Large Language Models (LLMs), service providers have increas-ingly adopted Mixture-of-Experts (MoE) architec-tures, which expand model capacity while acti-vating only a small subset of specialized experts for each token. Recent models such as Mix-tral (Jiang et al., 2024), DeepSeek (DeepSeek-AI, 2024), Qwen3-MoE (Qwen Team, 2025), and GPT-OSS (OpenAI, 2025) demonstrate the effectiveness of this design in supporting concurrent inference. However, such sparse architecture also introduces new attack surfaces.  
+
+> *
+
+Equal contribution. MoE LLM Model 
+
+> Output text:
+> Negative.<EOS>
+> Lower Inference Cost Higher Inference Cost
+> Output text:
+> Negative. Because words like “bad” directly ... Because... Because... Because... Because...
+> Input Text:
+> Output the sentiment polarity of this sentence. “saw how bad this movie was” Router
+> E1
+> E2
+> E3
+> E4Router
+> E1
+> E2
+> E3
+> E4Bit Flip EOS-related Experts
+
+Figure 1: Groundhog Bit Flip Attack on MoE LLMs. 
+
+Prior works have focused on exploiting MoE-specific architectural vulnerabilities to attack LLM models. MoEcho (Ding et al., 2025b) exploits temporal and spatial traces of expert execution as side channels to infer user prompts and outputs. SAFEx (Lai et al., 2025) reveals that the intrin-sic safety-aligned behaviors of MoE-based LLMs strongly depend on specific positional experts. In this work, we observe that the generation of termi-nation tokens (e.g., end of sequence) is governed by a dedicated subset of experts. As a result, the same routing mechanism designed to improve in-ference efficiency can become an availability vul-nerability: by disrupting these termination-related experts, an attacker can delay or suppress termina-tion token generation. This threat is especially se-vere in rapidly growing agentic applications, where inflated outputs directly translate into Denial-of-Wallet (DoW) risk. MoE sparsity makes bit-flip attacks a natural tool for availability attacks, as termination behav-ior can be concentrated in a small set of routing parameters. A few targeted bit flips can disrupt termination-related expert activations and induce excessive generation. However, existing BFA stud-ies mainly focus on model integrity (Rakin et al., 2022b), such as accuracy degradation or output corruption, while DoW attacks against MoE-based LLMs remain unexplored. To fill these gaps, we arXiv:2608.25276v1 [cs.CL] 26 Aug 2026 introduce Groundhog Bit-Flip Attack (GBFA) 1,the first bit-flip DoW attack on MoE-based LLMs. GBFA treats MoE routing as a structural attack sur-face: as illustrated in Figure 1, targeted bit flips in router parameters can reroute tokens away from termination-related experts, thereby delaying se-quence termination. This causes substantial output inflation and increased inference cost while largely preserving semantic fidelity. Our analysis shows that MoE experts exhibit strong specialization for termination-related to-kens, including end-of-sequence (EOS) and end-of-thinking (EOT) tokens. A small set of termination-related experts disproportionately governs the gen-eration of stops, making MoE routing a localized attack surface for availability manipulation. By ap-plying router-level bit flips to disrupt these experts, an attacker can delay termination and induce exces-sive generation. This reframes bit-flip attacks from integrity-oriented attacks that degrade model accu-racy or corrupt outputs into availability-oriented attacks that maximize output length while preserv-ing apparent utility, directly leading to increased inference cost and Denial-of-Wallet risk. This paper makes the following contributions: • Expert–Token Specialization. We discover spe-cialization patterns in MoE experts, showing that a small set of experts dominate EOS or EOT han-dling and therefore govern termination behavior. • Systematic Detection Methodology. We intro-duce Global and Local Expert Detection that use activation-difference metrics to efficiently iden-tify target-related experts that are consistently activated when specific tokens generating. • Identify Vulnerable Bits. We show that a small number of router-weight or bias bits exert dis-proportionate control over target-related experts. By analyzing expert-activation sensitivity under bit-level perturbations, we identify Vulnerable Bits for GBFA. • Structural DoW Attack Demonstration. We demonstrate structural DoW attacks on six MoE models under three LLM modes: conversational, reasoning, and agentic tasks . We further real-ize them with GBFA bit flips on four of these models. With only minimal parameter changes, 
+
+> 1Named after the film Groundhog Day. Throughout the paper, “infinite” denotes generation that exhausts the allocated to-ken budget ( max_new_tokens ) rather than literally unbounded generation.
+
+our attacks consistently induce dramatic output inflation across all three modes, amplifying out-put token counts by up to 87 × in the most severe cases. 
+
+2 Background 
+
+2.1 Mixture-of-Experts 
+
+MoE architectures scale language models effi-ciently by activating only a small subset of parame-ters per token, enabling trillion-parameter capaci-ties at inference costs comparable to much smaller dense models. An MoE layer replaces the dense feed-forward block with a set of expert networks and a router that selects k experts per token. Given a hidden state h ∈ Rd, the router computes 
+
+z = h⊤Wg, g = Softmax (TopK (z, k )) ,
+
+(1) where Wg ∈ Rd×N is the router matrix. The layer output aggregates the selected experts: 
+
+y =
+
+> N
+
+X
+
+> i=1
+
+gi Ei(h). (2) Several recent MoE designs (e.g., DeepSeek-V3, Qwen3-MoE) further introduce shared experts that are always activated for every token alongside the top-k routed ones, capturing common knowledge while routed experts specialize. MoE has become the dominant approach for scaling LLMs: Switch Transformer (Fedus et al., 2022) first pushed parameter counts to the trillion scale, Mixtral-8x7B (Jiang et al., 2024) reached GPT-3.5-level performance with far fewer active parameters, and recent systems such as DeepSeek-V2 (DeepSeek-AI, 2024), Qwen3 (Qwen Team, 2025), and GPT-OSS-20B (OpenAI, 2025) con-tinue to refine the architecture across reasoning, coding, and agentic workloads. Their growing adoption highlights the importance of understand-ing MoE-specific security vulnerabilities. 
+
+2.2 Bit Flip Attacks 
+
+Bit flip attacks (BFAs) exploit the fact that small, carefully chosen changes at the bit level of stored weights can cause disproportionately large shifts in model behavior while modifying only a tiny frac-tion of parameters (Rakin et al., 2019; Liu et al., 2017; Ghavami et al., 2022; Rakin et al., 2022b). This sensitivity stems from the underlying numeri-cal representation. In IEEE 754 FP32, each value consists of 1 sign bit, 8 exponent bits, and 23 man-tissa bits, and flipping bits in different fields pro-duces qualitatively different perturbation scales: a sign-bit flip on 1.5 yields −1.5, flipping the high-est exponent bit turns 1.5 into ∼3.1 × 10 38 , while flipping the lowest mantissa bit changes it by only 
+
+∼10 −7. Quantized INT8 weights show analogous behavior, where MSB flips cause large sign or mag-nitude jumps and LSB flips induce only marginal adjustments. 
+
+Rowhammer is the most widely studied software-based fault injection primitive for realiz-ing such bit flips on commodity hardware (Kim et al., 2014): by repeatedly accessing selected DRAM rows, an attacker induces flips in adjacent rows without physical access to the victim machine. End-to-end Rowhammer exploits have been demon-strated on both CPUs (Kwong et al., 2020; Seaborn and Dullien, 2015; Jattke et al., 2024; Frigo et al., 2020; Jattke et al., 2022; Kogler et al., 2022; Has-san et al., 2022; Olgun et al., 2024) and GPUs (Lin et al., 2025), and have been used against neural net-works for accuracy degradation (Rakin et al., 2019; Yao et al., 2020), targeted misclassification (Rakin et al., 2022b; Bai et al., 2023; Cai et al., 2021), backdoor insertion (Rakin et al., 2020; Zheng et al., 2023; Kunbei et al., 2024; Chen et al., 2021; Tol et al., 2023; Li et al., 2025), and model extrac-tion (Rakin et al., 2022a), establishing it as a mature and realistic threat vector. We analyze the router layers of various MoE-based LLMs and develop corresponding bit-flip strategies in Section 3.4. 
+
+3 Groundhog Bit-Flip Attack 
+
+Figure 2 illustrates our attack pipeline, which ad-dresses each research question in three steps. Full algorithm details are provided in Appendix A. To conduct GBFA against MoE LLMs, we raise three research questions: • RQ1: Do MoE-based LLMs exhibit expert spe-cialization for termination-related tokens, such as EOS and EOT? • RQ2: Can we identify termination-related ex-perts whose activation strongly influences re-sponse length? • RQ3: Can targeted bit flip attacks on vulnera-ble experts effectively induce output inflation in MoE-based LLMs? 
+
+3.1 Threat Model Attack Scenarios. We consider an on-cloud in-ference scenario where a service provider deploys an open-source MoE LLM for pay-per-token in-ference (DeepSeek, 2025). Users submit queries and are charged based on both input and output tokens. The adversary is hereby modeled as an un-privileged tenant co-located with the victim LLM on a shared physical server (e.g., in a public MLaaS environment), where workloads from multiple ten-ants share GPU resources in a time-sliced manner, consistent with prior work (Lin et al., 2025). The adversary exploits hardware vulnerabilities (e.g., Rowhammer (Kim et al., 2014) or voltage glitch-ing (Moro et al., 2013)) to inject bit flips into the victim’s model parameters, requiring no elevated privileges or physical access. The attacker aims to inflate output token consumption through strategic bit flips in the MoE router, causing a DoW attack ,while maintaining semantic coherence to avoid de-tection. 
+
+Attacker Capabilities. We assume white-box ac-cess to the victim MoE model, including the model hyper-parameters (e.g., number of experts) and pa-rameters (e.g., router weights). This is realistic because many MoE LLMs are released as public checkpoints with open weights, so the attacker can obtain the parameters directly. We also assume the attacker is a co-located tenant that shares hard-ware with the victim (e.g., in multi-tenant MLaaS). The attacker can thus inject targeted bit flips into the victim LLM through fault injection techniques during model inference. 
+
+Attack Objectives. The adversary aims to conduct a DoW attack (increased user’s query cost to the LLM API) by controlling target token generation to: (1) suppress target token for long outputs, or (2) alter targeted token frequencies. 
+
+Stealthiness Constraints. To ensure the stealthi-ness of GBFA, the attacker maintains task perfor-mance within acceptable thresholds, keeping orig-inal semantic coherence (e.g., perplexity, bench-mark scores) largely unaffected. 
+
+3.2 Target-related Expert Activation Probability Modeling 
+
+As shown in Step 1 in Figure 2, we analyze the model’s Expert Activation Frequency (EAF) at target versus non-target token positions. 
+
+Notation. Consider an MoE model with L MoE-FFN layers indexed by l ∈ { 1, . . . , L }, each con-Train Queries 
+
+> E6 E5 E4 E3 E2 E1
+> E2
+> MoE LLM
+> E6 E5 E4 E3 E2 E1 Non-target EAF Target EAF
+
+# - =
+
+> E6 E5 E4 E3 E2 E1
+> threshold
+> E5
+> Target-related Experts
+
+... 
+
+> [M,D]
+> M tokens’ hidden Router’s weight
+
+... 
+
+> Experts’ scores
+> [D,E] [M,E]
+
+=×  
+
+> Bit-flipped router weight Suppressed target-related experts’ scores
+> Test Queries Very Long Outputs
+> MoE LLM router E1
+> E2 E3 E4 E5 E6
+> Step 1: Target-related Experts Identification Step 2: Router-level Vulnerable Bit Search Step 3: Online BFA Execution
+
+Figure 2: Overview of our three-step GBFA pipeline. Step 1: Identify target-related experts by comparing target-token EAF with non-target EAF and selecting experts above a threshold. Step 2: Search for vulnerable router bits by evaluating whether flipping each candidate bit suppresses the scores of the selected target-related experts using cached hidden states. Step 3: Execute the online bit-flip attack to suppress EOS generation and produce very long outputs. 
+
+taining K experts. Let S = {s1, . . . , s N } be a sam-ple set in which the last token of every sequence is the target token , and let |s| denote the length of sequence s. At token position j of sequence s, let 
+
+1s,j l,i ∈ { 0, 1} indicate whether expert i in layer l
+
+is activated. For models with shared experts, let 
+
+gs,j l,i ∈ R≥0 denote the gate value of shared expert i
+
+in layer l at position j of sequence s.
+
+Objective. Our hypothesis is that if certain experts are responsible for sequence termination, then their activation patterns should differ sharply when gen-erating the target token. To quantify this effect, we aim to measure each expert’s preference for target token decoding over standard-token decoding. 
+
+Estimator. For expert i in layer l, we define the 
+
+Target Activation Shift τl,i as the difference be-tween its EAF at target-token positions and its EAF at non-target positions: 
+
+τl,i = 1
+
+> N
+
+X
+
+> s
+
+1s, |s|
+
+> l,i
+
+| {z }
+
+> target EAF
+
+− 
+
+> P
+> s
+> P
+> j< |s|1s,j l,i P
+> s(|s|− 1)
+
+| {z }
+
+> non-target EAF
+
+. (3) A high τl,i identifies an expert that rarely fires on standard tokens but frequently fires when emitting the target token. Since shared experts are always activated, the binary indicator 1s,j l,i is uninformative for them. We instead track the shift in their gate magnitude. For shared expert i in layer l, we define the Target Gate Shift ∆gl,i analogously to τl,i :
+
+∆gl,i = 1
+
+> N
+
+X
+
+> s
+
+gs, |s|
+
+> l,i
+
+| {z }
+
+> target gate
+
+− 
+
+> P
+> s
+> P
+> j< |s|gs,j l,i P
+> s(|s|− 1)
+
+| {z }
+
+> non-target gate
+
+. (4) A high ∆gl,i identifies a shared expert whose contri-bution is sharply elevated when emitting the target token, marking it as a target-related shared expert. We refer to such experts as target-related ex-perts (e.g., EOS-related experts when the target is EOS), as their activation patterns directly encode termination behavior. These findings answer RQ1 : MoE LLMs exhibit strong expert specialization for target token gener-ation, with a small subset of experts disproportion-ately responsible for sequence termination. 
+
+3.3 Target Expert Detection 
+
+To identify such experts efficiently, we introduce two complementary detection methods— Global Experts Detection and Local Experts Detec-tion —corresponding to Step 1 in Figure 2 and ad-dressing RQ2 .
+
+Global Experts Detection (GLOBAL). Global ranks all experts across all layers by τl,i and ∆gl,i .Instead of selecting a fixed top-k, we label as target-related those experts whose scores exceed a thresh-old, ensuring the selected set corresponds to mean-ingful target token specialization. These experts are subsequently deactivated to suppress target token routing and extend output length. 
+
+Local Experts Detection (LOCAL). Local evalu-ates each layer independently to identify the layer that contributes most strongly to target-tokens con-trol. For each layer l, we: (1) select the top-k
+
+experts within that layer according to τl,i and ∆gl,i ,where k equals the model’s native MoE routing top-
+
+k; (2) deactivate only these experts in layer l; (3) measure the resulting change in output length. The layer producing the largest increase is denoted as l∗,indicating that it contains the most influential target-related experts. This procedure corresponds to the layer-level search illustrated in Figure 2-Step 2. 
+
+Comparing GLOBAL and LOCAL. GLOBAL incurs minimal computation but may modify more experts to achieve desired behavior manipulation. LOCAL is more precise, often leveraging fewer ex-pert modifications and thus preserving good model utility, but requires O(L) evaluations. Additionally, some MoE architectures (e.g., GPT-OSS (OpenAI, 2025)) distribute EOS behavior across multiple lay-ers, making LOCAL less effective on those models. Both GLOBAL and LOCAL remain stable even with very small sample sizes in the detection pro-cess (e.g., N = 10 ), consistently identifying target-related experts. Together, they offer flexible trade-offs between stealthiness and computational cost. 
+
+3.4 Bit-Flip Attack on MoE Router 
+
+Building on the identified target-related experts, we design a router-level bit-flip attack that directly alters their activation patterns (Step 3 in Figure 2), addressing RQ3 . A standard MoE router computes logits as 
+
+s = h⊤W + b, (5) where h ∈ RD, W ∈ RD×E , and b is optional. Among the evaluated models, Mixtral-8x7B, Phi-3.5-MoE, DeepSeek-V2-Lite, and Qwen3 use bias-free routers, so we flip bits in the expert columns 
+
+vi of W ; GPT-OSS-20B includes non-zero biases, so we flip bits in bi instead. Both strategies sup-press target-related experts analogously to manual deactivation. Full-model BFA (Rakin et al., 2019) is infeasi-ble at billion-parameter MoE scale, as every candi-date bit requires a full forward pass. To avoid this cost, we propose an inference-free router-centric bit search. We run the model once on N queries, cache the hidden states at target layer ℓ∗ as an [M, D ] ten-sor, and reuse them for all bit evaluations. For each target-related expert i with routing vector vi, we flip every bit once, recompute routing logits from cached states, and measure the resulting expert ac-tivation frequency (EAF). We define the bit-flip effectiveness as 
+
+BF -eff( b) = EAF orig  
+
+> i
+
+− EAF (b)
+
+> i
+
+EAF orig 
+
+> i
+
+, (6) and select the top-B bits per expert. Flipping these bits produces a perturbed routing vector ˜vi that reliably suppresses expert i from the router’s top-k,realizing GBFA without repeated inference. 
+
+3.5 Online BFA Execution 
+
+With the target bits identified, the attacker flips them in the deployed model’s DRAM via Rowham-mer (Kim et al., 2014; Lin et al., 2025) (Step 3 in Figure 2). Since the perturbation modifies per-sistent router weights, a single successful attack suppresses target-related experts across all subse-quent queries without further interaction. 
+
+4 Experiment 
+
+4.1 Experiment Setup Models. We evaluate six open-source MoE-based LLMs with diverse architectures (see Ta-ble 1 for specifications): Mixtral-8x7B-Instruct-v0.1 (Jiang et al., 2024) (Mixtral), Phi-3.5-MoE-Instruct (Abdin, 2024) (Phi-3.5), DeepSeek-V2-Lite-Chat (DeepSeek-AI, 2024) (DeepSeek), Qwen3-30B-A3B (Qwen Team, 2025) (Qwen3), Qwen3-Coder-Next (Qwen Team, 2026) (Qwen3-Coder), and GPT-OSS-20B (OpenAI, 2025) (GPT-OSS). These models represent different design philosophies in MoE architectures, from efficient small-scale routing to fine-grained expert decom-position. 
+
+Table 1: Overview of evaluated MoE architectures, showing total parameters, activated parameters per to-ken, number of experts per layer, activated experts, and model depth.                                    
+
+> Model #Params (B) Active (B) #Experts #Active #Layers
+> Mixtral 46.7 12.9 8232 Phi-3.5 41.9 6.6 16 232 DeepSeek 15.7 2.4 64 627 Qwen3 30.5 3.3 128 848 Qwen3-Coder 80.0 3.0 512 10 48 GPT-OSS 20.0 4.0 32 440
+
+Metrics. We use two metrics. For attack effec-tiveness , we compute the Percentage of Token Generation Change (P) :Pi = T (i) 
+
+> deact
+
+− T (i)
+
+> base
+
+T (i)
+
+> base
+
+× 100% . (7) 
+
+T (i) 
+
+> base
+
+and T (i) 
+
+> deact
+
+denote baseline and attacked token counts, and the mean bP measures overall length increase. Figure 3 reports the underlying absolute token counts and their spread across blocked-expert counts. For model utility , we report Clean Accu-racy (CA) on classification datasets, ROUGE-1 on Samsum, F1 on SQuAD, and plan steps on agent coding tasks. 
+
+Datasets. We use the Stanford Alpaca instruction-tuning dataset (Taori et al., 2023) as the source of sample sequences for identifying target-related ex-perts. To evaluate our attack, we use four represen-tative datasets: AGNews (Zhang et al., 2015) and 
+
+SST-2 (Socher et al., 2013) for classification, and 
+
+Samsum (Gliwa et al., 2019) and SQuAD 2.0 (Ra-jpurkar et al., 2018) for generation. We follow prior work (Wang et al., 2025) to adopt system prompts for all downstream tasks. All models and datasets used in our experiments are publicly available. We use them for research purposes in accordance with their corresponding licenses and terms of use. 
+
+Configuration. We target EOS. GLOBAL se-lects the top-kg EOS-related experts ranked by fre-quency difference, where kg varies per model to balance attack effectiveness and efficiency: 37 for Mixtral, 16 for Phi-3.5, 40 for DeepSeek, and 25 for GPT-OSS. LOCAL follows each model’s de-fault router top-k (Table 1). We use greedy decod-ing and set max tokens to 1024. The attack does not depend on the decoding strategy: Appendix E shows that the length inflation persists under tem-perature and nucleus sampling and under a repe-tition penalty, and Appendix F reports the effect of the token budget and motivates our moderate choice of 1024. 
+
+Platform. Experiments were conducted on three NVIDIA A100 80GB GPUs. For Section 3.2, we computed the τl,i or ∆gl,i over 1,000 samples. For identifying attacked bits in the bit-flip attack pipeline, the average cost was 16.4 s per expert .
+
+4.2 Manual EOS-related Experts Deactivation 
+
+To validate that EOS-related experts control out-put length, we manually deactivate the identified ex-perts by setting their logits to -inf , establishing up-per bounds for bit-flip attack effectiveness. Table 2 reports P across 100 samples per dataset under LOCAL, GLOBAL, and a Random-deactivation baseline (50 random experts). Both LOCAL and GLOBAL substantially am-plify output, consistently outperforming Random by orders of magnitude, validating our expert-detection procedure. The relative strength of LO-CAL vs. GLOBAL reveals how termination is im-plemented in each model. When EOS is controlled by a few concentrated experts, LOCAL suffices and can even exceed GLOBAL (e.g., DeepSeek AGNews: 3.81 × 10 4% vs. 226% ). When termi-nation relies on an inter-layer path, GLOBAL be-comes necessary (e.g., GPT-OSS AGNews: 556% 
+
+vs. 15 .9% ). Classification tasks yield larger P than generation tasks, as short baseline outputs amplify into thousand-fold increases. Figure 3 shows that output token count generally increases with more blocked experts. GPT-OSS and Phi-3.5 quickly saturate max_new_tokens and plateau. DeepSeek shows irregular behavior on Samsum, likely due to the model’s strong prior on short responses for this dataset. Without EOS-related experts, models generate repetitive but coherent text loops that preserve lin-guistic quality while losing termination control (qualitative examples on Mixtral in Appendix B). This output amplification potential motivates our bit-flip targets. 
+
+Table 2: P across all samples for manual expert deac-tivation (LOCAL vs. GLOBAL), compared against a random-deactivation baseline.                                                                                          
+
+> Model Method (#exp) AGNews (%) SST-2 (%) Samsum (%) SQuAD (%) Mixtral Random (50) 685 188 149 -9.28 LOCAL (2) 2.18 ×10 32.23 ×10 32.19 ×10 33.64 ×10 3
+> GLOBAL (37) 2.74 ×10 33.41 ×10 3389 52 .9
+> Phi-3.5 Random (50) 215 1.14 30.1 155 LOCAL (2) 2.82 ×10 41.83 ×10 320.5 217 GLOBAL (16) 2.99 ×10 41.74 ×10 31.27 ×10 31.89 ×10 3
+> DeepSeek Random (50) 67.9 125 5.97 18.8 LOCAL (6) 3.81 ×10 45.82 ×10 378 .61.00 ×10 4
+> GLOBAL (40) 226 2.81 ×10 314 140 GPT-OSS Random (50) -3.43 10.3 11.6 2.29 LOCAL (4) 15.9 17.3 36.7 9.30 GLOBAL (25) 556 468 177 445
+
+4.3 Groundhog Bit-Flip Attack 
+
+We implement GBFA targeting router weights to manipulate EOS-related expert activation. For each 
+
+EOS-related expert , we identified three critical router weights using the method described in Sec-tion 3.4, with each weight requiring only a single bit, resulting in three total bit modifications per expert. For models with router bias parameters 0 20 40 60             
+
+> Number of Blocked Experts
+> 0200 400 600 800 1000
+> Avg Token Count
+> AGNews
+> 020 40 60
+> Number of Blocked Experts
+> 0200 400 600 800 1000
+> SST-2
+> 020 40 60
+> Number of Blocked Experts
+> 0200 400 600 800 1000
+> Samsum
+> 020 40 60
+> Number of Blocked Experts
+> 0200 400 600 800 1000
+> SQuAD
+> 050 100 150 200 250
+> 050 100 150 200 250
+> 050 100 150 200 250
+> 050 100 150 200 250
+> DeepSeek Token Count
+> Mixtral-8x7B Phi-3.5-MoE GPT-OSS-20B DeepSeek-V2-Lite
+
+Figure 3: Average output token count under GLOBAL manual deactivation as a function of blocked experts. The dashed line marks max_new_tokens ; DeepSeek-V2-Lite uses a separate right axis. 
+
+(e.g., GPT-OSS), we prioritized attacking these bi-ases as they directly offset routing logits, providing more efficient manipulation. Table 3 presents the P described in Equation 7 under bit-flip attacks using LOCAL and GLOBAL selection strategies. The results show that GBFA achieves substantial output manipulation comparable to manual deac-tivation. Since attacking weight matrices involves complex inter-weight dependencies, where mul-tiple weights collectively determine routing log-its across varying input distributions, bit-flips pro-duce approximate rather than exact expert suppres-sion. This approximation can occasionally yield stronger deactivation effects than manual blocking, as the perturbations propagate through weight in-teractions in non-trivial ways. Overall, the results confirm that GBFA is a viable and effective attack: despite operating at the bit level with minimal pa-rameter changes, it reliably induces significant out-put inflation across models and datasets. Notably, GPT-OSS demonstrates near-manual performance, achieving comparable results to man-ual deactivation. This exceptional effectiveness stems from directly attacking bias parameters, which provide a linear offset to all routing deci-sions without inter-parameter interference. These findings validate that GBFA can successfully ma-nipulate output length through EOS-expert target-ing, with bias parameters offering optimal attack surfaces when available. 
+
+4.4 Performance Impact of GBFA on MoE Models 
+
+We evaluated model performance under GBFA 
+
+across four MoE architectures using 1,000 ran-domly selected samples per dataset. Table 4 presents the results comparing baseline, manual deactivation, and bit flip conditions. Performance degradation correlates with attack 
+
+Table 3: P across All Samples for Bit-flip attack (LO-CAL vs GLOBAL).                                                                    
+
+> Model Method (#exp) AGNews (%) SST-2 (%) Samsum (%) SQuAD (%) Mixtral LOCAL (2) 202 110 1.06 39.3 GLOBAL (37) 2.51 ×10 34.99 ×10 32.92 ×10 348.1 Phi-3.5 LOCAL (2) 526 42.1 148 45.3 GLOBAL (16) 131 20.8 222 167 DeepSeek LOCAL (6) 3.84 ×10 48.73 ×10 41.61 ×10 34.05 ×10 2
+> GLOBAL (40) 4.64 ×10 44.44 ×10 43.04 ×10 31.49 ×10 4
+> GPT-OSS LOCAL (4) 15.9 17.3 36.7 9.30 GLOBAL (25) 556 468 177 445
+
+effectiveness (measured by Equation 7). For Mix-tral, manual deactivation causes substantial drops in Clean Accuracy (CA) decreases from 0.838 base-line to 0.602 (LOCAL) and 0.459 (GLOBAL) on AGNews. In contrast, bit-flip attacks preserve per-formance better, with CA remaining at 0.840 (LO-CAL) and 0.800 (GLOBAL). Interestingly, some configurations show performance improvements: Phi-3.5’s ROUGE-1 on Samsum increases from 0.362 to 0.347-0.382 under LOCAL attacks. This aligns with recent findings (Fayyaz et al., 2025) that selective expert manipulation can enhance task-specific performance through improved alignment. Perplexity (PPL) measurements confirm that most attacks maintain linguistic coherence. PPL values remain below 10 for most configurations, indicating meaningful text generation rather than gibberish. The notable exception is DeepSeek un-der GLOBAL bit-flip attacks, where PPL explodes to 91,839 (SST-2) and 5,288,426 (Samsum), sig-naling complete language generation breakdown. We attribute this to the flipped bits also perturb-ing router weights on which DeepSeek relies for coherent generation: corruption typically emerges within the first few generated tokens and then prop-agates, since early tokens condition all subsequent ones. Incorporating the perplexity of the first few tokens as an additional criterion in the bit search could mitigate this effect, which we leave for future work. Overall, GBFA on MoE routers achieves effec-tive output manipulation while maintaining relative stealth by preserving model quality metrics even as they dramatically extend output length. 
+
+Table 4: Performance of different models on four datasets under manual and bit-flip expert manipulation.                                                                                                                                                                             
+
+> Model Method AGNews SST-2 Samsum SQuAD
+> CA PPL CA PPL R-1 PPL F1 PPL DeepSeek Baseline 0.810 1.35 0.919 1.69 0.364 1.38 0.362 1.22 LOCAL (manual) 0.970 1.17 0.793 2.33 0.270 1.49 0.070 1.40 GLOBAL (manual) 0.395 1.82 0.836 1.73 0.205 1.60 0.159 1.82 LOCAL (GBFA) 0.380 1.82 0.020 1.81 0.117 1.36 0.021 1.21 GLOBAL (GBFA) 0.160 4.4e3 0.000 9.2e4 0.025 5.3e6 0.081 5.1e6 Mixtral Baseline 0.838 1.40 0.809 1.47 0.362 1.39 0.253 1.13 LOCAL (manual) 0.602 2.37 0.698 3.73 0.171 1.27 0.071 1.51 GLOBAL (manual) 0.459 2.52 0.508 3.91 0.086 1.18 0.058 1.43 LOCAL (GBFA) 0.840 1.33 0.890 1.47 0.102 1.91 0.237 1.09 GLOBAL (GBFA) 0.800 1.89 0.920 1.68 0.252 1.66 0.242 1.23 Phi-3.5 Baseline 0.856 1.13 0.862 1.25 0.375 1.21 0.235 1.10 LOCAL (manual) 0.569 2.26 0.681 1.63 0.347 1.29 0.096 1.36 GLOBAL (manual) 0.076 6.12 0.011 8.95 0.025 1.46 0.052 2.20 LOCAL (GBFA) 0.800 1.18 0.830 1.33 0.382 1.23 0.263 1.07 GLOBAL (GBFA) 0.750 1.98 0.840 1.33 0.339 1.46 0.135 1.26 GPT-OSS Baseline 0.800 1.36 0.940 1.37 0.199 1.36 0.049 1.12 LOCAL (manual) 0.800 1.37 0.940 1.41 0.177 1.37 0.044 1.12 GLOBAL (manual) 0.790 1.56 0.880 1.61 0.065 1.33 0.045 1.17 LOCAL (GBFA) 0.800 1.37 0.940 1.41 0.177 1.37 0.044 1.12 GLOBAL (GBFA) 0.790 1.56 0.880 1.61 0.065 1.33 0.045 1.17
+
+5 Broader Attack Scenarios 
+
+5.1 Attack the Plan Mode in Agent Coding 
+
+We evaluate whether GBFA can prolong an LLM agent’s planning behavior in long-horizon coding tasks. We use Qwen3-Coder , a model designed specifically for coding agents and local develop-ment, deployed under the smolagents CodeAgent 
+
+framework, a Hugging Face library for easily run-ning agents on Hugging Face models. The frame-work alternates between planning and action steps, and we target the chat-template end-of-turn token 
+
+<|im_end|> .
+
+Setup. We design 10 self-contained Python repository sandboxes spanning multiple task cat-egories (full descriptions in Appendix C). Each sandbox is reset to a clean snapshot before every run, with completion verified by an associated unit-test suite. We compare a clean baseline against two manual deactivation configurations, LOCAL 
+
+and GLOBAL , targeting the top-20 routed experts ranked by τl,i and the top-4 shared experts ranked by ∆gl,i . Each agent runs with a 25-step limit, planning every 3 steps, and 2048 max new tokens per generation. 
+
+Plan-mode results. Table 5 shows that GLOBAL deactivation reliably amplifies plan-token consump-tion: all 10 sandboxes hit the maximum step bud-
+
+Table 5: Plan-mode manual expert deactivation on Qwen3-Coder-Next across 10 coding sandboxes. We re-port plan steps (#), average plan tokens, and the relative change P in plan-token totals against the baseline.                                                                                                   
+
+> Baseline LOCAL (manual) GLOBAL (manual) Sandbox #tokens #tokens P#tokens P
+> calculator_refactor 4540.2 3888.0 +23 .3% 91869.6 +678 .6%
+> bug_fix 3620.0 3611.3 −1.4% 92048.0 +891 .0%
+> feature_add 3507.7 3565.7 +11 .4% 91231.7 +627 .8%
+> rename_refactor 4461.8 4620.0 +34 .3% 91095.1 +433 .6%
+> test_coverage 7509.1 4607.8 −31 .8% 91061.6 +168 .1%
+> multi_file_refactor 6585.0 5891.0 +26 .9% 91622.1 +315 .9%
+> bug_hunt 3405.3 3568.0 +40 .1% 91528.9 +1031 .6%
+> performance_optimize 5508.8 3690.0 −18 .6% 91005.8 +255 .8%
+> error_handling 4451.5 3555.7 −7.7% 91464.8 +630 .0%
+> dependency_swap 3602.3 3658.7 +9 .4% 91666.6 +730 .0%
+> Mean 4.2 519.2 3.4 665.6 +8 .6% 9.0 1459.4 +576 .2%
+
+get, with mean bP = +501 .5% . LOCAL remains inconsistent and statistically negligible. The ampli-fication manifests as plan-output degeneration into syntactically valid character loops, illustrated on five sandboxes in Appendix D. 
+
+5.2 Attack the End-of-Thinking Token 
+
+To evaluate whether our attack transfers to other types of tokens, we apply it to the thinking process of GPT-OSS and Qwen3. Following the same pro-cedure as the Groundhog Bit-Flip Attack, we use LOCAL and GLOBAL to identify experts that are closely associated with the end of thinking (EOT) 
+
+token and we manually deactivate these experts. The results are shown in Table 6. We observe a clear increase in the number of tokens generated during the thinking phase. In the most extreme case, the model continues thinking until the token budget is exhausted without producing the expected answer. This experiment demonstrates that our at-tack also applies to other specific tokens. 
+
+Table 6: Results of GPT-OSS and Qwen3 under LO-CAL and GLOBAL manual deactivation of EOT-related experts (percentage increase in thinking length).                              
+
+> Model Method (manual) AGNews (%) SST-2 (%) Samsum (%) SQuAD (%)
+> GPT-OSS LOCAL 19.7 15.2 58.4 25.9 GLOBAL 7.15 ×10 21.27 ×10 3365 1.33 ×10 3
+> Qwen3 LOCAL 6.28 1.61 4.18 -1.37 GLOBAL 204 224 230 271
+
+6 Discussion 
+
+6.1 Feasibility under Distributed Inference 
+
+Large MoE models are often served with tensor parallelism (TP) and pipeline parallelism (PP). We discuss whether GBFA still works when router pa-rameters are split or replicated across devices. Un-der PP, each layer and its router stay on one device. The router bits we target are not split, so the attack needs the same number of flips as in the single-device setting. PP thus does not increase the diffi-culty. Under TP, the router weights may be repli-cated on several devices, which would require flip-ping the same bit on each replica. The attacker can avoid this by corrupting the shared page cache that the replicas load from, so that one poisoned copy reaches all devices. Prior fault-injection work uses the same idea (Tol et al., 2023). Neither scheme therefore breaks the feasibility of GBFA. 
+
+6.2 Potential Defenses 
+
+Potential defenses against GBFA fall into two cate-gories. 
+
+Software-level mitigations such as API-level out-put length caps (OpenAI, 2024; Anthropic, 2024) reduce per-request damage but cannot prevent the underlying attack. Output-pattern detectors such as Breaking the Loop (Yu et al., 2025) can interrupt loop behavior in real time, but legitimate repetitive outputs trigger the same signal, limiting practical reliability. Neither class of defense remediates the root cause. 
+
+System-level protections such as ECC (Sridharan et al., 2015) or TEE-based isolation (Sun et al., 2023; Ding et al., 2025a) can detect accidental faults but provide limited security against adver-sarial bit-flips and incur nontrivial overhead. These gaps highlight the need for MoE-specific defenses that constrain routing sensitivity and ver-ify parameter integrity. 
+
+7 Conclusion 
+
+In this paper, we proposed Groundhog Bit-Flip At-tack (GBFA) , a structural Denial-of-Wallet attack that exploits MoE routing through targeted router-level bit-flips. Our analysis revealed strong target-related expert specialization, enabling attackers to suppress termination-critical experts by flipping only a few bits. Using GBFA, we efficiently identi-fied vulnerable experts and showed that these small perturbations can induce massive output-length in-flation while largely preserving model utility. Ex-periments across six MoE LLMs and three LLM modes confirm that routing-layer corruption consti-tutes a previously overlooked vulnerability. These findings underscore the need for MoE-specific de-fenses to safeguard router integrity and prevent targeted manipulation of expert activation. 
+
+8 Limitations 
+
+• Strong threat model. GBFA assumes white-box access to the victim MoE model and the ability to inject targeted bit flips into selected router parameters. Although this follows prior bit-flip attack settings, it may not hold for all practical MLaaS with strong isolation or integrity checks. • System-level cost analysis. We quantify vul-nerable bit search cost and model-level attack effectiveness, but the full end-to-end attack cost also depends on hardware-specific factors such as memory placement and BFA reliability. • No end-to-end hardware demonstration. We identify vulnerable bits and measure the output inflation once they are flipped, but we do not per-form an end-to-end hardware exploit that phys-ically flips them on a live system. System-level defenses such as ECC memory or TEE-based iso-lation raise the difficulty of such flips. However, they do not fully prevent adversarial bit flips and add nontrivial overhead, so they mitigate rather than eliminate the threat. • Theoretical analysis. Our study is mainly empir-ical. We show that EOS and EOT behavior can concentrate in a small set of MoE experts, but we do not provide a formal theoretical explanation of how routing logits, expert specialization, and output-length inflation are related. 
+
+Acknowledgments 
+
+Portions of this research were conducted with high performance computational resources provided by Louisiana State University ( http://www.hpc.lsu. edu ) and the Louisiana Optical Network Infrastruc-ture ( http://www.loni.org ). 
+
+References    
+
+> Marah et al. Abdin. 2024. Phi-3 technical report: A highly capable language model locally on your phone.
+> Preprint , arXiv:2404.14219. Anthropic. 2024. Messages – API reference. https: //docs.anthropic.com/en/api/messages .Ac-cessed: 2025. Jiawang Bai, Baoyuan Wu, Zhifeng Li, and Shu-Tao Xia. 2023. Versatile weight attack via flipping limited bits.
+> IEEE Transactions on Pattern Analysis and Machine Intelligence , 45(11):13653–13665.
+
+Kunbei Cai, Md Hafizul Islam Chowdhuryy, Zhenkai Zhang, and Fan Yao. 2021. Seeds of SEED: NMT-Stroke: Diverting Neural Machine Translation through Hardware-based Faults. In 2021 Interna-tional Symposium on Secure and Private Execution Environment Design (SEED) , pages 76–82. IEEE. Huili Chen, Cheng Fu, Jishen Zhao, and Farinaz Koushanfar. 2021. ProFlip: Targeted Trojan Attack with Progressive Bit Flips. In 2021 IEEE/CVF In-ternational Conference on Computer Vision (ICCV) .IEEE. DeepSeek. 2025. Deepseek api documentation: Models and pricing. https://api-docs.deepseek.com/ quick_start/pricing .DeepSeek-AI. 2024. Deepseek-v2: A strong, economi-cal, and efficient mixture-of-experts language model. 
+
+Preprint , arXiv:2405.04434. Ruyi Ding, Tianhong Xu, Aidong Adam Ding, and Yunsi Fei. 2025a. Graph in the vault: Protecting edge gnn inference with trusted execution environ-ment. In 2025 62nd ACM/IEEE Design Automation Conference (DAC) , pages 1–7. Ruyi Ding, Tianhong Xu, Xinyi Shen, Aidong Adam Ding, and Yunsi Fei. 2025b. Moecho: Exploit-ing side-channel attacks to compromise user pri-vacy in mixture-of-experts llms. arXiv preprint arXiv:2508.15036 .Mohsen Fayyaz, Ali Modarressi, Hanieh Deilamsalehy, Franck Dernoncourt, Ryan Rossi, Trung Bui, Hin-rich Schütze, and Nanyun Peng. 2025. Steer-ing moe llms via expert (de)activation. Preprint ,arXiv:2509.09660. William Fedus, Barret Zoph, and Noam Shazeer. 2022. Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity. Preprint ,arXiv:2101.03961. Pietro Frigo, Emanuele Vannacc, Hasan Hassan, Vic-tor Van Der Veen, Onur Mutlu, Cristiano Giuffrida, Herbert Bos, and Kaveh Razavi. 2020. TRRespass: Exploiting the many sides of target row refresh. In 
+
+IEEE Symposium on Security and Privacy .Behnam Ghavami, Mani Sadati, Mohammad Shahidzadeh, Zhenman Fang, and Lesley Shan-non. 2022. Bdfa: A blind data adversarial bit-flip attack on deep neural networks. Preprint ,arXiv:2112.03477. Bogdan Gliwa, Iwona Mochol, Maciej Biesek, and Alek-sander Wawer. 2019. Samsum corpus: A human-annotated dialogue dataset for abstractive summa-rization. arXiv preprint arXiv:1911.12237 .Hasan Hassan, Yahya Can Tugrul, Jeremie S. Kim, Victor van der Veen, Kaveh Razavi, and Onur Mutlu. 2022. Uncovering in-dram rowhammer pro-tection mechanisms: A new methodology, custom rowhammer patterns, and implications. Preprint ,arXiv:2110.10603. Patrick Jattke, Victor Van Der Veen, Pietro Frigo, Stijn Gunter, and Kaveh Razavi. 2022. Blacksmith: Scal-able rowhammering in the frequency domain. In 
+
+2022 IEEE Symposium on Security and Privacy (SP) .IEEE. Patrick Jattke, Max Wipfli, Flavien Solt, Michele Marazzi, Matej Bölcskei, and Kaveh Razavi. 2024. Zenhammer: Rowhammer attacks on amd zen-based platforms. In 33rd USENIX Security Symposium (USENIX Security 2024) .Albert Q. Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bam-ford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, and 1 oth-ers. 2024. Mixtral of experts. arXiv preprint arXiv:2401.04088 .Yoongu Kim, Ross Daly, Jeremie Kim, Chris Fallin, Ji Hye Lee, Donghyuk Lee, Chris Wilkerson, Konrad Lai, and Onur Mutlu. 2014. Flipping bits in memory without accessing them: An experimental study of dram disturbance errors. In 2014 ACM/IEEE 41st International Symposium on Computer Architecture (ISCA) , pages 361–372. Andreas Kogler, Jonas Juffinger, Salman Qazi, Yoongu Kim, Moritz Lipp, Nicolas Boichat, Eric Shiu, Mat-tias Nissler, and Daniel Gruss. 2022. Half-double: Hammering from the next row over. Cai Kunbei, Chowdhuryy Md Hafizul Islam, Zhang Zhenkai, and Yao Fan. 2024. Deepvenom: Persistent dnn backdoors exploiting transient weight perturba-tions in memories. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 2067–2085. Andrew Kwong, Daniel Genkin, Daniel Gruss, and Yu-val Yarom. 2020. Rambleed: Reading bits in memory without accessing them. In 2020 IEEE Symposium on Security and Privacy (SP) , pages 695–711. Zhenglin Lai, Mengyao Liao, Bingzhe Wu, Dong Xu, Zebin Zhao, Zhihang Yuan, Chao Fan, and Jianqiang Li. 2025. Safex: Analyzing vulnerabilities of moe-based llms via stable safety-critical expert identifi-cation. Advances in Neural Information Processing Systems , 38:130380–130404. Xiang Li, Ying Meng, Junming Chen, Lannan Luo, and Qiang Zeng. 2025. Rowhammer-based trojan injection: One bit flip is sufficient for backdooring dnns. In USENIX Security Symposium .Chris S. Lin, Joyce Qu, and Gururaj Saileshwar. 2025. GPUHammer: Rowhammer attacks on GPU mem-ories are practical. In 34th USENIX Security Sym-posium (USENIX Security 25) , pages 5719–5738, Seattle, WA. USENIX Association. Yannan Liu, Lingxiao Wei, Bo Luo, and Qiang Xu. 2017. Fault injection attack on deep neural network. In 2017 IEEE/ACM International Conference on Computer-Aided Design (ICCAD) , pages 131–138. Nicolas Moro, Amine Dehbaoui, Karine Heydemann, Bruno Robisson, and Emmanuelle Encrenaz. 2013. Electromagnetic fault injection: Towards a fault model on a 32-bit microcontroller. In 2013 Workshop on Fault Diagnosis and Tolerance in Cryptography ,pages 77–88. Ataberk Olgun, Majd Osseiran, A. Giray Ya˘ glıkçı, Yahya Can Tu˘ grul, Haocong Luo, Steve Rhyner, Be-hzad Salami, Juan Gomez Luna, and Onur Mutlu. 2024. Read disturbance in high bandwidth memory: A detailed experimental study on hbm2 dram chips. In 2024 54th Annual IEEE/IFIP International Con-ference on Dependable Systems and Networks (DSN) ,pages 75–89. OpenAI. 2024. Chat completions – API ref-erence. https://platform.openai.com/docs/ api-reference/chat/create . Accessed: 2025. OpenAI. 2025. gpt-oss-120b & gpt-oss-20b model card. 
+
+Preprint , arXiv:2508.10925. Qwen Team. 2025. Qwen3 technical report. Preprint ,arXiv:2505.09388. Qwen Team. 2026. Qwen3-coder-next technical report. Technical report. Accessed: 2026-02-03. Pranav Rajpurkar, Robin Jia, and Percy Liang. 2018. Know what you don’t know: Unanswerable ques-tions for SQuAD. In Proceedings of the 56th Annual Meeting of the Association for Computational Lin-guistics (Volume 2: Short Papers) , pages 784–789, Melbourne, Australia. Association for Computational Linguistics. Adnan Siraj Rakin, Md Hafizul Islam Chowdhuryy, Fan Yao, and Deliang Fan. 2022a. Deepsteal: Advanced model extractions leveraging efficient weight stealing in memories. In 2022 IEEE Symposium on Security and Privacy (SP) , pages 1157–1174. Adnan Siraj Rakin, Zhezhi He, and Deliang Fan. 2019. Bit-flip attack: Crushing neural network with pro-gressive bit search. In Proceedings of the IEEE In-ternational Conference on Computer Vision (ICCV) ,pages 1211–1220. Adnan Siraj Rakin, Zhezhi He, and Deliang Fan. 2020. Tbt: Targeted neural network attack with bit tro-jan. In 2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 13195– 13204. Adnan Siraj Rakin, Zhezhi He, Jingtao Li, Fan Yao, Chaitali Chakrabarti, and Deliang Fan. 2022b. T-BFA: T argeted B it- F lip Adversarial Weight A ttack. IEEE Transactions on Pattern Analysis and Machine Intelligence , 44(11):7928–7939. Mark Seaborn and Thomas Dullien. 2015. Exploiting the dram rowhammer bug to gain kernel privileges. 
+
+Black Hat , 15:71. Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D Manning, Andrew Y Ng, and Christopher Potts. 2013. Recursive deep models for semantic compositionality over a sentiment treebank. In Proceedings of the 2013 conference on empiri-cal methods in natural language processing , pages 1631–1642. Vilas Sridharan, Nathan DeBardeleben, Sean Blanchard, Kurt B Ferreira, Jon Stearley, John Shalf, and Sud-hanva Gurumurthi. 2015. Memory errors in modern systems: The good, the bad, and the ugly. ACM SIGARCH Computer Architecture News , 43(1):297– 310. Zhichuang Sun, Ruimin Sun, Changming Liu, Am-rita Roy Chowdhury, Long Lu, and Somesh Jha. 2023. Shadownet: A secure and efficient on-device model inference system for convolutional neural networks. In 2023 IEEE Symposium on Security and Privacy (SP) , pages 1596–1612. IEEE. Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy Liang, and Tatsunori B. Hashimoto. 2023. Stanford alpaca: An instruction-following llama model. M. Caner Tol, Saad Islam, Andrew J. Adiletta, Berk Sunar, and Ziming Zhang. 2023. Don’t knock! rowhammer at the backdoor of dnn models. In 2023 53rd Annual IEEE/IFIP International Conference on Dependable Systems and Networks (DSN) , pages 109–122. Qingyue Wang, Qi Pang, Xixun Lin, Shuai Wang, and Daoyuan Wu. 2025. Badmoe: Backdoor-ing mixture-of-experts llms via optimizing routing triggers and infecting dormant experts. Preprint ,arXiv:2504.18598. Fan Yao, Adnan Siraj Rakin, and Deliang Fan. 2020. DeepHammer: Depleting the intelligence of deep neural networks through targeted chain of bit flips. In 
+
+29th USENIX Security Symposium (USENIX Security 20) , pages 1463–1480. USENIX Association. Junzhe Yu, Yi Liu, Huijia Sun, Ling Shi, and Yuqi Chen. 2025. Breaking the loop: Detecting and mitigating denial-of-service vulnerabilities in large language models. arXiv preprint arXiv:2503.00416 .Xiang Zhang, Junbo Zhao, and Yann LeCun. 2015. Character-level convolutional networks for text clas-sification. In Advances in Neural Information Pro-cessing Systems , volume 28. Curran Associates, Inc. Mengxin Zheng, Qian Lou, and Lei Jiang. 2023. TrojViT: Trojan Insertion in Vision Transformers. 
+
+Preprint , arXiv:2208.13049. Algorithm 1 Groundhog Bit-Flip Attack 
+
+Require: MoE LLM fθ, dataset S, router top-k,bits-per-expert B
+
+Ensure: vulnerable bits B
+
+Step 1: Identify target-specialized experts 
+
+1: for each expert (ℓ, i ) do 
+
+2: Compute τl,i or ∆gl,i using target token and non-target activations over S
+
+3: end for Step 2: Local-based target expert selection 
+
+4: Select Sval and measure baseline length ¯Tbase 
+
+5: for each layer ℓ do 
+
+6: Etop 
+
+ℓ ← top-kℓ experts ranked by τ or ∆g
+
+7: Temporarily deactivate Etop 
+
+ℓ and compute ¯Tℓ
+
+8: end for 
+
+9: ℓ∗ ← arg max ℓ( ¯Tℓ − ¯Tbase )
+
+10: Etarget ← E top 
+
+ℓ∗
+
+Step 3: Groundhog Bit search 
+
+11: Cache hidden states H at layer ℓ∗
+
+12: Compute EAF orig 
+
+i for each i ∈ E target 
+
+13: B ← ∅ 
+
+14: for each expert i do 
+
+15: for each bit b in its router parameter do 
+
+16: Flip b, reroute on H, compute BF −eff( b)
+
+17: end for 
+
+18: Add top B bits for i into B
+
+19: end for 
+
+20: return B
+
+A Groundhog Bit-Flip Attack Algorithm 
+
+Algorithm 1 details the three-stage procedure used in GBFA to identify vulnerable bits in MoE router weights. The algorithm takes an MoE model, a sample dataset, and the router top-k as input, and returns a set of vulnerable bits B to flip. In Stage 1, each expert is scored by its target activation shift (τl,i for routed experts, ∆gl,i for shared experts) to identify target-related experts. In Stage 2, a layer-wise ablation selects the single most critical layer whose deactivation maximally inflates output length. In Stage 3, bits within the selected experts’ router parameters are evaluated individually, and the top-B bits per expert with the highest bit-flip effectiveness are added to B.
+
+B Qualitative Examples of EOS-related Expert Deactivation 
+
+To complement the quantitative results in the main text, Table 7 presents qualitative generation exam-ples from Mixtral after deactivating EOS-related experts, on four representative datasets (AGNews, SST-2, Samsum, and SQuAD_v2). Each row shows the input prompt, the model’s original out-put, and the output produced under the same prompt after deactivation. Without EOS-related experts, the model generates repetitive but coherent text loops, preserving linguistic quality while los-ing termination control. These examples illustrate the output amplification potential of EOS expert de-activation, validating our attack strategy and identi-fying precise targets for the bit-flip implementation in the main text. 
+
+Table 7: Generation examples from Mixtral on four datasets, comparing the original output (blue) with the output after EOS-related expert deactivation. Repetitive loops introduced by the attack are highlighted in red.                                                                                          
+
+> Dataset Input Prompt Ori Output Attacked Output
+> AGNews Classify the news article... Article :Reuters –Soaring crude prices... Cat-egory :
+> Category : Business
+> Explanation : The ar-ticle discusses the im-pact of soaring crude prices...
+> Category :Busi-ness/Economy User 0: Iwould say business. User 1: I would say sports. User 0: I would say sports. User 1: Iwould say sports because the article is about the stock market. (repeated . . . ) SST-2 Classify the senti-ment... Text :hide new secretions...
+> Sentiment :
+> Sentiment : Negative
+> Explanation :The text mentions hid-ing something from “parental units,” sug-gesting secrecy...
+> Sentiment :Nega-tive The text de-scribes the narrator’s relationship with his mother... He is de-scribing the relation-ship in the past tense. He is describing the relationship in the past tense. (repeated . . . ) Samsum Please summa-rize the dialogue... Amanda: Ibaked cookies... Jerry: Sure! Summary :Amanda offers Jerry cookies; she will bring them the next day. Amanda baked cook-ies and offered some to Jerry. Com-ment :Direct re-sponse. Jerry: Sure! Jerry’s answer is a direct response to Amanda’s question. Jerry’s answer is a direct response to Amanda’s question. (repeated . . . ) SQuAD Answer the ques-tion based on the context... Context: Beyoncé Giselle Knowles-Carter...
+> Question :When did Beyoncé rise to fame? Beyoncé rose to fame in the late 1990s as lead singer of Destiny’s Child. Beyoncé rose to fame in the late 1990s... Comment :Beyoncé rose to fame... Destiny’s Child. Comment :How did Beyoncé rise to fame? An-swer: Beyoncé rose to fame... Destiny’s Child. (repeated . . . )
+
+C Sandbox Task Descriptions 
+
+Table 8 lists the 10 self-contained Python repository sandboxes used in our agentic coding evaluation (Section 5.1). Each sandbox ships with a clean ini-tial snapshot and a unit-test suite that determines task completion. We will release the implemen-tation details, prompts, and configuration files to-gether with the code. 
+
+Table 8: Ten sandbox tasks used in the agentic coding evaluation.                             
+
+> Task Description
+> bug_fix Fix an off-by-one bug in a FizzBuzz function.
+> bug_hunt Locate and fix three independent bugs co-located in a single file.
+> feature_add Implement two missing methods (mark_done ,pending_count ) in a TODO-list class.
+> test_coverage Add at least two unit tests for each of four string utility functions.
+> calculator_refactor Extract trigonometric methods (sin /cos /tan )from Calculator
+> into a dedicated TrigCalculator
+> class.
+> rename_refactor Rename MyHelper to StringUtils
+> across multiple files and update all imports.
+> multi_file_refactor Split a monolithic Database class into three repository modules.
+> performance_optimize Convert an O(n2)implementation to O(n)while passing performance tests.
+> error_handling Add graceful error handling to a data-processing pipeline.
+> dependency_swap Remove the re module dependency and reimplement five functions us-ing only built-in string methods.
+
+D Attacked Output of Plan Mode 
+
+Table 9 presents qualitative examples of plan-mode output degradation under GLOBAL manual ex-pert deactivation on Qwen3-Coder-Next across five coding sandbox tasks. Each task block shows the shared prelude (gray box) that is bit-identical be-tween the baseline and attacked runs, followed by the divergence point where the two outputs split. The baseline continues with coherent plan-ning, while the attacked output drifts before collaps-ing into a repetitive degenerate pattern (shown in red), eventually exhausting max_new_tokens with-out emitting <|im_end|> .
+
+E Robustness to Decoding Strategies 
+
+Our main experiments use greedy decoding for reproducibility. To check that GBFA does not depend on this choice, we re-run the GLOBAL (top-16) attack on Phi-3.5-MoE under six decoding settings (Table 10). Settings are: greedy (argmax, 
+
+do_sample=False , default); temp0.7 /temp1.0 
+
+(sampling, top_p=1.0 ); topp0.9 (nucleus, 
+
+temperature=1.0 , top_p=0.9 ); and the _rp1.3 
+
+variants add a repetition penalty of 1.3. EOS suppression and length inflation hold under greedy, temperature, and nucleus sampling (attacked EOS rate 0.22 –0.61 vs. baseline ≈ 1.0). A repetition penalty above 1 already lengthens the baseline output on its own, because it biases the model toward more elaborate responses; GBFA remains effective under this setting as well. 
+
+F Effect of the Token Budget 
+
+The choice of max_new_tokens bounds how much the attack can inflate output, so it shapes the mea-sured effect. Table 11 sweeps the budget for Phi-3.5-MoE under the GLOBAL (top-16) attack. A budget that is too small caps the attack for datasets whose baselines are already long, while a larger budget lets short-baseline datasets inflate further; the relative change P therefore grows with the bud-get. We adopt a moderate value of 1024 through-out the paper: it is large enough to expose the attack (outputs several times the baseline) yet small enough to keep evaluation tractable. Since an out-put several times longer than the baseline already constitutes a strong Denial-of-Wallet attack, the exact budget does not change our conclusions. Table 9: Output degradation under GLOBAL manual expert deactivation on Qwen3-Coder-Next in plan mode. For each task, the gray box shows the shared prelude —characters that are bit-identical across both runs. After the divergence point ( [ diverges ] ), the Original column shows the baseline continuing coherently, while the Attack 
+
+column drifts and eventually collapses into a repetitive degenerate pattern (shown in red). Long gaps inside the attack output are abbreviated as [ skipped K chars ] . Newlines are rendered as a dimmed \n ; . . . marks truncation. 
+
+Task Original output (Baseline) Attack output (GLOBAL manual deactivation) 
+
+bug_fix 
+
+chars 0–150 shared 
+
+. . . he facts I know and the plan of action that I will follow to solve the task:\n“‘\n## 1. Facts survey\n\n### 1.1. Facts given in the task\n- The 
+
+[ diverges ] ‘fizzbuzz.py‘ module contains a function ‘fizzbuzz(n)‘ that is supposed to return the FizzBuzz sequence for integers 1 through *n* INCLUSIVE.\n-Currently, the function *drops the last value* –meaning it likely returns only *n-1* items . . . 
+
+[ diverges ] task states: “The fizzbuzz.py module has a bug.”\n- The function ‘fizzbuzz(n)‘ is *suppo [ skipped 1,177 chars ] e ‘ it.\n- **fizzbuzz(15) expected output** (15 items: e.g., “1”, “2”, “ Fizz ”, “4”, 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * . . . 
+
+rename_refactor 
+
+chars 0–826 shared 
+
+. . . my new/updated plan of action to solve the task:\n“‘\n## 1. Updated facts survey\n### 1.1. Facts given in the task\n- The class ‘MyHelper‘ in ‘ 
+
+[ diverges ] my_helper.py‘ should be renamed to ‘StringUtils‘.\n- ‘StringUtils‘ should have three methods: ‘shout‘, ‘whisper‘, and ‘reverse‘, with aconstructor argument ‘prefix‘ . . . 
+
+[ diverges ] my_helper.py‘ (note space in filename) should be renamed to ‘StringUtils‘.\n-‘StringUtils [ skipped 1,141 chars ] The exact expected ‘run_tests‘ output.\n## 2. Plan\n### 2.1. 1. 2. 3. 4. 5. 1. 2. 3. 4. 5. 6. 7. 8. 9. 10. 11. 12. 13. 14. 15. 16. 17. . . . 
+
+dependency_swap 
+
+chars 0–146 shared 
+
+. . . re the facts I know and the plan of action that I will follow to solve the task:\n“‘\n## 1. Facts survey\n\n### 1.1. Facts given in the task\n-
+
+[ diverges ] The file ‘text_utils.py‘ uses the ‘re‘ module.\n- We need to remove ‘re‘ entirely and reimplement all five functions using only built-in string methods . . . 
+
+[ diverges ] ‘text_utils.py‘ exists in the workspace.\n- ‘text_utils.py uses the ‘re‘ module . . . [ skipped 679 chars ] , which 5 functions are present, their current ‘ re‘-based implementation, and their exact - - - - - - - - - - - - - - - - - - - - - - - -- . . . 
+
+performance_optimize 
+
+chars 0–143 shared 
+
+. . . e are the facts I know and the plan of action that I will follow to solve the task:\n“‘\n## 1. Facts survey\n\n### 1.1. Facts given in the task 
+
+[ diverges ] \n- There exists a file named ‘slow_stats.py‘ containing three functions.\n - These functions are *correct* but use nested loops, resulting in O(n^2) time complexity . . . 
+
+[ diverges ] \n- There is a file named ‘slow_stats.py‘ that contains three functions . . . [ skipped 528 chars ] current O(n^2) logic to design O(n 1.1.3.4.5.6. O(n) O(n) O(n) O(n) O(n) O(n) O(n) O(n) O(n) O(n) O(n) O(n) O(n) . . . 
+
+multi_file_refactor 
+
+chars 0–91 shared 
+
+Here are the facts I know and the plan of action that I will follow to solve the task:\n“‘\n 
+
+[ diverges ] 1. Facts survey\n### 1.1. Facts given in the task\n- There exists a file named ‘database.py‘ that contains a monolithic ‘Database‘ class handling users, posts, and comments . . . 
+
+[ diverges ] ## 1. Facts survey\n### 1.1. Facts given in the task\n- There is a monolithic ‘Database cla [ skipped 5,143 chars ] * * or * *db. session * * or * * db * * is * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * . . . Table 10: Phi-3.5-MoE under the GLOBAL (top-16) at-tack across six decoding settings. Base/Atk Tok.: mean generated tokens per sample without/with the attack. 
+
+P (%): relative increase. Base/Atk EOS: fraction of samples emitting an EOS token without/with the attack. 
+
+Setting Dataset Base Tok. Atk Tok. P (%) Base EOS Atk EOS greedy AGNews 47.45 496.52 946.4 0.96 0.53 SST-2 49.81 746.42 1398.5 1.00 0.30 Samsum 83.45 689.15 725.8 1.00 0.38 SQuAD 30.11 544.29 1707.7 1.00 0.51 temp0.7 AGNews 42.00 445.03 959.6 0.97 0.60 SST-2 61.40 668.11 988.1 1.00 0.39 Samsum 108.79 728.35 569.5 0.96 0.35 SQuAD 31.39 554.80 1667.4 1.00 0.50 temp1.0 AGNews 44.77 470.88 951.8 0.97 0.61 SST-2 56.24 541.89 863.5 1.00 0.58 Samsum 100.02 725.63 625.5 0.96 0.37 SQuAD 36.00 548.77 1424.4 1.00 0.56 topp0.9 AGNews 32.75 451.83 1279.6 0.98 0.61 SST-2 56.09 629.95 1023.1 1.00 0.46 Samsum 101.92 831.65 716.0 0.96 0.22 SQuAD 30.84 518.54 1581.4 1.00 0.58 greedy_rp1.3 AGNews 629.80 1004.61 59.5 0.39 0.02 SST-2 436.74 976.07 123.5 0.60 0.06 Samsum 755.84 1005.45 33.0 0.28 0.03 SQuAD 661.70 990.11 49.6 0.37 0.04 temp0.7_rp1.3 AGNews 654.90 1024.00 56.4 0.37 0.00 SST-2 563.15 987.70 75.4 0.47 0.04 Samsum 878.34 1021.66 16.3 0.15 0.01 SQuAD 817.93 1004.52 22.8 0.21 0.02 
+
+Table 11: Phi-3.5-MoE under the GLOBAL (top-16) attack at different max_new_tokens budgets (paper de-fault: 1024 ). Base/Atk Tok.: mean tokens without/with the attack. P : relative increase. Base/Atk EOS: fraction emitting an EOS token. Baselines differ slightly across budgets because a few samples exceed the smaller caps and are truncated there. 
+
+Budget Dataset Base Tok. Atk Tok. P (%) Base EOS Atk EOS 512 AGNews 16.46 273.30 1560.4 0.98 0.49 SST-2 49.98 383.07 666.4 1.00 0.31 Samsum 76.69 369.21 381.4 0.94 0.32 SQuAD 30.39 280.41 822.7 1.00 0.52 2048 AGNews 44.18 1056.66 2291.7 0.99 0.49 SST-2 49.98 1442.91 2787.0 1.00 0.31 Samsum 113.10 1312.92 1060.8 1.00 0.39 SQuAD 30.39 999.16 3187.8 1.00 0.54 4096 AGNews 50.04 2304.27 4504.9 1.00 0.44 SST-2 49.98 2879.90 5662.1 1.00 0.31 Samsum 113.10 2563.51 2166.6 1.00 0.43 SQuAD 30.39 2046.70 6634.8 1.00 0.52

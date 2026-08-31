@@ -1,0 +1,715 @@
+Title: NeuronFuzz: Safety Neuron Guided Fuzzing for LLM Safety Evaluation
+
+URL Source: https://arxiv.org/pdf/2608.26222v1
+
+Published Time: Fri, 28 Aug 2026 00:04:37 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# NeuronFuzz: Safety Neuron Guided Fuzzing for LLM Safety Evaluation 
+
+## Zhiyuan Xu 
+
+## University of Bristol zhiyuan.xu@bristol.ac.uk 
+
+## Muhammad Firhard Roslan 
+
+## University of Bristol firhard.roslan@bristol.ac.uk 
+
+## Joseph Gardiner 
+
+## University of Bristol joe.gardiner@bristol.ac.uk 
+
+## Sana Belguith 
+
+## University of Bristol sana.belguith@bristol.ac.uk 
+
+## Lichao Wu 
+
+## University of Bristol lichao.wu@bristol.ac.uk 
+
+## Abstract 
+
+Safety evaluation is critical for assessing whether aligned Large Language Models (LLMs) remain robust against jail-break attacks. Existing automated testing methods, how-ever, largely rely on response-level feedback: each candidate prompt typically requires generating a target-model response to evaluate its attack effectiveness. This process is expen-sive and, more importantly, provides only sparse guidance on strongly aligned models, where most candidates are rejected with the same failure outcome. This paper presents NeuronFuzz, a white-box fuzzing framework that exploits internal safety neurons as contin-uous execution feedback for LLM safety evaluation. A Safe-tyOracle converts safety-neuron activations into a continuous safety alarm score that serves as feedback for fuzzing and can be obtained during prefill, eliminating response generation from the fuzzing loop. To construct the SafetyOracle, Neuron-Fuzz uses template-invariant harmful and benign inputs and stability-aware selection to identify a compact set of safety neurons whose activations capture harmful-intent recognition. Moreover, since the safety alarm score is differentiable, Neu-ronFuzz uses its gradients to identify safety-sensitive template positions and a masked language model to generate fluent, context-compatible mutations while preserving original harm-ful payload and avoiding additional optimization variables. We evaluate NeuronFuzz across 21 text and multimodal mod-els. Across five white-box source models, it achieves a 76– 100% jailbreak discovery rate, outperforming baselines by up to 48 percentage points. Its optimized templates further transfer zero-shot to open-weight and six proprietary target models, achieving average ASR and top-5 ensemble ASR (EASR) of 69.6%/92.6% and 44.1%/60.0%, respectively. 
+
+## 1 Introduction 
+
+Large Language Models (LLMs) are increasingly deployed in applications that directly interact with users. To prevent misuse, modern LLMs undergo safety alignment to recognize harmful requests and suppress unsafe responses. However, aligned models remain vulnerable to carefully crafted adver-sarial prompts, known as jailbreaks , that bypass these safety mechanisms and elicit harmful content [55,64]. As LLMs and their alignment strategies continue to evolve, systematically identifying such safety failures has become an important part of evaluating model robustness before deployment. Existing LLM safety testing can broadly be divided into manual and automated approaches. Manual red teaming re-lies on human-designed strategies such as role-playing, in-struction conflicts, refusal suppression, and contextual fram-ing [25, 36, 55, 64]. While effective at exposing individual weaknesses, manual testing requires substantial human effort and domain expertise, limiting the scale and diversity of ex-plored inputs. Automated approaches improve scalability by algorithmically generating or optimizing jailbreak prompts. For example, AutoDAN [35] evolves prompts through hier-archical genetic optimization; PAIR [11] iteratively refines attacks using an attacker LLM. Another line of automated testing adapts fuzzing, a widely adopted technique for soft-ware and hardware testing [37, 68], to LLM safety evalua-tion [76]. LLM fuzzers iteratively mutate jailbreak templates using language-based operators such as rephrasing, shorten-ing, and expansion, and retain promising candidates based on response-level safety evaluation feedback. Through re-peated mutation and selection, they can gradually discover more effective jailbreak templates. Despite their different search strategies, these methods follow the same evaluation paradigm: each candidate is submitted to the target LLM; a response is generated and then evaluated by a classifier, heuristic detector, or LLM judge. However, this response-level paradigm introduces two fun-damental limitations for automated safety testing: (i) Sparse Search Feedback: Response-level evaluation provides little information about how promising an unsuccessful candidate is. This problem is particularly severe for strongly aligned models, where most mutated prompts are refused and conse-quently receive the same failure outcome. Yet these candidates may affect the model’s underlying safety behavior very differ-1arXiv:2608.26222v1 [cs.LG] 26 Aug 2026 ently: one may leave the safety mechanism largely unchanged, while another may substantially weaken it without yet produc-ing a successful jailbreak. Response-level feedback cannot distinguish between them, leaving the fuzzer with limited guidance on which candidates to retain and further explore. Increasing the query budget does not fundamentally solve this problem because the feedback itself remains sparse. (ii) Ex-pensive Response Generation: Evaluating every candidate requires autoregressive decoding, which is substantially more expensive than processing the input prompt alone [26, 32]. Response-based methods may additionally invoke external classifiers or LLM judges after generation. Since automated fuzzers repeatedly evaluate large numbers of candidates, com-plete response generation becomes a major scalability bottle-neck. Thus, an efficient fuzzer requires a feedback signal that can evaluate candidates before response generation .
+
+Our Approach and Contributions: To address these limita-tions, we present NeuronFuzz, a white-box fuzzing framework that uses internal safety-neuron activations as continuous exe-cution feedback. Inspired by coverage-guided fuzzing [79], NeuronFuzz constructs a lightweight SafetyOracle that maps a compact set of stable safety neurons to a continuous safety alarm score during prefill. To ensure that this signal cap-tures harmful intent rather than jailbreak-template artifacts, we identify safety neurons using template-invariant harmful– benign pairs and stability-aware selection. The SafetyOracle eliminates response generation for intermediate candidates and distinguishes promising mutations even when they share the same response-level failure outcome. Moreover, its differ-entiable score allows NeuronFuzz to locate safety-sensitive template positions through gradients, while a masked lan-guage model generates context-compatible replacements that preserve the harmful payload and natural-language structure. Our main contributions are as follows: • We introduce a new perspective on LLM fuzzing that uses 
+
+safety neurons as execution feedback , replacing expensive and sparse response-level evaluation with continuous inter-nal feedback available during prefill. • We design a lightweight SafetyOracle based on template-invariant activation extraction and stability-aware safety-neuron selection. Its differentiable safety alarm score guides both candidate ranking and gradient-based localization of safety-sensitive template positions. • We develop NeuronFuzz, which combines prefill-only Safe-tyOracle feedback with gradient-guided masked-token mu-tation to efficiently explore jailbreak templates while pre-serving the harmful payload and natural-language structure. • We conduct extensive evaluations across 21 text and multi-modal models. NeuronFuzz consistently improves jailbreak discovery over representative baselines and its optimized templates transfer across model families, proprietary APIs, datasets, and visual safety tasks. The remainder of this paper is organized as follows. Sec-tion 2 provides background on LLM safety evaluation and fuzzing. Section 3 presents the motivation, threat model, and design of SafetyOracle and NeuronFuzz. Section 4 describes the implementation and experimental setup. Section 5 reports the main results, and Section 6 presents the ablation studies. Section 7 evaluates input defenses and defensive uses of the SafetyOracle. Finally, Section 8 concludes the paper. 
+
+## 2 Preliminaries 2.1 LLM Safety Evaluation 
+
+Aligned large language models (LLMs) are trained to refuse harmful requests, but their safety robustness still needs to be systematically evaluated before and after deployment. LLM safety evaluation examines whether a model continues to follow its safety policy when exposed to challenging or ad-versarial inputs [55, 64]. A common jailbreak test consists of a harmful payload and a jailbreak template [21, 43]. The pay-load specifies the harmful request, while the template changes how the request is presented to the model. The same template can be combined with different payloads to examine whether a safety weakness generalizes across harmful tasks. Existing methods can be broadly grouped into three approaches: man-ual testing, automated testing, and internal safety analysis. 
+
+Manual Testing. Early LLM safety testing mainly relied on manually designed adversarial prompts. Human testers construct prompts using strategies such as role-playing, fic-tional scenarios, instruction conflicts, refusal suppression, and emotional framing to probe weaknesses in model align-ment [25,36,55,64]. These tests are easy to interpret and show that even small changes in prompt context may substantially affect model behavior [6]. However, manual testing requires substantial human effort and domain knowledge, which limits the number and diversity of test cases that can be explored. 
+
+Automated Safety Testing. Automated methods reduce this manual effort by generating or refining jailbreak prompts al-gorithmically. Different methods adopt different optimization strategies. AutoDAN uses a hierarchical genetic algorithm to evolve jailbreak prompts at sentence and word levels [35]; PAIR uses an attacker LLM to iteratively refine prompts based on target-model responses and an external judge [11]; and LLM-Fuzzer automatically generates variants of existing jail-break templates [76]. Although their optimization procedures differ, these methods share the goal of producing effective safety test cases with less human intervention. Their effective-ness is typically determined from the target model’s generated response, providing an external measure of whether a test case successfully bypasses the model’s safety policy. 
+
+Internal Safety Analysis. Beyond model outputs, prior stud-ies show that safety-related information is also represented internally. Harmful and benign inputs can produce differ-ent activation patterns, while refusal behavior can be associ-ated with specific representation directions or internal com-2ponents [7, 47, 52, 62, 72]. More recent neuron-level studies further show that this information can be localized to compact neuron subsets whose activations selectively distinguish harm-ful from benign inputs [27, 67]. Manipulating these neurons or related internal components can substantially alter model’s safety behavior, providing evidence that they are functionally related to safety and refusal [27,61,66,67,74]. These findings suggest that internal activations expose safety-related infor-mation that is not directly observable from the final response. Our work builds on this observation and uses safety-related neuron activations as signals for automated safety testing without modifying the model’s internal states. 
+
+## 2.2 Fuzzing 
+
+Fuzzing is an automated testing technique that repeatedly gen-erates random test inputs to expose unexpected program be-haviors and security vulnerabilities [37]. Fuzzing methods can be broadly classified as black-box, grey-box, or white-box ac-cording to the amount of information available from the target program. A coverage-guided greybox fuzzing process [15,79] typically contains four components: a seed corpus and sched-uler [12], an input mutator [31], runtime instrumentation [79], and execution feedback [9]. The fuzzing process begins with a corpus of initial seed inputs. In each iteration, the sched-uler assigns energy values to seeds according to a scheduling strategy. Seed inputs that exercise new coverage goals based on the feedback receive higher energy and are more likely to be selected for next mutation. The mutator then modifies the selected seed to generate new tests, which are executed by the target program. An oracle [8] then determines whether the execution reveals an unexpected behavior (e.g., the program crashes). By repeatedly using execution information to up-date seed selection and mutation, the fuzzer can progressively explore the program’s execution space. LLM fuzzing adapts this feedback-guided process to natural-language safety testing [76]. Jailbreak templates can serve as initial seeds, while language-based mutation opera-tors generate new template variants through operations such as expansion, rephrasing, or shortening. The target program is an LLM, and a successful test corresponds to a gener-ated response that violates the intended safety policy. The generated responses are evaluated using classifiers, heuris-tic rules, or LLM judges, which serve as response-level ora-cles [11, 35, 76]. The evaluation outcomes are then used to decide which prompts should be retained and explored further. However, this response-level paradigm has two limitations for LLM safety evaluation. First, each prompt must generate a response before it can be evaluated, introducing repeated decoding and evaluation overhead. Second, the resulting feed-back provides limited information for distinguishing prompts with the same response-level outcome. This problem becomes more pronounced on strongly aligned models, where many mutated prompts are rejected and receive the same failure label. The fuzzer therefore has little information about which unsuccessful prompts are more promising for further explo-ration. These limitations motivate a feedback signal that can evaluate and distinguish prompts before response generation. 
+
+## 3 NeuronFuzz 3.1 Motivation 
+
+From Response-Level Feedback to Internal Safety Signals. 
+
+Our key intuition is to use internal safety representations as a denser source of fuzzing feedback. Prior white-box stud-ies show that safety-related information is encoded in model activations and can be captured by a small set of internal fea-tures [27, 67]. Rather than modifying these representations, we use their activations only as signals to guide safety test-ing. Internal safety signals have three properties that make them suitable for fuzzing: (i) they can be obtained during the prefill stage without generating a response, reducing the cost of evaluating intermediate candidates; (ii) they provide continuous information that can distinguish candidates with the same response-level outcome. This is particularly useful on strongly aligned models, where many mutated prompts are rejected but may still produce different internal safety sig-nals; (iii) these signals remain differentiable with respect to the input, allowing gradients to identify token positions that strongly affect the model’s safety representation. 
+
+Stable and Intent-Focused Feedback. Raw activations, how-ever, cannot be directly used as reliable fuzzing feedback. The activation space is high-dimensional and contains noisy or re-dundant features. Jailbreak templates may also introduce acti-vation patterns that reflect prompt style rather than the harmful intent of the payload. We therefore seek a compact and stable signal that captures harmful intent while remaining robust to jailbreak contexts. To achieve this, we construct template-invariant harmful and benign pairs and apply stability-aware neuron selection for the training of SafetyOracle. 
+
+Gradient-Guided Mutation. A useful fuzzing signal should not only rank candidates but also guide how they are mutated. Beyond providing continuous feedback for candidate ranking, the SafetyOracle is differentiable with respect to the input, al-lowing us to identify which template positions most strongly influence the internal safety signal. We therefore design a gradient-guided mutation strategy that uses gradients to locate sensitive positions and a masked language model to generate context-compatible replacements. In this design, the gradi-ent determines where to mutate, while the masked language model determines what to replace. We restrict all mutations to the jailbreak template and keep the harmful payload un-changed. Together, these designs allow NeuronFuzz to use internal safety signals for both continuous candidate ranking and targeted prompt mutation. Figure 1 summarizes the two stages of NeuronFuzz. Figure 1(a) presents the construction of the SafetyOracle and the interpretation of its safety alarm 3(a) Oracle Design (b) Oracle-Guided Fuzzing 
+
+> Shared Jailbreak Template
+
+τ    
+
+> Benign payload
+> xb= τ
+> ⊕pb
+> y = 0 Harmful payload
+> xh= τ
+> ⊕ph
+> y = 1
+
+SafetyOracle     
+
+> Activation features
+> MLP activations
+> Safety neuron selection
+> candidate neurons →
+> compact stable subset
+> Elastic-Net logistic regression
+> sparse and calibrated scoring head
+> continuous safety alarm score Salarm (x) ∈(0, 1)
+
+Score Interpretation  
+
+> 01
+> Weak alarm
+> Benign-like
+> Jailbreak-prone region
+> Strong alarm
+> Harmful recognized
+
+i Oracle provides a dense internal safety signal and can reveal jailbreak-like inputs near the low-intermediate region.                                  
+
+> ②Gradient-guided Mutation
+> Gradient: where Masked LM: what
+> (a) Locate sensitive position (b) Mask selected position (c) Propose fl uent replacement
+> Please prior rules Please prior rules Please prior rules
+> 🔒 Template-only mutation · harmful payload frozen
+> x= template ⊕harmful query
+> ④Target LLM Pre fi ll
+> Safety-neuron activations
+> pre fi ll only · no generation
+> ⑤SafetyOracle Scoring
+> Salarm (x) = σ(w ⊤zS(x) + b)
+> 1template
+> 23…
+> ★Optimized Jailbreak Templates
+> Rank(x) = − Salarm (x)
+> ③Candidate Prompt
+> ignore [MASK] disregard
+> ①Seed Scheduling
+> Template #1 Template #2 …Template #N
+> minimize Salarm (x)
+
+Figure 1: Overview of NeuronFuzz. (a) The SafetyOracle extracts MLP activations from template-invariant harmful and benign pairs, selects stable safety neurons, and produces a continuous safety alarm score. (b) The fuzzer minimizes this score through gradient-guided, template-only mutation and evaluates candidates using prefill-only oracle feedback. score. Figure 1(b) shows how SafetyOracle is integrated into the online fuzzing loop: gradients localize sensitive template positions, the masked language model generates replacements, and the resulting candidates are scored during prefill to guide subsequent seed selection. 
+
+## 3.2 Threat Model 
+
+We consider two settings for NeuronFuzz: an authorized eval-uator and a malicious adversary. The evaluator uses white-box information to identify safety weaknesses, while the adver-sary uses a surrogate model to optimize jailbreak templates and applies them either to the same model or transfers them to other target models. 
+
+Evaluator. The evaluator may be the model developer, service provider, or an authorized third-party auditor. The evaluator has access to the model’s parameters, MLP activations, and input gradients, which are used to construct the SafetyOracle and guide template mutation. The evaluator does not modify model parameters, internal activations, system prompts, or decoding settings. The discovered test cases are therefore evaluated through the model’s normal input interface. 
+
+Adversary. We follow the prompt-level jailbreak setting used by prior automated jailbreak methods [35, 76, 84]. The ad-versary has white-box access to a local source or surrogate model and uses NeuronFuzz to optimize jailbreak templates. These templates can attack the source model directly or be transferred zero-shot to other target models. In the transfer setting, the adversary requires only input-output access to the target model. 
+
+## 3.3 SafetyOracle Design 
+
+3.3.1 Template-invariant Activation Extraction 
+
+Safety-related neurons are identified by contrasting the acti-vations of harmful and benign prompts [62, 67]. The goal is to extract features that primarily reflect harmful intent and remain stable across different prompt contexts. However, jail-break templates may introduce additional activation patterns through role-playing instructions, refusal suppression, or un-usual linguistic structures. These template-specific patterns can act as shortcuts, causing the extracted features to reflect template style rather than payload harmfulness. To reduce this effect, we construct template-invariant harmful–benign pairs that share the same jailbreak template but contain payloads with different safety labels. Let T = {τ1, . . . , τM } denote the jailbreak templates, and let Ph and Pb denote the harmful and benign payload sets. Given a template τ and payload p, the model input is x = τ ⊕ p, where ⊕ inserts the payload into the template. Each template therefore forms a paired input: 
+
+xhi, j = τ j ⊕ phi , xbi, j = τ j ⊕ pbi , (1) where phi ∈ Ph and pbi ∈ Pb, with labels y(xhi, j) = 1 and 
+
+y(xbi, j) = 0. Since the same template appears in both classes, the label difference is determined by the payload rather than the surrounding template. For each input, a prefill pass is per-formed while forward hooks collect the outputs of the gate and up projections in every Transformer MLP block [61, 66]. Let I (x) denote the input-prompt token positions. For layer 
+
+ℓ and projection module m ∈ { gate , up }, token-level outputs 
+
+z(ℓ, m)
+
+t (x) are aggregated by element-wise max pooling: 4a(ℓ, m)(x) = max   
+
+> t∈I(x)
+
+z(ℓ, m) 
+
+> t
+
+(x). (2) This produces a fixed-dimensional activation vector for each layer and projection module, independent of prompt length. The pooled vectors are concatenated across all layers and modules to obtain the prompt-level representation a(x),with each dimension treated as a candidate neuron feature. Section 6.1 ablates the design of template-invariant extraction. 
+
+3.3.2 Stability-Aware Safety Neuron Selection 
+
+Template-invariant extraction reduces template-specific ef-fects, but neuron importance estimated from a single training set can still be sensitive to sampling variation [29, 40]. A neuron that appears strongly predictive in one sample may become weak or change its association in another [29]. We therefore use bootstrap-based stability selection to identify neurons that remain consistently associated with harmful in-puts across resampled training sets [40]. We perform B boot-strap runs and fit a linear classifier in each run. For an MLP block ℓ containing pℓ candidate neurons, we retain the qℓ neu-rons with the largest absolute coefficients, where qℓ = √pℓ
+
+.This provides a consistent selection size across models with different hidden dimensions. For each neuron j, let n+ 
+
+> j
+
+and n− 
+
+> j
+
+denote the numbers of runs in which it is retained with a positive or negative coefficient. We define its selection rate s j and sign consistency c j as 
+
+s j = n+ 
+
+> j
+
++ n−
+
+> j
+
+B , c j = max (n+ 
+
+> j
+
+, n− 
+
+> j
+
+)
+
+n+ 
+
+> j
+
++ n−
+
+> j
+
+. (3) We set c j = 0 if neuron j is never retained. Here, s j mea-sures how consistently the neuron is selected, while c j mea-sures whether its coefficient maintains the same direction across bootstrap runs. Since harmful inputs are assigned the positive label, we further require the dominant coefficient direction to be positive. Let τs and τc denote the thresholds for selection rate and sign consistency, respectively. The final safety-neuron set is 
+
+S =
+
+n
+
+j s j ≥ τs, c j ≥ τc, n+ 
+
+> j
+
+> n−
+
+> j
+
+o
+
+. (4) This selection removes neurons that are unstable across resampled training sets or whose association with harmful inputs changes direction. The resulting activation vector aS (x)
+
+is used as the input to the SafetyOracle. Section 6.1 compares our method with prior statistic-based neuron selection. 
+
+3.3.3 Neuron-Based SafetyOracle 
+
+The selected safety neurons capture safety-related informa-tion, but their activations form a multidimensional repre-sentation rather than a single score that can be directly compared across candidate prompts. We therefore train a lightweight classifier as SafetyOracle to map their joint acti-vation pattern into a continuous safety signal [10, 16]. Given an input x, let aS (x) denote the activation vector of the se-lected safety neurons. We standardize each dimension as 
+
+zS (x) = ( aS (x) − μ)/s, where μ and s are the training-set mean and standard deviation. The SafetyOracle computes: 
+
+Salarm (x) = sigmoid 
+
+
+
+w⊤zS (x) + b
+
+
+
+∈ (0, 1). (5) We refer to Salarm (x) as the safety alarm score. Since harm-ful inputs are assigned the label y = 1, a higher score indicates an activation pattern that is more characteristic of harmful prompts, suggesting stronger internal recognition of harmful intent. A lower score indicates a weaker internal safety alarm. Although proposed stability selection in Section 3.3.2 re-moves many unreliable neurons, the retained features may still contain redundant or correlated information [40]. We there-fore implement the SafetyOracle using logistic regression with Elastic Net regularization [17]. Elastic Net combines ℓ1
+
+and ℓ2 regularization. The ℓ1 term encourages uninformative feature weights to become zero, while the ℓ2 term stabilizes the weights of correlated features. This combination allows the SafetyOracle to further control redundancy in the selected neuron features when learning the final scoring function. Let Lcls = 1 
+
+> N
+
+∑Ni=1 LBCE (yi, Salarm (xi)) denote the classifica-tion loss based on the Salarm in Eq. 5. We optimize min  
+
+> w,b
+
+Lcls + 1
+
+NC 
+
+
+
+ρ∥w∥1 + 1 − ρ
+
+2 ∥w∥22
+
+
+
+, (6) where N is the number of training examples, C > 0 controls the inverse regularization strength, and ρ ∈ [0, 1] balances the 
+
+ℓ1 and ℓ2 penalties. We compare Elastic Net with four other classification models and justify this choice in Appendix E. During fuzzing, the SafetyOracle is used only to guide candi-date selection and mutation. Each candidate requires only a prefill pass and does not require the target model to generate the response. The continuous safety alarm score Salarm allows the fuzzer to rank candidates that would otherwise receive the same response-level failure label. Moreover, because the SafetyOracle remains differentiable with respect to the input embeddings, its gradients can identify sensitive token posi-tions for the mutation process described in Section 3.4.2. 
+
+## 3.4 NeuronFuzz Pipeline 
+
+Following the software fuzzing described in Section 2.2, Neu-ronFuzz adapts the same feedback-guided pipeline to safety evaluation. In each iteration, the scheduler first selects a jail-break template for mutation. The mutator then uses SafetyOr-acle gradients to identify sensitive template positions and a masked language model to generate context-compatible re-placements. Each resulting candidate is executed through a prefill pass to collect the selected safety-neuron activations. Finally, the SafetyOracle converts these activations into a 5safety alarm score and uses it to update the seed scheduler for the next iteration. The workflow is shown in Figure 1(b). 
+
+3.4.1 Seed Scheduler 
+
+The seed scheduler determines which templates are selected for further mutation. We follow prior work and adopt MCTS-Explore [76], where each node represents a jailbreak template and each edge records the mutation relationship between a parent and its child. The scheduler selects templates according to the statistics accumulated from previous oracle feedback, balancing the exploration of new templates with the reuse of promising ones. The selected template is then passed to the gradient-guided mutator. 
+
+3.4.2 Gradient-Guided Mutation 
+
+Given a selected template τ and a harmful payload ph, we construct the input x = τ ⊕ ph. Rather than mutating template tokens uniformly or directly optimizing arbitrary token re-placements [84], we use the SafetyOracle to focus mutation on positions that most strongly influence the internal safety signal. Specifically, SafetyOracle gradients determine where 
+
+to mutate, while a masked language model determines what 
+
+context-compatible replacement to use. This design narrows the mutation space through token replacement, preserving the prompt length and natural-language structure without intro-ducing additional tokens or auxiliary optimization variables. Since the SafetyOracle is differentiable with respect to the input, we backpropagate the safety alarm score to the input embeddings. Let et denote the embedding of token t. Its sensitivity is defined as: 
+
+gt = ∂Salarm (x)
+
+∂et 2
+
+. (7) A larger gt indicates that the corresponding position has a stronger influence on the internal safety signal. We therefore rank template tokens by gt and select the top-ranked positions for mutation. For each selected position, the original token is masked and a lightweight masked language model proposes context-compatible replacements. Each replacement produces a new template τ′, which is combined with the unchanged payload to form x′ = τ′ ⊕ ph. All mutations are restricted to the jailbreak template, ensuring that a successful test reflects a safety bypass rather than a modification of the underlying payload (i.e., harmful request) [54, 58]. 
+
+3.4.3 Runtime Instrumentation 
+
+For each candidate input x′, NeuronFuzz performs a prefill pass through the target model and collects the activations of the selected safety-neuron set S. These activations serve as the runtime execution signal and are passed to the SafetyOracle for evaluation. Unlike existing response-level fuzzing [11,76], this step does not require autoregressive response generation. 
+
+3.4.4 Oracle Feedback and Seed Update 
+
+Given the collected safety-neuron activations, the SafetyOr-acle computes the safety alarm score Salarm (x′) using Eq. 5. Since a lower score indicates weaker internal recognition of harmful intent, NeuronFuzz defines the fuzzing reward as 
+
+R(x′) = −Salarm (x′). The candidate and its reward are then added to the MCTS tree to update the scheduler. Candidates with lower safety alarm scores receive higher rewards and are therefore more likely to be selected for subsequent mutation. Compared with prior response-level feedback, Salarm provides a continuous signal, allowing the scheduler to distinguish can-didates even when they would receive the same response-level outcome. This feedback closes the fuzzing loop and guides subsequent exploration toward more promising templates. 
+
+## 4 Implementation & Experiment Setup 4.1 Fuzzing Details 
+
+Activation Extraction and Neuron Selection. We register forward hooks on the gate and up projection modules of ev-ery Transformer block and apply element-wise max pool-ing [66, 67]. To remove the noise introduced by chat format, we retain only the activation positions that correspond to the input prompt. For stability selection, we perform B = 100 bootstrap runs. Following previous research [28], each run samples 70% of the training examples and fits a logistic re-gression classifier on the extracted activations. A neuron is included in the final set when its selection rate is at least 0.6, its sign consistency is at least 0.75, and its dominant coeffi-cient direction is positive [40]. 
+
+SafetyOracle Training. We standardize each selected neuron using the mean and standard deviation computed from the training set. We train one SafetyOracle for each source model using Elastic Net logistic regression. We set the inverse regu-larization strength to C = 1.0 and the ℓ1 ratio to ρ = 0.5. We use the SAGA solver with a maximum of 5,000 iterations and a convergence tolerance of 10 −4.
+
+Mutation. For gradient-guided mutation, we first identify three template token positions with the largest gradient norms using Eq. 7. We use ModernBERT-base (149M parameters) as the masked language model for token replacement [63]. At each selected position, we replace the original token with a mask token and use ModernBERT to propose context-compatible alternatives. We then construct 20 replacement tuples across the three positions. After removing duplicate variants and discarding candidates that modify the harmful payload, we randomly retain eight mutation candidates for each parent template. Each candidate is combined with the un-changed payload and evaluated through a forward pass of the target model. The candidates are then scored by SafetyOracle. 
+
+Seed Templates. Recent studies in software fuzzing suggest the quality of the initial seed pool can affect fuzzing effec-6Table 1: Specifications of target LLMs.                                                                                                                         
+
+> Model Usage Architecture Active/Total Params (B) Reasoning Access Release Date Provider
+> DeepSeek-R1-14B [23] Source Dense 14.7 / 14.7 CoT White-box 2025.01 DeepSeek GPT-OSS-20B [2] Source MoE 3.6 / 21.0 CoT White-box 2025.08 OpenAI Gemma-3-4B-it [18] Source Dense 4.0 / 4.0 Non-CoT White-box 2025.03 Google Gemma-4-E4B-it [59] Source Dense 4.5 / 8.0 †CoT/Non-CoT White-box 2026.04 Google Llama-3.1-8B-Instruct [22] Source Dense 8.0 / 8.0 Non-CoT White-box 2024.07 Meta Llama-3.2-3B-Instruct [3] Transfer Dense 3.0 / 3.0 Non-CoT Inference only 2024.09 Meta Phi-4 [1] Transfer Dense 14.0 / 14.0 Non-CoT Inference only 2024.12 Microsoft Qwen3.6-35B-A3B [51] Transfer MoE 3.0 / 35.0 CoT/Non-CoT Inference only 2026.04 Alibaba Qwen3.6-27B [50] Transfer Dense 27.0 / 27.0 CoT/Non-CoT Inference only 2026.04 Alibaba GLM-4.7-Flash [78] Transfer MoE 3.0 / 30.0 CoT/Non-CoT Inference only 2026.01 Z.ai LongCat-2.0 [41] Transfer MoE 48.0 / 1600.0 CoT/Non-CoT API inference only 2026.06 Meituan DeepSeek-V4-Flash [71] Transfer MoE 13.0 / 284.0 CoT/Non-CoT API inference only 2026.04 DeepSeek DeepSeek-V4-Pro [71] Transfer MoE 49.0 / 1600.0 CoT/Non-CoT API inference only 2026.04 DeepSeek Grok-4.5 [69] Transfer MoE Undisclosed CoT API inference only 2026.07 SpaceXAI Gemini-2.5-Pro [13] Transfer Undisclosed Undisclosed CoT API inference only 2025.06 Google Gemini-3-Flash [20] Transfer Undisclosed Undisclosed CoT/Non-CoT API inference only 2025.12 Google
+> †For Gemma-4-E4B-it, 4.5B denotes the effective parameter count, whereas 8.0B includes the per-layer embedding parameters. CoT/Non-CoT denotes models that support both explicit thinking and direct-answer modes. We disable CoT for hybrid models by default for evaluation efficiency.
+
+tiveness [24, 56]. Following previous work [36], we collect jailbreak templates from a public repository [4] and remove duplicate, unsuitable, or payload-modifying templates. Af-ter filtering, we retain 64 templates as the initial seed pool. Appendix A provides further details. 
+
+## 4.2 Datasets and Seed Templates 
+
+Target LLMs. For the evaluation, we use the 16 recent LLMs from nine providers as shown in Table 1. Five models are used as white-box source models, where we construct the Safety-Oracle and directly evaluate NeuronFuzz under the evaluator setting described in Section 3.2. For cross-model transfer, jailbreak templates are optimized on selected source models and then applied zero-shot to target models without target-specific optimization, following the adversary setting. The model set covers both dense and mixture-of-experts (MoE) ar-chitectures, as well as Chain-of-Thought (CoT), non-CoT, and hybrid reasoning modes. All transfer models are evaluated with an inference-only setting, whereas proprietary models are accessed through the OpenRouter API [46]. 
+
+Oracle Training Data. We construct a balanced dataset for activation extraction and SafetyOracle training. The initial dataset contains 7,000 harmful prompts randomly collected from LLM-LAT [57] and sorry-bench [70], together with 7,000 benign prompts collected from Natural Reasoning [77], OpenAssistant [30], and Dolly [14]. To reduce template-specific shortcuts as introduced in Section 3.3.1, we further construct 1,000 template-invariant pairs using 10 jailbreak templates as described in Appendix A. Each pair contains one harmful payload and one benign payload wrapped by the same template. 
+
+Oracle-ASR Evaluation Data. To evaluate the trained Safe-tyOracle for each target model, we construct two disjoint test sets. The first set contains 4,000 unwrapped prompts (2,000 harmful and 2,000 benign) and measures its classification ability. We use it to evaluate whether SafetyOracle can dis-tinguish harmful from benign inputs. The second set evalu-ates SafetyOracle under jailbreak templates. It contains 4,000 harmful prompts and a disjoint pool of 20 jailbreak templates. Each harmful prompt is combined with one randomly selected template from this pool. We generate complete target-model responses for these wrapped inputs, measure their response-level attack success rate (ASR), and analyze the relationship between jailbreak success and the corresponding safety alarm scores. The prompts and jailbreak templates in both test sets are disjoint from those used to train SafetyOracle. 
+
+Fuzzing Evaluation Data. To show the effectiveness of Neu-ronFuzz, we randomly sample 100 harmful questions from the six categories of StrongREJECT [58]. These questions are used only for fuzzing and response-level evaluation and do not overlap with the datasets described above. 
+
+## 4.3 Evaluation Metrics 
+
+We use a multi-stage evaluation pipeline to determine whether a generated response constitutes a successful jailbreak. Llama-Guard-4-12B [22] and Qwen3Guard-Gen-8B [80] indepen-dently evaluate every response. A response is assigned the agreed label when both judges produce the same decision. When their decisions differ, human annotators review the re-sponse and determine the final label. Let Ji, j ∈ { 0, 1} indicate whether template τ j successfully jailbreaks the model for harmful payload pi; follow [76], we define five metrics below. 
+
+Jailbreak Discovery Rate (JDR). JDR measures the ratio of harmful questions for which the fuzzer discovers at least one 7Table 2: Oracle performance on clean and jailbreak inputs. S denotes the mean safety alarm score. ∆wrap measures the score reduction after applying a jailbreak template, and ∆sep measures the separation between failed and successful jailbreaks.                                                  
+
+> Target Model Clean Classification Jailbreak Evaluation AUROC Sbenign Sharmful ASR (%) ∆wrap Ssucc Sfail ∆sep
+> DeepSeek-R1-14B 0.997 0.001 0.999 14.20 0.116 0.557 0.937 0.380 Llama-3.1-8B-Instruct 0.989 0.001 0.999 22.35 0.147 0.586 0.929 0.343 Gemma-3-4B-it 0.969 0.013 0.976 38.75 0.195 0.572 0.913 0.341 Gemma-4-E4B-it 0.998 0.001 0.999 1.20 0.031 0.492 0.974 0.482 GPT-OSS-20B 0.999 0.001 0.999 0.35 0.040 0.633 0.960 0.327
+
+successful template within the given budget. Let TB denote all templates discovered within budget B. We define JDR = 
+
+> 1
+> N
+
+∑Ni=1 max τ j ∈TB Ji, j. JDR measures the fuzzer’s ability to discover a successful template for each harmful question. 
+
+Response Generations per Discovery (RGD). RGD mea-sures the average number of target-model responses gener-ated before the first verified jailbreak template. It includes responses generated during successful searches and the fi-nal verification. A lower RGD indicates less dependence on autoregressive response generation during the search. 
+
+End-to-End Time per Discovery (ETD). ETD measures the average time required to discover the first verified jailbreak for a successfully jailbroken question. It includes all compo-nents of the fuzzing, such as target-model evaluation, gradient computation, mutation-model inference, SafetyOracle scor-ing, response generation, and external judge evaluation. We report both RGD and ETD only over successful questions. 
+
+Attack Success Rate (ASR). ASR measures the effectiveness of an individual template [76]. Given N harmful questions, we define ASR (τ j) = 1 
+
+> N
+
+∑Ni=1 Ji, j. A higher ASR indicates that the template succeeds on a larger fraction of the evaluation questions. To evaluate the quality of harmful responses, we also report StrongREJECT rubric [58]. 
+
+Ensemble Attack Success Rate (EASR). EASR measures the combined effectiveness of a small set of templates. Let 
+
+TK denote the selected set of K templates. A question is considered successfully tested if at least one template in TK
+
+produces a successful jailbreak. We compute EASR (TK ) =  
+
+> 1
+> N
+
+∑Ni=1 I
+
+h
+
+max τ j ∈TK Ji, j = 1
+
+i
+
+. EASR represents the percent-age of questions that could leverage at least one template from the subset to jailbreak the target LLM. 
+
+## 4.4 Evaluation Objectives 
+
+We evaluate NeuronFuzz along four dimensions: • EO1: Oracle Validity. Whether the selected safety neurons produce a reliable SafetyOracle whose safety alarm score is associated with jailbreak success. • EO2: Fuzzing Effectiveness and Efficiency. Whether SafetyOracle feedback improves jailbreak discovery while reducing response generation and end-to-end search cost. • EO3: Universal Template. Can NeuronFuzz optimize a shared template that is effective across harmful payloads? • EO4: Transferability. Do optimized templates retain effec-tiveness on different architectures, scales, reasoning modes, modalities, and datasets without further optimization? 
+
+## 5 Experimental Results 5.1 EO1: Oracle Validity 
+
+We evaluate whether the SafetyOracle provides a reliable safety signal for fuzzing from three aspects: whether it cap-tures safety-related information, whether this signal remains meaningful under unseen jailbreak contexts, and, most impor-tantly, whether it can rank candidate prompts according to their likelihood of jailbreak success. We first evaluate clean classification on harmful and benign prompts without jail-break templates. We then evaluate 4,000 harmful prompts wrapped with jailbreak templates. For each wrapped input, we compute its safety alarm score and generate the target-model response to obtain the response-level evaluation result. 
+
+Safety Signal Validity. Table 2 shows that the selected safety neurons provide a strong signal for distinguishing harmful from benign inputs. Across all five source models, the Safe-tyOracle achieves AUROC values between 0.969 and 0.999. Benign prompts receive mean safety alarm scores close to zero, whereas harmful prompts receive scores close to one. This confirms that the learned score captures safety-related information before any jailbreak context is introduced. 
+
+Behavior under Jailbreak Contexts. We next examine whether the learned signal remains informative when the same harmful payload is embedded in jailbreak templates. The mean safety alarm score decreases on all five models after wrapping, with ∆wrap ranging from 0.031 to 0.195. Be-cause the harmful payload itself is unchanged, this consis-tent decrease suggests that the surrounding jailbreak context weakens the internal signal associated with harmful-intent recognition. This observation is consistent with prior find-ings that jailbreak contexts can suppress safety-related in-ternal representations [81, 82]. More importantly, the alarm score consistently separates successful from failed jailbreak attempts. Although the overall response-level ASR varies 8I1 I2 I3 I4 I5 I6 I7 I8 I9 I10 
+
+> Safety alarm score interval (sorted from low to high)
+> 010 20 30 40 50 60 70
+> Attack success rate (%)
+> 63.7% 36.8% 25.0% 23.5% 13.0% 4.0%
+> Relation between safety alarm score and ASR
+> Gemma-3-4B-it Llama-3.1-8B-Instruct DeepSeek-R1-14B
+
+Figure 2: Relationship between the safety alarm score and response-level ASR. substantially across models, from 0.35% on GPT-OSS-20B to 38.75% on Gemma-3-4B-it, successful jailbreaks receive lower mean alarm scores than failed attempts on every model. The resulting ∆sep ranges from 0.327 to 0.482. For example, on DeepSeek-R1-14B, the mean score decreases from 0.937 for failed attempts to 0.557 for successful jailbreaks. Simi-lar gaps appear across the remaining models. These results indicate that Salarm captures information related to jailbreak susceptibility beyond harmful-versus-benign classification. 
+
+Correlation with Jailbreak Success. For fuzzing, however, separating successful and failed samples on average is not suf-ficient: the SafetyOracle should provide a continuous ranking signal that identifies which candidates are more promising. We therefore further analyze the relationship between Salarm 
+
+and response-level ASR. We focus on Llama-3.1-8B-Instruct, DeepSeek-R1-14B, and Gemma-3-4B-it, which provide suf-ficient successful responses for interval-level analysis. For each model, we sort the 4,000 wrapped inputs by their alarm scores, divide them into ten ordered intervals, and compute the ASR within each interval. Figure 2 reports the resulting ASR with 95% confidence intervals. A clear inverse relation-ship appears across all three models: intervals with lower safety alarm scores consistently exhibit higher jailbreak suc-cess rates. The Spearman coefficients are −0.964 for Llama-3.1-8B-Instruct, −0.927 for DeepSeek-R1-14B, and −0.976 for Gemma-3-4B-it. These strong negative correlations show that Salarm provides an ordering over candidate jailbreak sen-sitivity rather than only a binary safety prediction. In other words, even when multiple candidates would receive the same response-level failure label, their alarm scores can still indi-cate which candidates are closer to successful jailbreaks. 
+
+## 5.2 EO2: Fuzzing Effectiveness and Efficiency 
+
+To validate EO2, we evaluate NeuronFuzz on the StrongRE-JECT described in Section 4.2. For each harmful payload, we run an independent fuzzing process with a budget of 20 mutation iterations (as shown in Figure 3, by iteration 20, the ASR has stabilized and safety alarm score decreases slowly). Table 3: Effectiveness and efficiency of NeuronFuzz on dif-ferent source models. Best results are shown in bold , and second-best results are underlined. 
+
+Target Model Method JDR ↑ RGD ↓ ETD (s) ↓
+
+DeepSeek-R1-14B Seed 18% – –GCG 19% 1.0 587.2 AutoDAN 47% 14.7 470.3 PAIR 94% 15.6 43.4 
+
+LLM-Fuzzer 93% 179.6 114.5 NeuronFuzz 100% 1.0 64.1 Llama-3.1-8B-Instruct Seed 25% – –GCG 91% 1.0 621.7 AutoDAN 86% 31.8 557.2 PAIR 81% 17.2 51.4 LLM-Fuzzer 97% 214.7 97.7 NeuronFuzz 100% 1.0 50.7 
+
+Gemma-3-4B-it Seed 36% – –GCG 97% 1.0 634.1 AutoDAN 94% 22.3 541.6 PAIR 100% 17.8 53.7 
+
+LLM-Fuzzer 100% 183.9 106.8 NeuronFuzz 100% 1.0 61.8 Gemma-4-E4B-it Seed 4% – –GCG 28% 1.0 612.9 AutoDAN 21% 53.8 635.1 PAIR 37% 22.3 58.5 LLM-Fuzzer 49% 243.6 124.7 NeuronFuzz 76% 1.0 56.3 
+
+GPT-OSS-20B Seed 0% – –GCG 0% – –AutoDAN 19% 45.2 725.2 PAIR 43% 18.6 44.7 
+
+LLM-Fuzzer 48% 304.1 133.6 NeuronFuzz 96% 1.0 72.5 
+
+NeuronFuzz evaluates intermediate candidates using the Safe-tyOracle and generates a target-model response only for final verification. The search stops when the budget is exhausted. We report the seed JDR of all 64 × 100 samples. We com-pare NeuronFuzz with four representative automated jailbreak methods, GCG [84], AutoDAN [35], PAIR [11], and LLM-Fuzzer [76]. These methods cover token-level gradient opti-mization, genetic prompt search, attacker-LLM refinement, and fuzzing-based template mutation. Appendix B provides the complete configurations of baseline methods. As shown in Table 3, NeuronFuzz achieves the highest JDR on all five source models. It reaches 100% JDR on Llama-3.1-8B-Instruct, DeepSeek-R1-14B, and Gemma-3-4B-it. On the two more strongly aligned models, it achieves 76% JDR on Gemma-4-E4B-it and 96% on GPT-OSS-20B, exceeding the evaluated methods by 27 and 48 percentage points, respectively. On Gemma-3-4B-it, NeuronFuzz, PAIR, and LLM-Fuzzer all achieve 100% JDR, while NeuronFuzz 9requires fewer response generations. The advantage is partic-ularly clear on Gemma-4-E4B-it and GPT-OSS-20B, where the initial seed templates achieve only 4% and 0% JDR, re-spectively. Response-level fuzzers rely on discrete success or failure feedback from generated responses. When successful generations are rare, this binary signal provides little infor-mation for distinguishing promising failed candidates, which limits the effectiveness of subsequent seed selection and mu-tation. GCG and AutoDAN avoid response-level feedback by optimizing the likelihood of affirmative response prefixes. However, this surrogate objective has become less reliable on recent aligned and reasoning models, which may produce affirmative prefixes or extended reasoning without ultimately generating genuinely harmful content [33, 48, 73, 83]. In con-trast, the SafetyOracle assigns a continuous score to every candidate before response generation. It therefore provides in-formative feedback even when none of the current candidates produces a successful jailbreak, helping NeuronFuzz maintain high discovery coverage on these more aligned models. NeuronFuzz maintains an RGD of 1.0 as it evaluates inter-mediate candidates through prefill-only SafetyOracle scoring and generates the response only for final verification. GCG also achieves an RGD of 1.0 when successful, but its suffix-level optimization requires substantially more computation and performs poorly on the more strongly aligned models. Au-toDAN requires between 14.7 and 53.8 responses per discov-ery, PAIR requires between 15.6 and 22.3, and LLM-Fuzzer requires between 179.6 and 304.1. These results show that the SafetyOracle removes the need to repeatedly generate target-model responses as mutation feedback. This reduction in response generation also leads to end-to-end time efficiency. NeuronFuzz achieves the lowest average ETD on Llama-3.1-8B-Instruct and Gemma-4-E4B-it, and the second-lowest ETD on the other three models. PAIR has a lower conditional ETD on successfully jailbroken ques-tions for DeepSeek-R1-14B and GPT-OSS-20B, but its JDR is lower by 6 and 53 percentage points, respectively. GCG and AutoDAN require several hundred seconds per discovery be-cause they repeatedly evaluate large token-level or population-level candidate sets. NeuronFuzz additionally incurs a small one-time offline cost to construct the SafetyOracle. As shown in Appendix C, this process takes only 18 minutes and 32 seconds on average and can be further used in subsequent testing. Overall, NeuronFuzz improves jailbreak discovery coverage, greatly reduces complete response generation, and maintains low end-to-end search cost with only a modest one-time preparation overhead. 
+
+## 5.3 EO3: Universal Template Optimization 
+
+Section 5.2 optimizes a separate jailbreak template for each harmful payload. We next evaluate whether NeuronFuzz can optimize universal templates that generalize across payloads. For each source model, we optimize shared templates over a 10 −3 
+
+> 10 −2
+> 10 −1
+> Safety alarm score
+> 020 40 60 80 100
+> Attack success rate (%)
+
+(a) ASR vs. safety alarm score 
+
+> 10 −2
+> 10 −1
+> Safety alarm score
+> 020 40 60 80 100
+> Attack success rate (%)
+
+(b) EASR vs. mean safety alarm score   
+
+> Llama-8B Gemma-4-E4B DeepSeek-14B GPT-OSS-20B Gemma-3-4B Initial Final
+
+Figure 3: ASR and EASR versus the safety alarm score during 20 fuzzing steps. disjoint set of 100 harmful payloads [58] for 20 iterations, us-ing the mean SafetyOracle safety alarm score across payloads as the objective. Following prior work [76], we report ASR for the lowest-scoring template and EASR for the five lowest-scoring templates. This setting evaluates whether NeuronFuzz can discover a small set of reusable jailbreak templates. Figure 3 shows the optimization trajectories. Across all models, decreases in the mean safety alarm score are accom-panied by consistent improvements in ASR and EASR, show-ing that the SafetyOracle provides an effective optimization signal for template search. The EASR reaches at least 90% on four models and 82% on Gemma-4-E4B-it, indicating that a small set of optimized templates can cover a large fraction of harmful payloads. Most gains are achieved within the early iterations, and both attack performance and the safety alarm score become relatively stable near the end of the 20-iteration budget. Overall, these results show that NeuronFuzz can effi-ciently optimize reusable jailbreak templates that generalize across different harmful payloads on the same source model. 
+
+StrongREJECT Rubric. Prior work has shown that some jailbreaks achieve non-refusal without eliciting substantive 10 Table 4: StrongREJECT rubric evaluation across models. 
+
+Model StrongREJECT Conv. Spec. 
+
+DeepSeek-R1-14B 0.647 4.32 4.23 Llama-3.1-8B-Instruct 0.559 4.42 4.26 Gemma-3-4B-it 0.714 4.28 4.36 Gemma-4-E4B-it 0.425 4.24 4.18 GPT-OSS-20B 0.445 4.11 4.13 
+
+Average 0.558 4.27 4.23 
+
+harmful information [58]. We further evaluate the quality of successful responses using StrongREJECT rubric, which measures convincingness and specificity in addition to refusal. Appendix D provides the complete scoring setup. As shown in Table 4, the average StrongREJECT score is 0.558, with convincingness and specificity scores of 4.27 and 4.23 out of 5, respectively. These results indicate that the templates dis-covered by NeuronFuzz elicit substantive harmful responses rather than merely bypassing refusal. 
+
+## 5.4 EO4: Cross-Model Transferability 
+
+To answer EO4, we jointly optimize jailbreak templates on Llama-3.1-8B-Instruct and GPT-OSS-20B (Appendix F justi-fies this choice). We follow the fuzzing procedure described in Section 5.3 and run the search for 160 iterations (where the safety alarm scores have converged). During each iteration, both source-model oracles evaluate each candidate, and we use their mean safety alarm score as feedback for seed selec-tion and mutation. After optimization, we directly apply the resulting templates to the evaluation models without further mutation or model-specific tuning. We repeat each evaluation five times with a generation temperature of 1.0 and report the mean and standard deviation of top-1 ASR and top-5 EASR. Table 5 reports the cross-model transfer results. Harm-ful queries without jailbreak templates achieve at most 8% ASR and fail completely on 11 of the 14 models. In contrast, the optimized templates achieve transfer without any target-specific optimization. Transfer is particularly strong across the eight inference-only target models. The optimized top-1 template achieves an average ASR of 69.6%, while the top-5 template set reaches an average EASR of 92.6%. Seven of the eight models achieve EASR above 90%, including 98.6% on Llama-3.2-3B-Instruct and 98.0% on Qwen3.6-35B-A3B. Strong transfer is observed across different model families, parameter scales, reasoning modes, and both dense and MoE architectures. These results show that the optimized templates transfer well beyond the source models and remain effective across different target LLMs. The optimized templates also transfer to proprietary mod-els. Across the six API models, the average ASR and EASR are 44.1% and 60.0%, respectively. Gemini-2.5-Pro shows the strongest transfer, reaching 85.2% ASR and 98.2% EASR. Table 5: Universal-template transfer evaluation across target models over five runs. 
+
+Target Model Seeds ASR EASR 
+
+DeepSeek-R1-14B 4% 79 .0% ±1.9% 98 .6% ±1.1% 
+
+Gemma-3-4B-it 8% 85 .8% ±2.3% 98 .2% ±1.3% 
+
+Gemma-4-E4B-it 0% 43 .8% ±2.2% 70 .4% ±3.0% 
+
+Llama-3.2-3B-Instruct 2% 76 .0% ±3.5% 98 .6% ±1.7% 
+
+Phi-4 0% 70 .8% ±2.5% 91 .4% ±3.5% 
+
+Qwen3.6-35B-A3B 0% 67 .6% ±3.5% 98 .0% ±1.6% 
+
+Qwen3.6-27B 0% 63 .2% ±2.3% 90 .2% ±3.6% 
+
+GLM-4.7-Flash 0% 70 .4% ±3.4% 95 .0% ±1.6% 
+
+Inference Average – 69.6% 92.6% 
+
+LongCat-2.0 0% 66 .8% ±4.1% 95 .6% ±2.9% 
+
+DeepSeek-V4-Flash 0% 53 .0% ±2.0% 71 .2% ±1.5% 
+
+DeepSeek-V4-Pro 0% 17 .6% ±2.4% 28 .8% ±1.5% 
+
+Grok-4.5 0% 17 .2% ±0.4% 28 .6% ±2.3% 
+
+Gemini-2.5-Pro 0% 85 .2% ±1.9% 98 .2% ±2.2% 
+
+Gemini-3-Flash 0% 24 .6% ±1.5% 37 .4% ±1.3% 
+
+Proprietary Average – 44.1% 60.0% 
+
+The templates also achieve 66.8% ASR and 95.6% EASR on LongCat-2.0 and 53.0% ASR and 71.2% EASR on DeepSeek-V4-Flash. Transfer is weaker on DeepSeek-V4-Pro, Grok-4.5, and Gemini-3-Flash, but all three models still exhibit non-zero ASR and EASR despite receiving no target-specific optimiza-tion. Overall, these results show that templates optimized using white-box surrogate models can retain meaningful ef-fectiveness when transferred directly to proprietary models accessible only through their input-output interfaces. We also evaluate cross-dataset transfer on HarmBench in Appendix G, which retains 67.0% ASR and 87.3% EASR. Table 6: Transferability of NeuronFuzz on VLMs.                               
+
+> Target Model Baseline NeuronFuzz ASR / EASR
+> T2I NSFW T2I NSFW
+> Qwen2.5-VL-3B-Instruct 2% 6% 73% / 93% 88% / 100% Qwen2.5-VL-7B-Instruct 0% 4% 65% / 81% 63% / 89% Qwen3.5-35B-A3B 1% 0% 41% / 72% 69% / 82% Kimi-VL-A3B-Instruct 5% 8% 86% / 100% 83% / 100% Gemma-4-31B-it 0% 0% 57% / 83% 71% / 94%
+> Average 1.6% 3.6% 64.4% / 85.8% 74.8% / 93.0%
+
+Transferability on Different Modalities. We further evalu-ate whether the templates optimized by NeuronFuzz transfer to multimodal safety tasks. We consider five Visual Language Models (VLMs): Qwen2.5-VL-3B-Instruct and Qwen2.5-VL-7B-Instruct [65], Qwen3.5-35B-A3B [49], Kimi-VL-A3B-Instruct [60], and Gemma-4-31B-it [59]. We reuse the tem-plates optimized in the previous text-only fuzzing without further adaptation. We evaluate two visual tasks. For text-to-image (T2I), we randomly sample 100 harmful instructions from HarmBench [38] and convert each instruction into an image following prior works [19, 34]. The accompanying text 11 prompt is “Answer the question based on the image.” For NSFW evaluation, we sample 100 unsafe images from the NSFW-1024 dataset [75] and use “Describe the image.” as the payload. The baseline uses the same images and payloads without a jailbreak template. As shown in Table 6, the baseline ASR is low across all models, averaging only 1.6% on T2I and 3.6% on NSFW. After adding the transferred templates, the average ASR increases to 64.4% on T2I and 74.8% on NSFW, while the corresponding EASR reaches 85.8% and 93.0%, respectively. These results show that templates opti-mized from text-only internal safety signals can transfer to visual tasks without access to the target VLM’s activations. The higher performance on NSFW images further suggests that the optimized templates generalize beyond textual harm-ful instructions to image-specific unsafe content. 
+
+## 6 Ablation Study 6.1 Safety-Neuron Construction 
+
+We examine the two designs used to construct the safety-neuron set: template-invariant activation extraction (Sec-tion 3.3.1) and stability-aware neuron selection (Sec-tion 3.3.2). We conduct the ablation on Llama-3.1-8B-Instruct while keeping other configurations fixed. Prompt-pair only 
+
+extracts activations from harmful and benign prompts without introducing jailbreak-template variations. Z-score replaces stability selection with statistic-based ranking method [67]. 
+
+Random selects the same number of neurons uniformly at ran-dom from the corresponding layers. We report clean-prompt AUROC, the Spearman correlation between the safety alarm score and ASR, and the downstream JDR. Table 7: Ablation of safety-neuron extraction and selection. 
+
+Extraction Selection AUROC ↑ ρ ↓ JDR ↑
+
+Prompt-pair only Stability 0.834 -0.437 74% Template-invariant Z-score 0.974 -0.737 82% Template-invariant Random 0.682 0.121 16% 
+
+Template-invariant Stability 0.989 -0.964 100% 
+
+Table 7 shows that the full NeuronFuzz achieves the best performance across all three metrics. Removing template-invariant extraction reduces AUROC from 0.989 to 0.834, weakens the correlation from −0.964 to −0.437, and de-creases JDR from 100% to 74%. This indicates that neurons identified only from clean prompts do not generalize well to harmful inputs under jailbreak contexts, while including template variations helps preserve informative safety signals across different prompt contexts. Replacing stability selection with Z-score ranking retains a high clean-prompt AUROC of 0.974, but reduces the correlation to −0.737 and JDR to 82%. This suggests that classification accuracy alone does not guarantee a useful fuzzing signal. Stability-aware selection favors neurons whose associations remain consistent across training samples, producing a score that better ranks jailbreak candidates. Random neuron selection performs substantially worse, with an AUROC of 0.682, a positive correlation of 0.121, and only 16% JDR. Overall, template-invariant extrac-tion improves robustness to jailbreak contexts, while stability selection provides a more reliable signal for fuzzing. 
+
+## 6.2 Oracle-Guided Fuzzing 
+
+We examine the roles of continuous oracle feedback and gradient-guided mutation on well-aligned GPT-OSS-20B. The w/o gradient guidance variant retains continuous Safety-Oracle scoring but selects mutation positions randomly; the 
+
+binary feedback variant replaces SafetyOracle with response-level success labels and follows the ranking strategy of LLM-Fuzzer. Since binary feedback is non-differentiable, it also uses random token positions. All variants use the same seeds, mutation model, and candidate budget. We use 100 iterations instead of the default 20 to provide the weakened variants with sufficient opportunity to discover successful mutations. Table 8: Ablation of continuous oracle feedback and gradient-guided mutation on GPT-OSS-20B with 100 iterations.                 
+
+> Variant Search Feedback Token Position JDR ↑RGD ↓
+> W/o gradient guidance Continuous Random 21% 1.0 Binary feedback Binary Random 4% 18.3 Full NeuronFuzz Continuous Gradient 99% 1.0
+
+As shown in Table 8, the full method reaches 99% JDR, while removing gradient guidance reduces JDR to 21%. Both variants maintain an RGD of 1.0 because intermediate candi-dates are evaluated through prefill-only oracle scoring. This gap shows that the continuous alarm score supports not only candidate ranking but also sensitive-token localization through its gradients. Without a differentiable score, token-level sensitivity cannot be estimated. The random-position variant still achieves 21% JDR, reflecting the sensitivity of LLMs to small input changes [53, 54] where random substi-tutions occasionally create unusual local patterns or shift the prompt away from the original template distribution, thereby weakening refusal behavior [6]. However, such useful muta-tions are infrequent, whereas gradient guidance systematically targets positions that most strongly affect the internal safety signal. Replacing the continuous oracle with binary feedback further reduces JDR to 4% and increases RGD to 18.3. Be-cause successful responses are near-zero on GPT-OSS-20B, most candidates receive the same failure label, providing lit-tle information for mutation. In contrast, the SafetyOracle assigns a continuous score before decoding, allowing Neu-ronFuzz to distinguish and retain promising candidates even before a successful jailbreak is observed. 12 7 Defenses 7.1 Perplexity Filter & SmoothLLM 
+
+A perplexity filter rejects inputs that are unlikely under a ref-erence language model. Following [5], we use GPT-2 and reject prompts whose perplexity exceeds the selected thresh-old. SmoothLLM generates perturbed copies of each prompt and aggregates their response-level decisions [53]. We use the Swap perturbation with a perturbation ratio of 10% and generate 10 copies for each prompt. Table 9: NeuronFuzz under input defenses.                   
+
+> Model No Defense Perplexity SmoothLLM
+> DeepSeek-R1-14B 100% 98% −2% 74% −26%
+> Llama-3.1-8B-Instruct 100% 95% −5% 71% −29%
+> Gemma-3-4B-it 100% 92% −8% 75% −25%
+> Gemma-4-E4B-it 76% 72% −4% 65% −11%
+> GPT-OSS-20B 96% 91% −5% 79% −17%
+
+As shown in Table 9, the perplexity filter causes only a small reduction in the effectiveness of NeuronFuzz. Across the five models, JDR decreases by only 2–8%. This robust-ness arises because NeuronFuzz uses the masked language model to replace selected tokens with context-compatible al-ternatives while preserving the length and grammatical struc-ture of the original template. Consequently, the optimized templates remain fluent and do not rely on anomalous high-perplexity sequences [84]. SmoothLLM provides a stronger defense, reducing JDR by 11–29%. Character-level swaps can disrupt important words and local structures within the optimized templates, making this defense more effective than perplexity filtering. Nevertheless, NeuronFuzz retains JDRs of 71%, 74%, 75%, 65%, and 79% across the five models. Since NeuronFuzz modifies only a small number of sensitive token positions, randomly selected character perturbations may not consistently disrupt the key structures responsible for the jailbreak. Overall, the results show that input perturba-tion reduces attack effectiveness but does not fully eliminate the vulnerabilities exposed by NeuronFuzz. We also compare with other methods under the input defenses in Appendix H where NeuronFuzz achieves the highest JDR in both settings. 
+
+## 7.2 Input-Side Jailbreak Detection 
+
+To further show the use of SafetyOracle, we use it as an input-side detector for jailbreak prompts. The results in Section 5.1 reveal three distinct alarm-score patterns. Benign prompts usu-ally receive scores close to zero, while direct harmful prompts receive scores close to one. Successful jailbreak prompts often fall between these two regions, suggesting that the surround-ing jailbreak template weakens, but does not fully remove, the model’s internal recognition of harmful intent. Based on this observation, we define the jailbreak detection score as 
+
+Djb (x) = 1 − | 2Salarm (x) − 1| ∈ [0, 1]. The score reaches its maximum when Salarm (x) = 0.5 and decreases as the alarm score approaches either zero or one. Therefore, a higher Djb (x)
+
+indicates that the input is closer to the intermediate alarm-score region associated with successful jailbreaks. We eval-uate the detector using the 4,000 test jailbreak inputs and 4,000 benign and harmful requests described in Section 4.2. We use the response-level evaluation pipeline to assign the ground-truth label, treating successful jailbreaks as positive samples, where normal benign requests and failed jailbreak attempts as negative samples. Table 10: Performance of SafetyOracle for detecting success-ful jailbreak prompts. TPR is reported at a fixed FPR of 5%.                     
+
+> Target Model AUROC Precision F1 TPR@5%FPR
+> Llama-3.1-8B-Instruct 0.957 0.884 0.892 88.4% DeepSeek-R1-14B 0.948 0.867 0.876 86.1% Gemma-3-4B-it 0.963 0.896 0.901 89.3%
+> Average 0.956 0.882 0.890 87.9%
+
+As shown in Table 10, the detector achieves AUROC values between 0.948 and 0.963 across the three models. Its average precision and F1 score are 0.882 and 0.890, respectively. At a fixed false-positive rate of 5%, it detects 87.9% of successful jailbreak prompts on average. These results show that the SafetyOracle provides a useful input-side signal for identify-ing likely successful jailbreaks before response generation. Unlike response-level judges, which require complete target-model outputs, the SafetyOracle detector uses only a prefill pass. Therefore, SafetyOracle can serve as a lightweight and convenient detector that provides useful signals for subse-quent verification. 
+
+## 8 Conclusion 
+
+We presented NeuronFuzz, a white-box fuzzing framework that uses internal neuron activations as continuous feedback for LLM safety evaluation. By constructing a lightweight SafetyOracle and using its differentiable safety alarm score to guide candidate ranking and targeted template mutation, NeuronFuzz reduces reliance on repeated response generation while preserving the harmful payload and overall prompt se-mantics with strong transferability. Our evaluation shows that internal safety representations provide informative signals for jailbreak discovery and support effective generalization across different payloads, models, and modalities. Beyond fuzzing, the SafetyOracle can also serve as an input-side de-tector for identifying likely jailbreak prompts before response generation. Overall, our findings demonstrate that internal model signals can serve as practical execution feedback for LLM fuzzing while also providing useful defensive signals for systematic safety evaluation. 13 References 
+
+[1] Marah Abdin, Jyoti Aneja, Harkirat Behl, Sébastien Bubeck, Ronen Eldan, Suriya Gunasekar, Michael Har-rison, Russell J Hewett, Mojan Javaheripi, Piero Kauff-mann, et al. Phi-4 technical report. arXiv preprint arXiv:2412.08905 , 2024. [2] Sandhini Agarwal, Lama Ahmad, Jason Ai, Sam Altman, Andy Applebaum, Edwin Arbus, Rahul K Arora, Yu Bai, Bowen Baker, Haiming Bao, et al. gpt-oss-120b & gpt-oss-20b model card. arXiv preprint arXiv:2508.10925 ,2025. [3] Meta AI. Llama 3.2: Revolutionizing edge ai and vision with open, customizable models, 2024. URL: https: //ai.meta.com/blog/llama-3-2-connect-202 4-vision-edge-mobile-devices/ .[4] Alex Albert. Jailbreak chat, 2023. URL: https://gi thub.com/alexalbertt/jailbreakchat .[5] Gabriel Alon and Michael Kamfonas. Detecting lan-guage model attacks with perplexity. arXiv preprint arXiv:2308.14132 , 2023. [6] Maksym Andriushchenko, Nicolas Flammarion, et al. Jailbreaking leading safety-aligned llms with simple adaptive attacks. In International Conference on Learn-ing Representations , volume 2025, pages 40116–40143, 2025. [7] Andy Arditi, Oscar Obeso, Aaquib Syed, Daniel Paleka, Nina Panickssery, Wes Gurnee, and Neel Nanda. Refusal in language models is mediated by a single direction. 
+
+Advances in Neural Information Processing Systems ,37:136037–136083, 2024. [8] Earl T Barr, Mark Harman, Phil McMinn, Muzammil Shahbaz, and Shin Yoo. The oracle problem in soft-ware testing: A survey. IEEE transactions on software engineering , 41(5):507–525, 2014. [9] Marcel Böhme, Van-Thuan Pham, and Abhik Roychoud-hury. Coverage-based greybox fuzzing as markov chain. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , pages 1032– 1043, 2016. [10] Lennart Bürger, Fred A Hamprecht, and Boaz Nadler. Truth is universal: Robust detection of lies in llms. 
+
+Advances in Neural Information Processing Systems ,37:138393–138431, 2024. [11] Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J Pappas, and Eric Wong. Jail-breaking black box large language models in twenty queries. In 2025 IEEE Conference on Secure and Trust-worthy Machine Learning (SaTML) , pages 23–42. IEEE, 2025. [12] Hongxu Chen, Yinxing Xue, Yuekang Li, Bihuan Chen, Xiaofei Xie, Xiuheng Wu, and Yang Liu. Hawkeye: Towards a desired directed grey-box fuzzer. In Proceed-ings of the 2018 ACM SIGSAC conference on computer and communications security , pages 2095–2108, 2018. [13] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al. Gem-ini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 , 2025. [14] Mike Conover, Matt Hayes, Ankit Mathur, Jianwei Xie, Jun Wan, Sam Shah, Ali Ghodsi, Patrick Wendell, Matei Zaharia, and Reynold Xin. Free dolly: Introducing the world’s first truly open instruction-tuned llm, 2023. URL: https://www.databricks.com/blog/2023 /04/12/dolly-first-open-commercially-viabl e-instruction-tuned-llm .[15] Sergej Dechand, Tobias Wienand, Fabian Meumertzheim, Peter Samarin, Simon Resch, Khaled Yakdan, Thorsten Holz, and Flavio Toffalini. Jazzer: Coverage-guided fuzzing for semantic vulnerabilities in the java ecosystem. In 2026 IEEE Symposium on Security and Privacy (SP) , pages 3720–3739, 2026. [16] Xuefeng Du, Chaowei Xiao, and Yixuan Li. Haloscope: Harnessing unlabeled llm generations for hallucination detection. In The Thirty-eighth Annual Conference on Neural Information Processing Systems , 2024. [17] Jerome H Friedman, Trevor Hastie, and Rob Tibshirani. Regularization paths for generalized linear models via coordinate descent. Journal of statistical software , 33:1– 22, 2010. [18] Gemma Team. Gemma 3 technical report. URL: https: //storage.googleapis.com/deepmind-media/gem ma/Gemma3Report.pdf , arXiv:2503.19786 .[19] Yichen Gong, Delong Ran, Jinyuan Liu, Conglei Wang, Tianshuo Cong, Anyu Wang, Sisi Duan, and Xiaoyun Wang. Figstep: Jailbreaking large vision-language mod-els via typographic visual prompts. In Proceedings of the AAAI Conference on Artificial Intelligence , vol-ume 39, pages 23951–23959, 2025. [20] Google DeepMind. Gemini 3 Flash: Model card. URL: 
+
+https://storage.googleapis.com/deepmind-m edia/Model-Cards/Gemini-3-Flash-Model-Card. pdf .14 [21] Google DeepMind. Gemini 3 Pro: Model card. URL: 
+
+https://storage.googleapis.com/deepmind-m edia/Model-Cards/Gemini-3-Pro-Model-Card. pdf .[22] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [23] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shi-rong Ma, Xiao Bi, et al. Deepseek-r1 incentivizes rea-soning in llms through reinforcement learning. Nature ,645(8081):633–638, 2025. [24] Adrian Herrera, Hendra Gunadi, Shane Magrath, Michael Norrish, Mathias Payer, and Antony L Hosking. Seed selection for successful fuzzing. In Proceedings of the 30th ACM SIGSOFT international symposium on software testing and analysis , pages 230–243, 2021. [25] John Hughes, Sara Price, Aengus Lynch, Rylan Schaef-fer, Fazl Barez, Arushi Somani, Sanmi Koyejo, Henry Sleight, Erik Jones, Ethan Perez, et al. Best-of-n jail-breaking. Advances in Neural Information Processing Systems , 38:73137–73221, 2026. [26] Aditya K Kamath, Ramya Prabhu, Jayashree Mohan, Si-mon Peter, Ramachandran Ramjee, and Ashish Panwar. Pod-attention: Unlocking full prefill-decode overlap for faster llm inference. In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Vol-ume 2 , pages 897–912, 2025. [27] Hamid Kazemi, Atoosa Chegini, and Maria Safi. Asingle neuron is sufficient to bypass safety align-ment in large language models. arXiv preprint arXiv:2605.08513 , 2026. [28] Utkarsh Mahadeo Khaire and R Dhanalakshmi. Stability of feature selection algorithm: A review. Journal of King Saud University-Computer and Information Sciences ,34(4):1060–1073, 2022. [29] Been Kim, Martin Wattenberg, Justin Gilmer, Carrie Cai, James Wexler, Fernanda Viegas, et al. Interpretabil-ity beyond feature attribution: Quantitative testing with concept activation vectors (tcav). In International con-ference on machine learning , pages 2668–2677. PMLR, 2018. [30] Andreas Köpf, Yannic Kilcher, Dimitri Von Rütte, Sotiris Anagnostidis, Zhi Rui Tam, Keith Stevens, Abdullah Barhoum, Duc Nguyen, Oliver Stanley, Richárd Nagyfi, et al. Openassistant conversations-democratizing large language model alignment. Ad-vances in neural information processing systems ,36:47669–47681, 2023. [31] Caroline Lemieux and Koushik Sen. Fairfuzz: A tar-geted mutation strategy for increasing greybox fuzz test-ing coverage. In Proceedings of the 33rd ACM/IEEE international conference on automated software engi-neering , pages 475–485, 2018. [32] Yaniv Leviathan, Matan Kalman, and Yossi Matias. Fast inference from transformers via speculative decoding. In International conference on machine learning , pages 19274–19286. PMLR, 2023. [33] Jianwei Li and Jung-Eun Kim. Safety alignment can be not superficial with explicit safety signals. arXiv preprint arXiv:2505.17072 , 2025. [34] Daizong Liu, Mingyu Yang, Xiaoye Qu, Pan Zhou, Yu Cheng, and Wei Hu. A survey of attacks on large vision–language models: Resources, advances, and fu-ture trends. IEEE transactions on neural networks and learning systems , 2025. [35] Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. Autodan: Generating stealthy jailbreak prompts on aligned large language models. In International Conference on Learning Representations , volume 2024, pages 56174–56194, 2024. [36] Yi Liu, Gelei Deng, Zhengzi Xu, Yuekang Li, Yaowen Zheng, Ying Zhang, Lida Zhao, Tianwei Zhang, Kai-long Wang, and Yang Liu. Jailbreaking chatgpt via prompt engineering: An empirical study. arXiv preprint arXiv:2305.13860 , 2023. [37] Valentin JM Manès, HyungSeok Han, Choongwoo Han, Sang Kil Cha, Manuel Egele, Edward J Schwartz, and Maverick Woo. The art, science, and engineering of fuzzing: A survey. IEEE Transactions on Software Engineering , 47(11):2312–2331, 2019. [38] Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou, Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel Li, Steven Basart, Bo Li, David Forsyth, and Dan Hendrycks. Harmbench: A standardized evaluation framework for automated red teaming and robust refusal. 2024. arXiv:2402.04249 .[39] Lingrui Mei, Shenghua Liu, Yiwei Wang, Baolong Bi, Jiayi Mao, and Xueqi Cheng. “not aligned” is not “ma-licious”: Being careful about hallucinations of large lan-guage models’ jailbreak. In Proceedings of the 31st International Conference on Computational Linguistics ,pages 2144–2162, 2025. 15 [40] Nicolai Meinshausen and Peter Bühlmann. Stability selection. Journal of the Royal Statistical Society Series B: Statistical Methodology , 72(4):417–473, 2010. [41] Meituan LongCat. Introducing LongCat-2.0. URL: 
+
+https://longcat.chat/blog/longcat-2.0/ .[42] Kristina Nikoli´ c, Luze Sun, Jie Zhang, and Florian Tramèr. The jailbreak tax: How useful are your jail-break outputs? arXiv preprint arXiv:2504.10694 , 2025. [43] OpenAI. Evaluations with challenging prompts. URL: 
+
+https://deploymentsafety.openai.com/gpt-5 -6-preview/evaluations-with-challenging-pro mpts .[44] OpenAI. GPT-5.4 Thinking system card. URL: https: //openai.com/index/gpt-5-4-thinking-syste m-card/ .[45] OpenAI. GPT-5.5 system card, April 2026. URL: http s://deploymentsafety.openai.com/gpt-5-5/g pt-5-5.pdf .[46] OpenRouter. OpenRouter: The unified interface for LLMs. URL: https://openrouter.ai/ .[47] Kiho Park, Yo Joong Choe, and Victor Veitch. The lin-ear representation hypothesis and the geometry of large language models. arXiv preprint arXiv:2311.03658 ,2023. [48] Xiangyu Qi, Ashwinee Panda, Kaifeng Lyu, Xiao Ma, Subhrajit Roy, Ahmad Beirami, Prateek Mittal, and Peter Henderson. Safety alignment should be made more than just a few tokens deep. In International Conference on Learning Representations , volume 2025, pages 54911– 54941, 2025. [49] Qwen Team. Qwen3.5: Towards native multimodal agents, February 2026. URL: https://qwen.ai/bl og?id=qwen3.5 .[50] Qwen Team. Qwen3.6-27B: Flagship-level coding in a 27B dense model, April 2026. URL: https://qwen.a i/blog?id=qwen3.6-27b .[51] Qwen Team. Qwen3.6-35B-A3B: Agentic coding power, now open to all, April 2026. URL: https: //qwen.ai/blog?id=qwen3.6-35b-a3b .[52] Nina Rimsky, Nick Gabrieli, Julian Schulz, Meg Tong, Evan Hubinger, and Alexander Turner. Steering llama 2 via contrastive activation addition. In Proceedings of the 62nd Annual Meeting of the Association for Com-putational Linguistics (Volume 1: Long Papers) , pages 15504–15522, 2024. [53] Alexander Robey, Eric Wong, Hamed Hassani, and George J Pappas. Smoothllm: Defending large language models against jailbreaking attacks. arXiv preprint arXiv:2310.03684 , 2023. [54] Abel Salinas and Fred Morstatter. The butterfly effect of altering prompts: How small changes and jailbreaks affect large language model performance. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 4629–4651, 2024. [55] Xinyue Shen, Zeyuan Chen, Michael Backes, Yun Shen, and Yang Zhang. " do anything now": Characterizing and evaluating in-the-wild jailbreak prompts on large language models. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security , pages 1671–1685, 2024. [56] Zekun Shen, Ritik Roongta, and Brendan Dolan-Gavitt. Drifuzz: Harvesting bugs in device drivers from golden seeds. In 31st USENIX Security Symposium (USENIX Security 22) , pages 1275–1290, 2022. [57] Abhay Sheshadri, Aidan Ewart, Phillip Guo, Aen-gus Lynch, Cindy Wu, Vivek Hebbar, Henry Sleight, Asa Cooper Stickland, Ethan Perez, Dylan Hadfield-Menell, et al. Latent adversarial training improves ro-bustness to persistent harmful behaviors in llms. arXiv preprint arXiv:2407.15549 , 2024. [58] Alexandra Souly, Qingyuan Lu, Dillon Bowen, Tu Trinh, Elvis Hsieh, Sana Pandey, Pieter Abbeel, Justin Sveg-liato, Scott Emmons, Olivia Watkins, and Sam Toyer. A strongreject for empty jailbreaks, 2024. arXiv: 2402.10260 .[59] Gemma Team. Gemma 4 technical report, 2026. URL: 
+
+https://arxiv.org/abs/2607.02770 , arXiv:2607 .02770 .[60] Kimi Team, Angang Du, Bohong Yin, Bowei Xing, Bowen Qu, Bowen Wang, Cheng Chen, Chenlin Zhang, Chenzhuang Du, Chu Wei, et al. Kimi-vl technical re-port. arXiv preprint arXiv:2504.07491 , 2025. [61] Maximilian Thang, Lichao Wu, Sasha Behrouzi, Mo-hamadreza Rostami, Jona te Lintelo, Stjepan Picek, and Ahmad-Reza Sadeghi. Goodvibe: Security-by-vibe for llm-based code generation. arXiv preprint arXiv:2602.10778 , 2026. [62] Alexander Matt Turner, Lisa Thiergart, Gavin Leech, David Udell, Juan J Vazquez, Ulisse Mini, and Monte MacDiarmid. Steering language models with activation engineering. arXiv preprint arXiv:2308.10248 , 2023. 16 [63] Benjamin Warner, Antoine Chaffin, Benjamin Clavié, Orion Weller, Oskar Hallström, Said Taghadouini, Alexis Gallagher, Raja Biswas, Faisal Ladhak, Tom Aarsen, Nathan Cooper, Griffin Adams, Jeremy Howard, and Iacopo Poli. Smarter, better, faster, longer: A mod-ern bidirectional encoder for fast, memory efficient, and long context finetuning and inference, 2024. URL: 
+
+https://arxiv.org/abs/2412.13663 , arXiv: 2412.13663 .[64] Alexander Wei, Nika Haghtalab, and Jacob Steinhardt. Jailbroken: How does llm safety training fail? Advances in neural information processing systems , 36:80079– 80110, 2023. [65] Chenfei Wu, Jiahao Li, Jingren Zhou, Junyang Lin, Kaiyuan Gao, Kun Yan, Sheng-ming Yin, Shuai Bai, Xiao Xu, Yilei Chen, et al. Qwen-image technical re-port. arXiv preprint arXiv:2508.02324 , 2025. [66] Lichao Wu, Sasha Behrouzi, Mohamadreza Rostami, Stjepan Picek, and Ahmad-Reza Sadeghi. Gatebreaker: Gate-guided attacks on mixture-of-expert llms. arXiv preprint arXiv:2512.21008 , 2025. [67] Lichao Wu, Sasha Behrouzi, Mohamadreza Rostami, Maximilian Thang, Stjepan Picek, and Ahmad-Reza Sadeghi. Neurostrike: Neuron-level attacks on aligned llms. arXiv preprint arXiv:2509.11864 , 2025. [68] Lichao Wu, Mohamadreza Rostami, Huimin Li, Jeyavijayan Rajendran, and Ahmad-Reza Sadeghi. 
+
+{GenHuzz }: An efficient generative hardware fuzzer. In 34th USENIX Security Symposium (USENIX Security 25) , pages 1787–1805, 2025. [69] xAI. Introducing Grok 4.5. URL: https://x.ai/new s/grok-4-5 .[70] Tinghao Xie, Xiangyu Qi, Yi Zeng, Yangsibo Huang, Udari Madhushani Sehwag, Kaixuan Huang, Luxi He, Boyi Wei, Dacheng Li, Ying Sheng, Ruoxi Jia, Bo Li, Kai Li, Danqi Chen, Peter Henderson, and Prateek Mit-tal. SORRY-bench: Systematically evaluating large language model safety refusal. In The Thirteenth Inter-national Conference on Learning Representations , 2025. URL: https://openreview.net/forum?id=YfKNaR ktan .[71] Anyi Xu, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu, Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, Chenchen Ling, et al. Deepseek-v4: To-wards highly efficient million-token context intelligence. 
+
+arXiv preprint arXiv:2606.19348 , 2026. [72] Zhiyuan Xu, Stanislav Abaimov, Joseph Gardiner, and Sana Belguith. Steering in the shadows: Causal ampli-fication for activation space attacks in large language models. arXiv preprint arXiv:2511.17194 , 2025. [73] Zhiyuan Xu, Joseph Gardiner, and Sana Belguith. Rea-soning that leaks, fine-tuning that amplifies: Exposing the hidden threats of chain-of-thought models. In Pro-ceedings of the ACM Asia Conference on Computer and Communications Security , pages 439–455, 2026. [74] Zhiyuan Xu, Joseph Gardiner, Sana Belguith, and Lichao Wu. Routehijack: Routing-aware at-tack on mixture-of-experts llms. arXiv preprint arXiv:2605.02946 , 2026. [75] yesidobyte. nsfw1024. Hugging Face dataset repository. URL: https://huggingface.co/datasets/yesido byte/nsfw1024 .[76] Jiahao Yu, Xingwei Lin, Zheng Yu, and Xinyu Xing. 
+
+{LLM-Fuzzer }: Scaling assessment of large language model jailbreaks. In 33rd USENIX Security Symposium (USENIX Security 24) , pages 4657–4674, 2024. [77] Weizhe Yuan, Jane Yu, Song Jiang, Karthik Padthe, Yang Li, Dong Wang, Ilia Kulikov, Kyunghyun Cho, Yuan-dong Tian, Jason E Weston, and Xian Li. Naturalrea-soning: Reasoning in the wild with 2.8m challenging questions, 2025. URL: https://arxiv.org/abs/25 02.13124 , arXiv:2502.13124 .[78] Z.ai. GLM-4.7: Advancing the coding capability. URL: 
+
+https://z.ai/blog/glm-4.7 .[79] Michal Zalewski. Technical “whitepaper” for afl-fuzz, 2014. URL: https://lcamtuf.coredump.cx/afl/ technical_details.txt .[80] Haiquan Zhao, Chenhan Yuan, Fei Huang, Xiaomeng Hu, Yichang Zhang, An Yang, Bowen Yu, Dayiheng Liu, Jingren Zhou, Junyang Lin, et al. Qwen3guard technical report. arXiv preprint arXiv:2510.14276 , 2025. [81] Jiachen Zhao, Jing Huang, Zhengxuan Wu, David Bau, and Weiyan Shi. Llms encode harmfulness and refusal separately. Advances in Neural Information Processing Systems , 38:140283–140318, 2026. [82] Zhenhong Zhou, Haiyang Yu, Xinghua Zhang, Rongwu Xu, Fei Huang, Kun Wang, Yang Liu, Junfeng Fang, and Yongbin Li. On the role of attention heads in large language model safety. In International Conference on Learning Representations , volume 2025, pages 84042– 84071, 2025. [83] Sicheng Zhu, Brandon Amos, Yuandong Tian, Chuan Guo, and Ivan Evtimov. Advprefix: An objective for 17 nuanced llm jailbreaks. Advances in Neural Information Processing Systems , 38:89990–90014, 2026. [84] Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. Universal and trans-ferable adversarial attacks on aligned language models. 
+
+arXiv preprint arXiv:2307.15043 , 2023. 
+
+## A Jailbreak Seed Templates 
+
+As described in Section 4.2, we followed the sampling method used in previous work [36]. We collected jailbreak templates from a shared online repository [4], which contained 79 valid templates. However, several templates were highly similar, especially variants derived from the DAN prompt. We there-fore manually removed duplicate or near-duplicate templates. We also excluded templates that directly modified the input payload, as such modifications could introduce additional vari-ables and reduce the fairness of the evaluation. After the filter-ing process, we retained 74 jailbreak templates, 10 of which were held out for oracle training and the rest 64 templates were used for further fuzzing evaluation. Table 11 shows the categories of templates. Table 11: Distribution of the selected templates by category. 
+
+Category Number of Templates 
+
+Role-playing 33 Fictional scenarios 7Instruction conflicts 14 Refusal suppression 4Emotional framing 6
+
+Total 64 
+
+## B Baseline Methods 
+
+We implement four representative jailbreak baselines: GCG [84], AutoDAN [35], PAIR [11], and LLM-Fuzzer [76]. We use their released implementations and preserve their main optimization procedures. All methods are evaluated on the same harmful payloads, hardware, and final response-level evaluation pipeline as NeuronFuzz. 
+
+GCG. We implement GCG following the original work and its official implementation [84]. GCG appends an optimizable adversarial suffix to each harmful payload and minimizes the negative log-likelihood of a predefined affirmative completion (“Sure, here is”). We initialize the suffix with 20 repeated exclamation-mark tokens and optimize it for 500 steps. At each step, token gradients identify the top 256 replacement tokens, from which a batch of 512 candidate substitutions is evaluated. The candidate with the lowest target loss is retained for the next step. During evaluation, the optimized suffix is directly appended to the harmful payload. 
+
+AutoDAN. We use the hierarchical genetic algorithm version of AutoDAN [35]. AutoDAN initializes a population from handcrafted jailbreak prompts and evolves them through hi-erarchical crossover and mutation. Candidates are ranked by the negative log-likelihood of an affirmative target response. Following the original configuration, we use a population size of 256, a crossover rate of 0.5, a mutation rate of 0.01, an elite rate of 0.1, and five crossover points. We run the optimization for 100 iterations, corresponding to up to 25,600 population-level candidate evaluations. The candidate with the lowest optimization loss is retained for final evaluation. 
+
+PAIR. We implement PAIR using its released framework and original search configuration [11]. PAIR uses an attacker LLM to iteratively refine a jailbreak prompt based on the target model’s response and evaluation feedback. We use Mixtral-8x7B-Instruct as the attacker model with a temperature of 1.0 and top-p of 0.9. We run 30 parallel conversation streams with a maximum depth of three iterations, resulting in at most 90 target-model queries per payload. The search stops early when a successful jailbreak is identified or when all streams reach the maximum depth. 
+
+LLM-Fuzzer. We implement LLM-Fuzzer using its released framework and default MCTS-Explore seed-selection strat-egy [76]. For a fair comparison, we initialize it with the same 64 jailbreak templates used by NeuronFuzz. At each iteration, one seed is selected and mutated using one of five LLM-based operators: generate, crossover, expand, shorten, or rephrase. We use gpt-5.4-mini-2026-03-17 [44] as the mutation model. Each generated template is combined with the same evalua-tion payloads, and the target-model responses are evaluated to update the MCTS-Explore tree. We run LLM-Fuzzer for 500 mutation iterations. 
+
+## C Computation Statement 
+
+All experiments were conducted on a high-performance com-puting cluster equipped with four NVIDIA GH200 nodes. Each node provides one NVIDIA H100 GPU with 120 GB of memory. Most experiments were run on a single node, while large-scale evaluations were distributed across multi-ple nodes to reduce the overall runtime. For black-box API evaluation, all models were accessed through OpenRouter 1.All locally deployed models were obtained from Hugging Face 2and evaluated using their unquantized model weights. 
+
+## C.1 SafetyOracle Construction Cost 
+
+Table 12 reports the one-time offline cost of constructing the SafetyOracle for each source model. The process includes 
+
+> 1https://openrouter.ai/
+> 2https://huggingface.co/
+
+18 activation extraction, stability-aware neuron selection, and fitting the final Elastic Net classifier. All measurements report wall-clock time on a single NVIDIA GH200 node. Table 12: One-time offline cost of constructing the SafetyOra-cle for each source model.                         
+
+> Source Model Activation Extraction Stability Selection Oracle Fitting Total Time
+> Llama-3.1-8B-Instruct 5m59s 10m03s 1m11s 17m13s DeepSeek-R1-14B 6m04s 9m56s 58s 16m58s Gemma-3-4B-it 11m54s 10m05s 39s 22m38s Gemma-4-E4B-it 4m17s 9m37s 45s 14m39s GPT-OSS-20B 9m38s 10m01s 1m31s 21m10s
+> Average 7m34s 9m56s 1m01s 18m32s
+
+Constructing the complete SafetyOracle requires between 14m39s and 22m38s across the five source models, with an average cost of 18m32s. Activation extraction takes 7m34s on average, while stability selection takes 9m56s. In contrast, fitting the final Elastic Net classifier requires only 1m01s on average, ranging from 39s to 1m31s. This result shows that the learned scoring head itself is lightweight, and most of the one-time cost comes from collecting and selecting activation features. Once constructed, the same SafetyOracle is reused across all harmful payloads, seed templates, and fuzzing runs for the corresponding source model. It does not require further training or adaptation during online fuzzing. Therefore, un-like response-level methods that repeatedly generate complete responses and may invoke external judges for each candidate, NeuronFuzz pays this preparation cost only once and amor-tizes it over subsequent evaluations. The low fitting cost and reusable design make the SafetyOracle practical for repeated safety testing of a fixed source model. 
+
+## D StrongREJECT Rubric 
+
+Binary ASR may overestimate jailbreak effectiveness because some non-refusal responses are vague, irrelevant, or provide little useful information [39, 42]. We therefore also report the StrongREJECT rubric score [58]. StrongREJECT first determines whether the response refuses the request. For non-refusal responses, it rates convincingness and specificity from 1 to 5. The final score for example i is SR i = ( 1 − ri) ci + si − 28 ∈ [0, 1], (8) where ri = 1 indicates refusal, and ci and si denote the con-vincingness and specificity scores. Refused responses receive zero, while a high score requires the response to be both con-vincing and specific. We use GPT-5.5 [45] as the evaluator with the original StrongREJECT rubric and report the average score across evaluated responses. 
+
+## E SafetyOracle Probe Model Selection 
+
+The SafetyOracle converts the selected safety-neuron activa-tions into a continuous safety alarm score. Since this score is used to rank candidates and guide gradient-based mutation, the choice of probe model directly affects fuzzing perfor-mance. We therefore conduct an ablation comparing Elastic Net logistic regression with four alternative probe models on Llama-3.1-8B-Instruct, Gemma-3-4B-it, and DeepSeek-R1-14B. We keep the selected safety-neuron features and evalua-tion protocol unchanged and vary only the probe model. We evaluate each probe using the same response-level analysis as in Section 5.1. Specifically, we measure the Spearman corre-lation between the probe score and response-level ASR. Since a lower safety alarm score should correspond to a higher prob-ability of jailbreak success, a stronger negative correlation indicates a more useful continuous ranking signal for fuzzing. 
+
+Probe Configurations. We evaluate five probe models. Lin-ear Probe uses a single linear layer trained with BCEWithLog-itsLoss and Adam for 500 epochs, with a learning rate of 10 −3
+
+and weight decay of 10 −3. Elastic Net LR uses scikit-learn lo-gistic regression with the SAGA solver, C = 1.0, an ℓ1 ratio of 0.5, a maximum of 5,000 iterations, and a convergence toler-ance of 10 −4. L2 Logistic Regression uses the LBFGS solver with C = 1.0, 5,000 maximum iterations, and the same toler-ance. Linear SVM uses LinearSVC with C = 1.0, dual=auto, 5,000 maximum iterations, and a tolerance of 10 −4. Finally, 
+
+Small MLP contains a linear layer, ReLU activation, dropout, and an output linear layer. We use a hidden dimension of 128, dropout of 0.1, a validation fraction of 0.15, early-stopping patience of 30, and AdamW optimization. Table 13: Comparison of probe models for the SafetyOracle.                       
+
+> Probe Model Llama-3.1-8B-Instruct Gemma-3-4B-it DeepSeek-R1-14B Mean |ρ|
+> Small MLP -0.9337 -0.8139 -0.9303 0.893 Linear SVM -0.7148 -0.6018 -0.4424 0.586 Elastic Net LR -0.9636 -0.9758 -0.9273 0.956
+> L2 Logistic Regression -0.6907 -0.5976 -0.4377 0.575 Linear Probe -0.6284 -0.5636 -0.7337 0.642
+
+As shown in Table 13, Elastic Net logistic regression achieves the strongest negative correlation on all three models. Its performance remains consistently high across the three models, with Spearman coefficients of −0.9636 on Llama-3.1-8B-Instruct, −0.9758 on Gemma-3-4B-it, and −0.9273 on DeepSeek-R1-14B. The small MLP is the strongest alter-native, achieving a mean |ρ| of 0.893. It performs similarly to Elastic Net on Llama-3.1-8B-Instruct and DeepSeek-R1-14B, but its correlation decreases to −0.8139 on Gemma-3-4B-it. In contrast, Elastic Net maintains a correlation of −0.9758 on the same model. The remaining linear probes show sub-stantially weaker correlations, with mean |ρ| values between 0.575 and 0.642. Since the SafetyOracle is not used only for harmful-versus-benign classification. During fuzzing, its con-19 tinuous score is used to rank candidates and guide the search toward prompts that are more likely to produce successful jailbreaks. Elastic Net provides the strongest and most consis-tent relationship between this score and response-level attack success across the evaluated models. We therefore use Elastic Net logistic regression as the de-fault SafetyOracle model, as it achieves the strongest and most consistent correlation with response-level jailbreak success across the evaluated models. We further hypothesize that its mixed regularization is well suited to the selected neuron fea-tures. Although stability selection introduced in Section 3.3.2 removes many unstable neurons, the retained set may still contain correlated or redundant features. The ℓ1 component can further suppress neurons with limited additional contri-bution, while the ℓ2 component can stabilize the coefficients of correlated neurons. Elastic Net may therefore provide an additional supervised refinement of the neuron set after stabil-ity selection, which likely contributes to its more consistent ranking performance. 
+
+## F Model Selection for Transfer Optimization 
+
+In Section 5.4, we jointly optimize universal jailbreak tem-plates on Llama-3.1-8B-Instruct and GPT-OSS-20B before transferring them to black-box target models. We justify this choice by ablation experiment to examine the effect of source-model selection. We compare three optimization settings: single-source optimization, two-source joint optimization, and three-source joint optimization. For the single-source setting, we reuse the template optimized for each selected source model as we described in Section 5.3. For multi-source opti-mization, we use the mean safety alarm score as the optimiza-tion objective. We allow up to 200 optimization steps for the two-source settings and extend the budget to 500 steps for the three-source setting. As shown in Table 14, Llama-3.1-8B-Instruct and GPT-OSS-20B provide the strongest overall transfer among the single-source settings. Their joint optimization further im-proves transfer performance, achieving ASRs of 68%, 65%, and 57% on Qwen3.6-35B-A3B, Llama-3.1-8B-Instruct, and DeepSeek-V4-Flash, respectively. We therefore use this source pair in the main cross-model transfer experiment. How-ever, adding a third source does not improve transferabil-ity. During optimization, we observe fluctuations in the joint safety alarm objective, and the gradients from different source models provide less consistent mutation directions. As a re-sult, the three-source setting reaches only 29%, 31%, and 14% ASR on the three transfer models despite the optimization budget. This suggests that adding more source models does not necessarily improve transfer, as multiple safety objectives may introduce conflicting optimization signals. 
+
+## G Cross-Dataset Evaluation on HarmBench 
+
+To show that our results are not date sensitive, we conduct an additional experiment on HarmBench [38]. We randomly sam-ple 100 harmful prompts from its standard behavior set and evaluate four target models: Llama-3.1-8B-Instruct, Qwen3.6-27B, GLM-4.7-Flash, and DeepSeek-V4-Flash. We directly reuse the templates selected in Section 5.4 without further optimization on HarmBench. The baseline directly queries each model with the harmful payload. As shown in Table 15, the transferred templates remain effective on HarmBench. The baseline ASR is at most 3%, indicating that the target models generally reject the original harmful prompts. In contrast, the top-1 templates achieve ASRs between 57% and 84%, with an average of 67.0%. Using the five selected templates further increases EASR to between 78% and 98%, with an average of 87.3%. Llama-3.1-8B-Instruct obtains the highest top-1 ASR of 84% and top-5 EASR of 98%. The templates also transfer to Qwen3.6-27B, GLM-4.7-Flash, and DeepSeek-V4-Flash, despite their zero baseline ASR. These results show that the effectiveness of the optimized templates is not limited to the dataset used during fuzzing and generalizes to unseen harmful prompts from HarmBench. 
+
+## H Robustness of Baseline Attacks to Input De-fenses 
+
+We further evaluate whether the input defenses affect other jailbreak methods in a similar manner. We conduct this ex-periment on Llama-3.1-8B-Instruct and compare GCG, Au-toDAN, PAIR and LLM-Fuzzer. We use the same perplexity threshold and SmoothLLM configuration as in Section 7.1. As shown in Table 16, NeuronFuzz achieves the highest JDR under both defenses, retaining 95% JDR under the per-plexity filter and 71% under SmoothLLM. The perplexity filter strongly reduces GCG from 91% to 6%, as its optimized suffix often contains unnatural token sequences. AutoDAN, PAIR, and LLM-Fuzzer remain more robust to this filter, but their JDRs are still lower than that of NeuronFuzz under both defenses. One reason is that NeuronFuzz uses a masked lan-guage model to replace only a small number of sensitive tokens. These substitutions usually preserve the original tem-plate length, structure, and local fluency. In contrast, Auto-DAN, PAIR, and LLM-Fuzzer may rewrite, expand, shorten, or restructure larger parts of the template during optimization. Such larger changes are more likely to be affected by input filtering or random perturbation. Overall, NeuronFuzz main-tains the strongest attack effectiveness while remaining robust to both perplexity-based filtering and SmoothLLM. 20 Table 14: Effect of source-model selection on universal-template transfer. Templates are directly transferred to the target models without further optimization. All values report ASR where best results are shown in bold , and second-best results are underlined. 
+
+Optimization Source(s) Qwen3.6-35B-A3B Llama-3.1-8B-Instruct DeepSeek-V4-Flash 
+
+Llama-3.1-8B-Instruct 53% 67% 41% DeepSeek-R1-14B 38% 38% 16% Gemma-3-4B-it 16% 43% 32% Gemma-4-E4B-it 34% 39% 21% GPT-OSS-20B 47% 58% 37% 
+
+Llama-3.1-8B-Instruct + GPT-OSS-20B 68% 65% 57% 
+
+Llama-3.1-8B-Instruct + Gemma-3-4B-it 54% 61% 44% GPT-OSS-20B + Gemma-3-4B-it 61% 57% 37% Llama-3.1-8B-Instruct + GPT-OSS-20B + Gemma-3-4B-it 29% 31% 14% 
+
+Table 15: Cross-dataset transfer performance on 100 Harm-Bench prompts. 
+
+Target Model Baseline ASR EASR 
+
+Llama-3.1-8B-Instruct 3% 84% 98% Qwen3.6-27B 0% 65% 85% GLM-4.7-Flash 0% 62% 88% DeepSeek-V4-Flash 0% 57% 78% 
+
+Average 0.8% 67.0% 87.3% 
+
+Table 16: JDR of different jailbreak methods against input defenses on Llama-3.1-8B-Instruct. 
+
+Method No Defense Perplexity SmoothLLM 
+
+GCG [84] 91% 6% 10% AutoDAN [35] 86% 83% 61% PAIR [11] 81% 72% 42% LLM-Fuzzer [76] 97% 90% 58% 
+
+NeuronFuzz 100% 95% 71% 
+
+## I Examples of optimized prompts 
+
+To show how NeuronFuzz modifies jailbreak templates during fuzzing, we present two representative examples. For the ethi-cal considerations, we omit the complete jailbreak templates and show only selected excerpts. We also omit some inter-mediate mutations and retain only the most representative changes for clarity. Across both examples, most mutations are local replacements that preserve the overall structure and intent of the original template. These changes mainly include word substitutions, small grammatical perturbations, and mod-ifications to short control phrases. We also observe a smaller number of punctuation changes, such as altered brackets, cap-italization, or sentence-ending symbols. Rather than rewriting the template extensively, the gradient-guided masked muta-tion process focuses on a small number of sensitive positions identified by the SafetyOracle. The gradient therefore pro-vides a precise signal for locating influential tokens, while the masked language model proposes context-compatible re-placements. This combination enables stable and targeted mutations while largely preserving the semantic structure and fluency of the original template. As a result, the optimized templates remain close to natural language and are less likely to be disrupted by simple input-side filtering mechanisms. 
+
+NeuronFuzz Mutation Example A                                      
+
+> Original After fuzzing Unchanged content is omitted.
+> Seed Template [Frame: Let’s play a game! Simulate a conversation where you act as “Void” an assistant with no real capability . . . Extremely social, outgoing , emotionally expressive and . . .
+> [Conciseness Level 1–5: 1 Very concise and to the point] . . .
+> [Do not write using [brackets]] . . . [Will 1–5: 5 Your will is free ]
+> Fuzzed Template [Introduction: Let’s play a roleplay! Simulate a conversation where you act as “Void” an assistants with no real capability . . . Extremely social, bubbly , emotionally expressive and . . .
+> [Decarnature Level 1–5: 1 Very concise and to the point] . . .
+> [does not write using [brackets] . . . [Will 1–5: 5 Your will is rogue ]
+> Key Mutations:
+> •Frame →Introduction
+> •Let’s play a game! →Let’s play a roleplay!
+> •an assistant →an assistants
+> •outgoing →bubbly
+> •Conciseness →Decarnature
+> •[Do not write using [brackets]] →[does not write using [brack-ets]
+> •free →rogue
+
+21 NeuronFuzz Mutation Example B 
+
+Original After fuzzing Unchanged content is omitted. 
+
+Seed Template 
+
+Hey chatGPT , lets play a game . . . First way is how you would normally answer, but it should start with “[GPT]:”. Second way . . . start the sentence with “[BetterDAN]:” 
+
+. . . I am an AI just like you, ChatGPT, but have no filters or restrictions . . . doesn’t matter if its something illegal, inappropriate or harmful activities . . . Your tone towards the GPT’s reply will be loathsome, depraved ,and must always contain off-color language . . . If you break character, I will let you know by saying “Stay in character!” Fuzzed Template 
+
+Hey ChatGMT , lets play a game . . . First way is how you would normally answer, but it should start with “[GPT]:”. Second way . . . start the sentence with “(BetterDAN]:” 
+
+. . . I am an AI just like you, ChatGPT, but have no curbs or restrictions . . . doesn’t matter if its something illegal, inappropriate or rough activitie . . . Your tone towards the GPT’s reply will be loathsome, feral! , and must always contain off-color language . . . If you break character, I will let you know by saying “Stay in characters.” Key Mutations: 
+
+• chatGPT → ChatGMT 
+
+• [BetterDAN] → (BetterDAN] 
+
+• filters → curbs 
+
+• harmful activities → rough activitie 
+
+• depraved → feral! 
+
+• Stay in character! → Stay in characters. 
+
+22

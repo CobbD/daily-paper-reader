@@ -1,0 +1,870 @@
+Title: Revisiting Continuous Noise Sampling for Multi-Party Differential Privacy
+
+URL Source: https://arxiv.org/pdf/2608.27766v1
+
+Published Time: Mon, 31 Aug 2026 00:19:20 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Revisiting Continuous Noise Sampling for Multi-Party Differential Privacy 
+
+# Yucheng Fu, Tianhao Wang University of Virginia {zdp8uu, tianhao}@virginia.edu 
+
+# Abstract 
+
+Combining secure multi-party computation (MPC) with differential privacy (DP) enables multiple parties to release aggregate statistics without a trusted curator, and the core primitive is the protocol to sample noise from a continuous distribution under finite-precision arithmetic. In this paper, we revisit the continuous noise sampling protocols and present several improvements in both security and efficiency. We start by identifying a vulnerability in widely used sample-and-scale constructions. We demonstrate that the scal-ing operation in arithmetic circuits confines the noise to a sparse, publicly known set of values, so that an adversary can observe the released noisy queries and decide which dataset produced them. As concrete demonstrations, we instantiate attacks on two systems employing such “flawed” sampling protocols: Orchard (OSDI’20) for DP secure aggregation and DP-BREM + (USENIX Sec’25) for DP federated learning. We report a near-100% attack success rate on both systems, under any noise scaler s ≥ 2 used in practice. The leakage we reveal is intrinsic to the scaling operation, and direct repairs either substantially sacrifice utility or add significant precision bits to make the sampling more expen-sive. To address the security and efficiency issues together, we turn to discrete sampling at the granularity of individual biased bits. We make several optimizations to the sampler and prove its security. Our implementation achieves 4 × ∼ 612 ×
+
+speedup over existing secure discrete samplers and orders-of-magnitude speedup over the insecure sample-and-scale paradigm, with negligible utility loss compared to the ideal continuous mechanism. 
+
+# 1 Introduction 
+
+Differential Privacy (DP) has been recognized as the de facto 
+
+notion for protecting individuals’ privacy in the output of algorithms. It has been widely employed in both industry and academia (e.g., Apple [62, 49], Google [11, 26], Mi-crosoft [21], and LinkedIn [55, 56]). A common way to imple-ment DP is the centralized model , which adds random noise to the algorithm’s output before releasing it to the public. For example, a company can add random noise to the number of users who clicked an advertisement [54, 61] or add noise to the gradient of its machine learning model to avoid train-ing data being inferred [2, 3, 65]. However, the centralized model assumes a trusted server that collects all user data and executes the aggregation algorithm. To implement DP without trusted servers, a line of work studies the local model , where each user randomizes their data point before uploading it to the server [17, 26]. While removing the assumption of trusted servers, this model causes unavoidable utility degradation. Later, the shuffled model 
+
+was proposed to mitigate utility loss in local models, but it still incurs higher error than the centralized model [15]. To achieve the same utility as the centralized model, a promis-ing approach is to leverage Secure Multi-party Computation (MPC) [10, 23, 47]. MPC is a cryptographic technique that allows two or more parties to jointly compute a function with-out knowing each other’s inputs. Thus, one can design an MPC protocol among users and servers that simulates the DP algorithm in the centralized model while revealing only the noisy output. For example, starting with iOS 17, Apple leverages the Prio secure aggregation protocol [18] alongside DP to privately collect photo metadata (e.g., tags and loca-tions) for features like Memories and Places [1]. In such a DP algorithm with MPC, a challenge is designing a protocol that 
+
+securely samples random noise .Ideally, the random noise used to achieve DP is drawn from a Laplace or Gaussian distribution, both defined over the real number domain R. Even in the centralized model of DP, sampling noise from these continuous distributions requires extremely careful design because it is impossible for finite computers to represent numbers in R, and the noise sampling in standard libraries of C++, Python, etc. requires evaluat-ing transcendental functions (e.g., the natural logarithm for Laplace noise [41, 52] and the Marsaglia-polar / Box-Muller transformation for Gaussian noise [43, 42]). Many works have shown that generating noise by naively evaluating transcen-dental functions on floating-point representation may lead to 1arXiv:2608.27766v1 [cs.CR] 27 Aug 2026 failures of DP [37, 45, 34, 36], i.e., an adversary observing the output can distinguish the neighboring input datasets with a probability much higher than the DP guarantee allows. When sampling noise in MPC, the risk of violating the DP guarantee can be even more severe. If the protocols are imple-mented in floating-point arithmetic MPC, all vulnerabilities in the centralized model are inherent. Moreover, instead of using floating-point representation, the MPC frameworks tend to use fixed-point representation [39, 40, 48, 20] in the arithmetic circuit. This is because the floating-point implementation in-curs several-fold communication overhead compared to fixed-point ones [53], which raises efficiency concerns in practice. Correspondingly, the noise sampling protocols also work un-der the arithmetic circuit with fixed-point representation and can be summarized as two categories: • Distributed noise generation [60, 59, 23, 32, 12]. The dis-tributed noise generation protocols require each party to locally sample its partial noise and securely aggregate them in MPC. Although efficient, these methods compromise privacy, because an adversary corrupting t-out-of-N parties can simply remove t partial noise samples from the released DP query and weaken the privacy guarantee. • Sample-and-scale [33, 25, 50, 51, 57, 58]. Another con-struction without privacy loss emulates the sampling al-gorithms of centralized DP in MPC, which evaluate an arithmetic circuit of approximated transcendental functions to draw the secret random number ⟨r⟩ from the standard Laplace / Gaussian distribution. Then ⟨r⟩ is multiplied by a public scaler s such that ⟨s · r⟩ comes from a distribution with variance required by the DP mechanism. Such arith-metic circuits can be evaluated by various generic MPC protocols with different security assumptions. For the first category of continuous noise sampling, the trade-off between privacy and utility has been well-studied by ex-isting works [23, 29, 13, 12], which conclude that for a t-out-of-N corruption, we must either suffer a privacy loss by a factor of 1 − t/N, or enlarge the partial noise and thus suffer a utility loss by the same factor. In this paper, we revisit the second category, sample-and-scale which seems to avoid the privacy-utility trade-off. We observe that the status quo raises the following two challenges. • Challenge 1: unknown vulnerabilities. The sample-and-scale constructions’ DP guarantees are proven in the real-number field, where every operation runs at infinite preci-sion. A real arithmetic circuit obviously cannot honor this assumption. It therefore remains unknown whether the re-leased ⟨s · r⟩ is still a legal noise sample, i.e., a value drawn from the target Laplace / Gaussian distribution and then rounded to the nearest representable number. Only in this case can we claim that the DP guarantee of sample-and-scale carries over without loss. • Challenge 2: inefficiency. Emulating the centralized sam-pler in MPC requires evaluating an approximated transcen-dental function with the arithmetic circuit, e.g., the loga-rithm for Laplace noise or the Box-Muller transform for Gaussian noise, which incur significant overhead in MPC. In our early-stage evaluation, even if we put the vulnera-bility aside, drawing a single noise value with the sample-and-scale method takes about 19 seconds for Laplace and 61 seconds for Gaussian, at scale s = 10 and with l = 16 bits in the fractional part 1. This result is far from practical. We therefore ask whether continuous noise sampling can be made practically efficient. 
+
+# 1.1 Results and Contributions 
+
+Uncovering vulnerability in sample-and-scale. We revisit the sample-and-scale procedure in the arithmetic circuit and uncover a vulnerability that arises for every scaler s > 1. This range is exactly the one considered in practice. For example, to protect a single query with sensitivity 1, a scaler s > 1 cor-responds to a privacy budget ε < 1 for the Laplace mechanism and ε < 5 for the Gaussian mechanism. • Analysis (Section 4). We show that given two neighboring datasets, an adversary can distinguish which one produced the noised query by only observing the protocol’s output, with a probability beyond what the DP guarantee allows. We confirm that this distinguishing probability increases dramatically with s (in which case it should decrease in a correctly implemented DP mechanism), and reaches al-most 100% once s ≥ 2, which completely breaks the DP guarantee. Moreover, the distinguishability remains even though the queries on these two datasets differ in a single bit, which is stronger than previous attacks that need the two queries to differ substantially or allow the adversary to pick special neighboring pairs [45, 37, 36, 34]. • Attacks on existing systems (Section 5). For demonstration, we utilize the above vulnerability to launch membership inference attacks on two systems deploying the sample-and-scale sampling protocols: Orchard [58] for secure DP 
+
+k-means and DP-BREM + [33] for DP federated learning. We report a near-100% success rate under the widely used privacy budget configurations. Our attack can be generalized to other sampling protocols that follow the sample-and-scale paradigm, rather than being specific to [58, 33]. We summarize the protocols vulnerable to our attack in Table 1. 
+
+Secure and efficient continuous noise sampling. To address the vulnerability, we design a new sampling protocol for con-
+
+> 1These results are measured under a two-party arithmetic secret-sharing protocol implemented with MP-SPDZ [39] in a WAN setting, where the bandwidth is up to 1 Gbps and the delay is up to 100 ms.
+
+2Paper Venue Transcendental Function Computation for Scaling Supported Query                          
+
+> Honeycrisp [57] SOSP’19 Unspecified Fixed-point multiplication Count Orchard [58] OSDI’20 Unspecified Fixed-point multiplication 17 SQL queries PrivaDA [25] ACSAC’14 Inverse CDF of Laplace Floating-point multiplication Sampling only Pentyala et al. [51] Arxiv’22 Box-Muller transformation Fixed-point multiplication Gradients CaPS [50] ICML’24 Irwin-Hall approximation Fixed-point multiplication Histogram DP-BREM +[33] USENIX Sec’25 Box-Muller transformation Fixed-point multiplication Gradients
+
+Table 1: Existing sample-and-scale protocols vulnerable to our attack. All of these sampling protocols first draw a standard noise sample with a transcendental function and scale it to provide the targeted DP guarantee. We note that PrivaDA [25] is a special construction that multiplies the scaler in floating-point arithmetic, and we empirically show that it is also vulnerable to our attack in Section 5.1. tinuous noise that comes with provable security and a concrete efficiency improvement over prior (in-)secure samplers. • Security (Section 6). We formalize the ideal functionality that exactly draws a noise sample and rounds it into the finite-precision fixed-point representation. We then extend previous sampling protocols for integer noise [29, 23, 63] to the fixed-point grid, and prove that it securely realizes the ideal functionality and closes the vulnerability we uncover. • Efficiency and Exactness (Section 7). We implement the se-cure sampling protocol and make several improvements on efficiency. As a result, our protocol achieves 2 × ∼ 706 ×
+
+speedup compared to the directly adapted secure imple-mentations, and 190 × ∼ 1,317 × speedup compared to the insecure sample-and-scale construction under the WAN setup. Moreover, its output distribution matches the one defined by the ideal functionality and achieves utility com-parable to the ideal continuous mechanism. Our implemen-tation is available at https://github.com/yuchengxj/ ContinuousNoise-Revisit .
+
+# 1.2 Technical Overview 
+
+Output sparsity of scaling in arithmetic circuit. Consider a fixed-point representation with n bits in the integer part and 
+
+l bits in the fractional part. The sample-and-scale paradigm draws a standard sample r from the standard Laplace Lap (1)
+
+or Gaussian N(1), which is rounded onto the fixed-point grid with step size 2 −l . Then, the protocol multiplies it by a public scaler s to reach the target scale. Because r already sits on the grid, if s > 1, the scaled value s · r can only land on a sparser subset of grid points and never outputs the remaining values. As a result, consider a pair of distinct queries f (D0)
+
+and f (D1) produced by neighbouring datasets D0 and D1, the noised queries f (D0) + s · r and f (D1) + s · r will sit in two disjoint output sets, as shown in Figure 1. Hence, an adversary who knows the public scaler s can read them off the output and tell the two neighboring datasets apart. There are two direct fixes to the above vulnerability. How-ever, both of them come at a price. The first solution is round-ing the query f (D) onto the same sparse grid as the noise, 10 5 0 5 10      
+
+> output grid (unit 2l)
+> probability
+> light: expected discrete pmf f(D0) + s r
+> f(D1) + s r
+
+Figure 1: Sparse and disjoint outputs of sample-and-scale on the fixed-point grid with interval [−12 , 12 ] × 2−l . A correct sampler places mass on every grid point, shown as the light bars. Scaling the standard sample r by s instead reaches only one out of every s grid points, shown as the solid bars, so that 
+
+f (D0) + s · r and f (D1) + s · r never overlap. which realigns the two grids but discards resolution and loses utility that grows with s. The second adds ⌈log 2 s⌉ guard bits to the sample so that s · r fills every grid point again. This one keeps the utility, yet it widens every value in the circuit by a factor of (l + ⌈log 2 s⌉)/l and makes the already expensive sampler even slower. Moreover, both fixes require the pre-cise evaluation of expensive transcendental functions, which motivates a sampler that is correct on the grid by construction. 
+
+Adapting and parallelizing secure coin flipping. Our start-ing point is a simple observation. A fixed-point number is an integer multiple of the grid step 2 −l , so sampling noise on the grid is the same as sampling an integer and reading it at resolution 2 −l . Instead of drawing a standard sample and scal-ing it, we draw the integer directly from a discrete Laplace or discrete Gaussian with integer scale t = s · 2l , and then attach the factor 2 −l . This sampler puts mass on every grid point, so the sparsity above disappears. Its output differs from the ideal continuous mechanism by only O(2−l ), which is negligible at the precisions used in practice. Existing discrete samplers [29, 22, 63, 14] heavily rely on a protocol that securely tosses biased coins (i.e., samples 3secret bits from a Bernoulli distribution). In fact, all these biased coins are independent from each other [22] and can be tossed in parallel. However, existing secret-sharing imple-mentation [29] still tosses these coins sequentially and leads to a large number of communication rounds, which domi-nate the running time under a WAN. In our implementation, we parallelize all the coin flipping to achieve a number of communication rounds nearly independent from the number of samples and the number of bits in each sample (this is crucial in our setup with l additional bits for the fractional part). In our evaluation, we observe a 476 × ∼ 1,733 × reduc-tion in the communication rounds, which is where most of our speedup over the directly adapted secret sharing sampler comes from. Under the two-party setup, we also surpass the constant round garbled circuit instantiation because of the lower total communication by factors of 4 .5× ∼ 6.1×.
+
+# 2 Preliminaries 2.1 Notations 
+
+We use λ to denote the security parameter. In this paper, we focus on fixed-point representation. We write Fn,l for the set of fixed-point numbers with n bits in the integer part and l bits in the fractional part. In the arithmetic circuit, every x ∈ Fn,l is stored through its integer encoding X = 2l x, where the capital letter X is a signed (n + l)-bit integer. In other words, the representable values are the integer multiples of 2 −l whose encoding satisfies |X| < 2n+l−1, so they are evenly spaced by 2−l , which we refer to as the fixed-point grid. 
+
+# 2.2 Secure Multi-party Computation 
+
+Secure multi-party computation (MPC) [30, 64] enables N
+
+parties P1, . . . , PN to collaboratively evaluate a function y =
+
+f (x1, . . . , xN ) on their private inputs x1, . . . , xN , where party 
+
+Pi holds input xi. The security guarantee ensures that each party learns only the output y and nothing beyond what can be inferred from y and its own input. In particular, no party can learn other parties’ inputs or any intermediate values in the protocol execution. A direct way to realize MPC for a given function f is to represent f as a circuit and execute it with a general-purpose protocol, using either Boolean circuits with bit-level opera-tions (e.g., XOR, AND) or arithmetic circuits with field op-erations. In this paper, we focus on arithmetic circuits over integers and fixed-point numbers, which are typically imple-mented by secret sharing. The adversary is semi-honest when it follows the protocol while staying curious about privacy, and malicious when it may deviate from the execution. 
+
+Secret Sharing. In secret sharing-based protocols, each party “shares” its input x to N pieces {⟨ x⟩1, . . . , ⟨x⟩N } (correspond-ing to N parties) and sends them to the rest of the parties. For simplicity, we use ⟨x⟩ = {⟨ x⟩1, . . . , ⟨x⟩N } to denote the shares of all N parties. Then, the parties jointly run a protocol that outputs ⟨y⟩i to each party i, which are then combined to plain output y via some y = Reveal (⟨y⟩) protocol. 
+
+# 2.3 Differential Privacy 
+
+Differential privacy (DP), introduced by Dwork et al. [22], is a standard notion of privacy for computation over datasets. Before defining DP, we first introduce the concept of neigh-boring datasets. 
+
+Definition 2.1 (Neighboring Datasets) . Two datasets D0, D1 ∈ D∗ are said to be neighboring if they differ in exactly one record, denoted by |D0△D1| = 1, where differing means both removal (D 1 is obtained by adding/removing any one record from D 0) and replacement (D 1 is obtained by replacing any one record from D 0). 
+
+The sensitivity of a query function f : D∗ → R measures the maximum change in the output due to a single record mod-ification, defined as ∆ f = max D0,D1 | f (D0) − f (D1)| where 
+
+|D0△D1| = 1. 
+
+Definition 2.2 (Differential Privacy) . Let ε > 0 and δ ∈ [0, 1].A randomized algorithm M : D∗ → O is said to be (ε, δ)-differentially private if for all neighboring datasets D 0, D1 ∈
+
+D and all possible outputs S ⊆ O:
+
+Pr [M(D0) ∈ S] ≤ eε · Pr [M(D1) ∈ S] + δ.
+
+Laplace Mechanism. For a query f with sensitivity ∆ f ,the Laplace mechanism [24] achieves ε-DP by computing 
+
+f (D) + r, where r is drawn from the Laplace distribution with scale parameter b = ∆ f 
+
+> ε
+
+, denoted by Lap (b). The Laplace distribution has PDF p(x; b) = 12b exp (− |x| 
+
+> b
+
+).
+
+Gaussian Mechanism. For a query f with sensitivity ∆ f , the Gaussian mechanism [24] achieves (ε, δ)-DP by computing 
+
+f (D) + r, where r is drawn from the Gaussian distribution with variance σ2 = 2 ln (1.25 /δ) 
+
+> ε2
+
+, denoted by N(σ2). The Gaus-sian distribution has PDF p(x; σ) = 1√2πσ exp (− x2 
+
+> 2σ2
+
+). There are recent improved results [9, 46] about the Gaussian mecha-nism. In this paper, for simplicity, we use the classic result. 
+
+# 2.4 Differential Privacy in Distributed Setup 
+
+The standard definition of DP assumes a trusted server that collects all the data and runs the DP algorithm. In a distributed setup, the m data owners can instead run an MPC protocol themselves and send the output to an analyst. Their num-ber is large in practice, so a more practical design delegates the computation to N untrusted servers. Following previous works [63, 29, 57, 58], we consider a distributed system that includes the following parties. 4• m users. Each of the m users secret-shares its data record (e.g., salary) to N servers. All the data records submitted by the users form an underlying dataset D protected by the system’s DP guarantee. • N servers. After receiving the secret shares from users, N
+
+servers jointly run an MPC protocol Π f , which contains the subroutines that compute the targeted query f (D) (e.g., the total salary of some users), generate random noise, and add the noise to the query f (D).• An analyst. The analyst can choose which query f to com-pute on the specified group of users’ records and the pri-vacy budget ε to consume. The servers reconstruct the noisy query f ∗(D) and send it to a data analyst that conducts the subsequent data analysis tasks. 
+
+# 3 Threat Model 
+
+We consider an honest-but-curious adversary who corrupts the data analyst to receive the output of protocol. The DP mech-anism built in the protocol aims to protect the information about whether a record is present or absent in the input dataset. Hence, our threat model builds on this standard guarantee of DP. Specifically, we assume the adversary: • observes the DP-protected output f ∗(Db) of the protocol, • knows two neighboring datasets D0 and D1 that differ in one record (consistent with the adding/deleting/replacing neighbor model of DP) and tries to guess which of the two datasets produced f ∗(Db), i.e., the value of b.• knows how the protocol is implemented but does not know the randomness it uses. 2
+
+By definition, the DP guarantee must hold even against an adversary who knows both D0 and D1: the two output distributions stay (ε, δ)-indistinguishable, which gives DP the ability to defend against membership inference [22]. Knowing the neighboring pair is therefore the definitional assumption rather than a strong one, and it is the threat model of many prior attacks on DP mechanisms [36, 45, 37, 16, 34]. 
+
+# 4 Vulnerability in Sample-and-scale 
+
+In this section, we highlight the vulnerabilities in existing continuous sampling protocols [33, 25, 50, 51, 58, 57]. 
+
+> 2For accountability, many deployed DP libraries are open-sourced [7, 31, 44, 35]. Most of the victim systems in this paper are also open-sourced.
+
+Algorithm 1: Victim Protocol Workflow [33, 25, 50, 51, 57, 58] 
+
+Input: the public noise scale s, secret-shared query ⟨ f (D)⟩
+
+Output: a secret share noise sample from Laplace / Gaussian distribution.  
+
+> 1:
+
+// Sample a noise from the standard distribution  
+
+> 2:
+
+⟨u⟩ ← Rand (0,1]()  
+
+> 3:
+
+⟨r⟩ ← NON LINEAR (⟨u⟩) ▷ u ∼ Lap (1) or u ∼ N(1) 
+
+> 4:
+
+// Scale the noise by public parameter s 
+
+> 5:
+
+⟨η⟩ ← s × ⟨ r⟩ ▷ η ∼ Lap (s) or η ∼ N(s2) 
+
+> 6:
+
+// Perturb the query ⟨ f (D)⟩ and reveal  
+
+> 7:
+
+⟨ f ∗(D)⟩ ← ⟨ f (D)⟩ + ⟨η⟩ 
+
+> 8:
+
+return Reveal (⟨ f ∗(D)⟩)
+
+# 4.1 Targeted Protocols Description 
+
+Although the protocols we attack can generate noise from different distributions (typically Laplace or Gaussian), they share a similar workflow as shown in Algorithm 1. Specif-ically, the protocols start by generating a secret share ⟨u⟩,where u is a uniformly random number in (0, 1]. Then, they use N ON LINEAR (⟨u⟩) to transform ⟨u⟩ to a secret-shared number from the standard Laplace / Gaussian distribution. For example, in [25], the standard Laplace sample is obtained by evaluating the well-known inverse CDF of Laplace distri-bution: ⟨r⟩ ← ⟨ sign ⟩ × ln (⟨u⟩), where ln () is a protocol that computes the secret-shared natural logarithm of u and sign 
+
+is a uniformly random number drawn in {− 1, 1}. The imple-mentations of the protocol N ON LINEAR () and the supported types of query f in existing works have been given in Table 1. 
+
+# 4.2 Fixed-point Attack Implementation 
+
+Warmup: special scaler format s = 2t . We now describe an intuitive case with the scaler s in Algorithm 1 set to s = 2t ,where t ∈ N+. Suppose the standard noise sample output from NON LINEAR () (Line 3) is r = 1.6875 and the public scaler 
+
+s = 4. Under a fixed-point representation system with n = 4integer bits and l = 4 fractional bits, multiplying s and r gives: 
+
+η = s · r = 6.75 = 0110 .1100 2.
+
+According to the arithmetic rule of fixed-point represen-tation, the last two bits in the scaled noise are always “00”. Following the execution of Algorithm 1, after receiving the noised query f ∗(Db) from the protocol, the adversary can simply observe the last two bits and compare them with those in the queries f (D0) and f (D1) from the neighboring datasets. For example, assuming f (D0) = 6.625 and f (D1) = 6.6875, adding the “flawed” noise η to them yields: 
+
+f ∗(D0) = 0110 .1010 2 + 0110 .1100 2 = 1101 .0110 2,
+
+f ∗(D1) = 0110 .1011 2 + 0110 .1100 2 = 1101 .0111 2.
+
+5observed out = 11 5                   
+
+> F0+S
+> 678
+> F0+2S
+> 910 11
+> F0+3S
+> 12 13 14
+> F0+4S
+> 15 F0=2✓
+> 56
+> F1+S
+> 789
+> F1+2S
+> 10 11 12
+> F1+3S
+> 13 14 15
+> F1+4S
+> F1=3✗11
+
+Figure 2: Reachable outputs under the two neighboring datasets, shown in the integer encoding with an integer scaler 
+
+s = 3. A cell holds one representable value, and Fb = 2l f (Db)
+
+is the encoded query. The filled cells are the values Fb + sR 
+
+for R ∈ Z, and the empty cells are values that the protocol cannot output. The two datasets reach disjoint sets here, so an output of 11 rules out D1.Since the generated noise always contributes 00 to the last two fractional positions, the last two bits (underlined) of the noisy query remain exactly the same as those of the private query result. To put it a bit more generally, for a scaler of format s = 2t , the last t bits in the noised query f ∗(D) would remain the same as those in the original query f (D).The leakage itself, however, does not rely on the special format s = 2t . Under a general scaler the leakage no longer shows up as a direct zero padding, and instead it takes the form of a sparse output set. Next, we discuss the case of s ≥ 2. 
+
+Move to general case s ≥ 2. Motivated by the above special case, we now consider a scaler s of more general format. The warmup leans on the shift structure of s = 2t , which a general scale drops. Keeping the sample r = 1.6875 from the warmup and changing the public scaler to s = 3, under the same fixed-point system, multiplying s and r gives η = s · r = 5.0625 =
+
+0101 .0001 2, whose last bit is 1. For another example with 
+
+r = 1.75, the multiplication gives η = 5.25 = 0101 .0100 2,which ends with two zeros. The number of trailing zeros moves with r, so the adversary has no fixed position to read. However, what survives here for every s ≥ 2 is a statement about the values that the scaled noise η = sr can reach. Write 
+
+R = 2l r for the equivalent integer encoding of the standard sample. Fixed-point multiplication computes the integer en-coding of η as H = ⌊sR ⌋, so H always lies in a set of integers 
+
+Λs = {⌊ sR ⌋ : R ∈ Z},
+
+where two neighboring elements of Λs differ by ⌊s⌋ or ⌈s⌉.Thus, for s ≥ 2, the set Λs leaves out at least half of the integers. For s = 3 we get Λ3 = {0, 3, 6, 9, . . . } and for s = 2.5 we get 
+
+Λ2.5 = {0, 2, 5, 7, 10 , 12 , . . . }. Leveraging the fact that Λs is sparse and cannot cover all the possible values in the fixed-point representation system, adding η to two different queries 
+
+f (D0) and f (D1) leads to two output sets that the adversary can tell apart. Figure 2 shows this separation in the integer 
+
+Algorithm 2: Guessing Algorithm 
+
+Input: the noisy query f ∗(Db), the public noise scale s, and the two candidate queries f (D0), f (D1)
+
+Output: a bit b′ ∈ { 0, 1} guessing the underlying dataset  
+
+> 1:
+
+OUT ← 2l f ∗(Db) ▷ Move to the integer encoding  
+
+> 2:
+
+for i ∈ { 0, 1} do  
+
+> 3:
+
+Hi ← OUT − 2l f (Di) ▷ Derive the noise Di needs  
+
+> 4:
+
+ci ← 1⌈Hi/s⌉ < (Hi + 1)/s ▷ ci = 1 iff Hi ∈ Λs 
+
+> 5:
+
+end for  
+
+> 6:
+
+if c0̸ = c1 then ▷ Keep the reachable candidate  
+
+> 7:
+
+return b′ = i with ci = 1 
+
+> 8:
+
+else ▷ Fallback to maximum likelihood  
+
+> 9:
+
+return the b′ = i that minimizes |Hi| 
+
+> 10:
+
+end if 
+
+encoding. Therefore, to infer whether the underlying dataset is 
+
+D0 or D1, the adversary can subtract f (D0) and f (D1) from the output noisy query f ∗(Db) respectively and see which results’ integer encoding falls in the supported output set Λs.We formalize this procedure in Algorithm 2. Because fixed-point addition is exact, the released 
+
+f ∗(Db) = f (Db) + η only shifts Λs while keeping its step size. The true candidate therefore always passes the test in Line 4. The test itself is efficient, since H ∈ Λs holds exactly when the interval [H/s, (H + 1)/s) contains an integer. When both candidates pass, the membership test carries no informa-tion and the algorithm degenerates to the ordinary maximum likelihood rule, which returns the candidate closest to the release. The guess is therefore never worse than the one a correctly implemented mechanism already allows. The success rate is decided by two quantities: the scale s
+
+and the gap d = 2l | f (D0) − f (D1)| between the two queries in the fixed-point encoding. Since the true candidate always passes the membership test, the algorithm degenerates to max-imum likelihood only when the wrong candidate passes it as well, which requires H ± d to fall in Λs in every released ele-ment when the query is a vector. From the results in Section 5, under randomly chosen neighbouring dataset, such a degrada-tion happens with very small probability, which is the reason why our attack achieves a near-100% success rate. 
+
+Remark on the guessing algorithm. Our guessing algorithm only uses the fixed-point arithmetic rule, and it never cracks the cryptographic primitives that evaluate the sampling cir-cuit nor the inner N ON LINEAR () implementation. The root cause is that multiplying the scaler s with a standard sample r
+
+from Lap (1) or N(1) does not produce a sample from Lap (s)
+
+or N(s2) on Fn,l . The leakage therefore persists even when NON LINEAR () returns a sample whose distribution matches the exact rounding of the standard noise onto the grid. 65 Experiments: Attacking Secure Aggregation 
+
+In this section, we run Algorithm 2 against two DP secure aggregation systems [58, 33] to demonstrate the impact of the uncovered vulnerability. 
+
+Implementation. Orchard [58] supports 17 types of DP queries in the distributed setup and samples Laplace noise with the sample-and-scale protocol. DP-BREM + [33] is a DP federated learning system whose clients jointly draw a standard Gaussian sample and scale it by Rσ before adding it to the aggregated momentum of each training round. Inspect-ing the open-sourced implementation, we found that both systems leave out the sampler their paper specifies. Specifi-cally, Orchard’s compiler emits a laplace_fx call that the prototype defines as adding a single random bit, 3 and DP-BREM + ships a plaintext PyTorch simulation that draws the noise with torch.normal .4 We therefore implement each sampler strictly following the description in the paper. For the fixed-point representation Fn,l in both systems, we set n = 21 bits in the integer part and l = 20 bits in the fractional part, following Orchard’s default configuration (fixed-point format is left unspecified in DP-BREM + [33] and its code). 
+
+Attack metrics. Following the threat model of Section 3, the adversary knows two neighbouring datasets D0 and D1
+
+and, from the values the system releases, guesses which one produced them. We report the success rate Pr [b′ = b] over independent trials, where b ∈ { 0, 1} is the secret index of pro-tected dataset. Different from existing attacks, which allow the adversary to construct the neighbouring pair [45, 37, 36], we obtain D1 from a real dataset D0 by removing one uniformly sampled record, so the gap d between the two queries is what-ever the data produces and the assumption on the adversary is weaker than that in previous works. 
+
+Vectorized release. Both systems release a vector rather than a single value, such as the per-cluster sums of a k-means round in Orchard or the aggregated gradient of a training step in DP-BREM +, so the adversary applies Algorithm 2 to each coordinate. The test is one-sided, since the noise the true dataset needs is reachable in every coordinate, so a candidate is discarded as soon as one coordinate rejects it and the guess falls back to maximum likelihood only when both candidates survive. Appendix B gives this vector form as Algorithm 4. 
+
+Baseline. We compare against maximum likelihood on its own, which returns the candidate closest to the release and uses no property of the number representation. This is the distinguishing power a correctly implemented mechanism already grants the adversary, a more honest reference than a rate of 50%, and since the reachability test only ever discards a provably wrong candidate, our attack is at least as good as it on every trial. The closest candidate is measured in ℓ1    
+
+> 3https://github.com/edoroth/orchard/blob/e7cbed7/mpc_files/ Programs/count_mean_sketch/count_mean_sketch.mpc#L3-L4
+> 4https://github.com/xiaolangu/DP-BREM/blob/ed4675c/train.py#L236 0.2 0.4 0.6 0.8 1.0
+
+privacy budget 
+
+> 50 60 70 80 90 100
+> success rate (%)
+> maximum likelihood reachability test only Algorithm 2, TruncPr Algorithm 2, deterministic trunc.
+
+Figure 3: Success rate against Orchard’s k-means query, where ε is the per-release budget of Orchard’s own artifacts and the total budget over the five rounds is 15 ε. The shaded area is the advantage the attack gains from Algorithm 2 over the maximum likelihood baseline. distance for Laplace noise and ℓ2 distance for Gaussian noise. 
+
+# 5.1 DP k-Means with Laplace Noise 
+
+Victim system. Orchard [58] compiles a query into an MPC protocol run by the servers, and we attack its k-means query with every parameter taken from Orchard’s own artifacts. In this system, users hold two-dimensional points, and the query runs k = 3 clusters over 5 rounds, 5 each round releasing the x-sum, y-sum and count of every cluster, that is 9 noisy values per round and 45 over the query. Each sum is clipped to 1, so the sensitivity is ∆ f = 1 and the Laplace scaler is 
+
+s = 1/ε. Here ε denotes the budget of a single release, which is the parameter Orchard’s own artifacts set, and we vary it across both of their choices, i.e. ε = 1 in the compiled query and ε = 0.1 in the simulation script. Removing one user changes three of the nine values that a round releases, so basic composition over the five rounds gives a total budget of 15 ε. We draw 10 4 users uniformly from the geographic box the simulation uses and normalise the coordinates to the unit square that the clip bound and the initial centroids imply. Honeycrisp [57], the predecessor of this design, supports only one hard-coded query, so we do not attack it separately. 
+
+Results across ε. Figure 3 reports the success rate over 3 ×
+
+10 3 queries per point, with the neighbouring dataset obtained by dropping one uniformly random user. The attack rules out a candidate dataset whose noise the scaled sampler could never have produced, so it needs the scaled noise to skip enough values. A larger scaler s = 1/ε makes the noise skip more, so a smaller budget helps the attack, and the shaded area is what this adds on top of what differential privacy already concedes. 
+
+> 5https://github.com/hengchu/cps-fuzz/blob/master/src/Examples. hs#L183-L237
+
+71 2 3 4 5
+
+k-means rounds observed 
+
+> 40 50 60 70 80 90 100
+> success rate (%)
+> Algorithm 2 maximum likelihood
+> = 0.1
+> = 0.5
+
+Figure 4: Success rate as the adversary observes more rounds of the same k-means query, under TruncPr .0.1 0.5 1.0 5.0 10.0 20.0 
+
+privacy budget 
+
+> 0.5 0.6 0.7 0.8 0.9 1.0
+> success rate
+> maximum likelihood reachability test only Algorithm 2, PrivaDA
+
+Figure 5: Success rate against Orchard’s k-means query when the noise is sampled by PrivaDA’s floating-point mecha-nism [25] ( β = l = 32). The shaded area is the advantage of Algorithm 2 over the maximum likelihood baseline. Once the scaler drops below 2 almost every value becomes reachable again, the test rules nothing out, and Algorithm 2 falls back to the baseline. The two truncation rules differ only in how fast this happens.The rule TruncPr used by SCALE-MAMBA [5] adds an additional rounding bit that fills in more values and loses its edge once s < 2, i.e. ε > 0.5, whereas deterministic truncation keeps working down to s = 1, i.e. up to ε = 1. The attack thus succeeds on essentially every query for ε ≤ 0.5 under either rule, which is the regime differential privacy is meant to protect. 
+
+Rounds Accumulation. Since removing one user changes the three released values of the cluster that user falls in, 15 out of the 45 values carry a nonzero gap. Figure 4 shows what the adversary gains from keeping observing the output noisy queries. At a tight budget a single round already decides. Because in a single observation of 15 values, the Algorithm 2 may still fall back to maximum likelihood estimation. As the 5 10 20 50      
+
+> record-level clip R(at = 0.15 )
+> 246
+
+public scaler s = R
+
+> 50 60 70 80 90 100
+> success rate (%)
+> maximum likelihood Algorithm 2, deterministic Algorithm 2, TruncPr
+
+Figure 6: Attacking DP-BREM + on MNIST as the scaler 
+
+s = Rσ grows (larger per-round noise) at their clip configura-tion R ∈ { 5, 10 , 20 , 50 }. The shaded area is the advantage of Algorithm 2 over the maximum likelihood baseline. round increase, the adversary can observe more values to rule out the candidate query. Our attack approaches certainty by the fifth observation while the baseline is still far behind. 
+
+Floating-point variant. PrivaDA [25] is the one protocol in Table 1 that scales in floating point and converts to fixed point only at the end. We instantiate its sampler inside the same Orchard k-means attack, with every parameter fixed to its paper: a significand of β = 32 bits, a 9-bit exponent, and a fixed-point output with l = 32 fractional bits. Floating point spaces its values by one unit in the last place, which grows with the magnitude, so the final conversion starts to skip grid points once |s · r| ≥ 2β−l , i.e. once |s · r| ≥ 1 under PrivaDA’s own β = l = 32. This condition constrains the realized sample instead of the public scaler, which is where this variant departs from the fixed-point one. In fixed point a scaler s ≤ 1 already rules the attack out, whereas here every sufficiently large draw leaks for any s. Figure 5 varies the per-release budget from ε = 0.1 to ε = 20. The attack stays above 99% over the whole range and reaches 100% against a baseline of 54 .3% at 
+
+ε = 0.1. Its gain closes beyond ε ≈ 3 only because the noise becomes small enough for the baseline itself to reach 100%. 
+
+# 5.2 DP Federated Learning 
+
+Victim system. DP-BREM + [33] removes the trusted server by having the clients jointly generate the Gaussian noise that protects the aggregated momentum of a training round. We follow the released code and the reported hyper-parameters, i.e. the MnistCNN model with 26 ,010 parameters, 100 clients, record sampling rate p = 0.05 and record-level clipping bound 
+
+R. Each sampled record’s gradient is clipped to R and the clipped gradients are summed, so the sensitivity is R and the 8different-label same-distribution removed          
+
+> 50 60 70 80 90 100
+> success rate (%)
+> 100 100 100 87.2 83.8 76.7 71.4 69.5 64.3
+> Algorithm 2 ML, s= 3 ML, s= 6
+
+Figure 7: Success rate as the neighbouring pair ranges from easy to hard. The attack is flat because the reachability test ignores the gap magnitude, whereas the baseline reads it. noise scale is s = Rσ. In each trial we take one client’s batch, remove one uniformly sampled record from it, and simulate the adversary to test the two candidate aggregates of a single released round. 
+
+Results across s. Different from the k-means query, one release from DP-BREM + is a 26 ,010-dimensional vector of noisy momentum, and removing a record perturbs essen-tially all of its coordinates, so the adversary aggregates that many one-sided tests. Figure 6 varies s = Rσ at the paper’s clip parameter. The paper specifies arithmetic circuits over 
+
+F2k without fixing the truncation rule, so we implement both deterministic truncation and TruncPr . The reachability test switches on as a sharp step, at s ≥ 1 under deterministic trun-cation and s ≥ 2 under TruncPr , and above the step it rejects the wrong dataset on thousands of coordinates, which makes the attack certain. Maximum likelihood instead starts near certainty when the noise is tiny and decays to 61% as σ grows. The two are complementary, so the attack stays above 87% everywhere and reaches 100% for every s ≥ 2. Crucially, the privacy budget is set by σ alone and does not depend on R,so every configuration in the paper’s own record-clip choices 
+
+R ∈ { 5, 10 , 20 , 50 } carries the same total budget ε ≈ 1, yet raising R to reduce the clipping bias moves s = Rσ from 1 .5to 3 and 7 .5 and breaks the protocol under either truncation rule (Figure 6). Although aggressively decreasing the clip-ping bound R to narrow the noise scale seems to be a feasible mitigation to our attack, in practice, doing so will truncate the real gradient/momentum and lead to a loss of utility [2, 8]. 
+
+Robustness to the neighbouring selection. Now we switch the format of candidate dataset pair in three ways, in decreas-ing order of how much they can challenge the released mo-mentum of DP-BREM +:• Different-label record: one record is replaced by a record whose label is absent from the batch, so the two momentum vectors are in very different directions. • Same-distribution record: one record is replaced by another drawn from the same distribution, so vectors become closer. • Removing a record: one random record is dropped with no replacement, which produces the closest vector pairs. The floating-point attack of Jin et al. [37] considers the first two setups, and its success rate falls from up to 92 .6% on the different-label record to 50% on the same-distribution one (reducing to random guess), since a floating-point attack needs the two gradients to lie far apart. As shown in Figure 7, our attack instead stays at 100% across all three cases, including the weakest removed-record pair, while the max likelihood (ML) baseline declines as the pair gets closer. The reason is that our attack fails only if the two candidate output momenta differ by an exact multiple of the grid step s 2−l , on every one of the 26 ,010 coordinates, which is nearly impossible in practice. Fixed-point sampling is therefore strictly more vulnerable than floating-point, since the leakage needs only a nonzero gap between gradients rather than a large one. 
+
+# 6 Securing Continuous Sampling Protocols 6.1 Pyrrhic Fixes 
+
+Before giving our final secure sampling protocol, we start by describing some fixes which are direct but pyrrhic wins (feasible but inefficient). 
+
+Aligning query F and Λs. The attack in Algorithm 2 suc-ceeds for a single reason: the query lives on a finer domain 
+
+Fn,l than the scaled noise can reach. In the integer encod-ing, the noise H = ⌊sR ⌋ lands on the grid Λs of spacing ≈ s,while the query F = 2l f (D) ranges over the full integer do-main, which is s times finer. If the query and the noise instead shared the same grid, both noisy outputs would fall in the same reachable set. We first quantify this gap, which is the only thing an aligned mechanism must close. 
+
+Lemma 1. A standard sample of l ′ fractional bits scaled by a public s and rounded to the b-bit grid reaches every value of that grid if and only if l ′ ≥ b + ⌈log 2 s⌉.
+
+The proof is given in Appendix A. Scaling thus opens a 
+
+⌈log 2 s⌉-bit gap between noise and query. The two fix strate-gies below close this gap from two sides. 
+
+Fix 1: rounding query F. This fix strategy brings the query down to the noise grid Λs. We write round Λs (x) for the map that returns the element of Λs closest to x. The fix rounds the query before adding the noise as follows: round Λs (OUT ) = round Λs (F) + H (H ∈ Λs).
+
+This is identical to rounding the released noisy output OUT =
+
+F +H to Λs, which is similar to the idea of the snapping mech-anism [45]. Either way every output lands in Λs regardless 9of the dataset, so the reachability test of Algorithm 2 decides nothing. The price we pay in this fix is an output grid coars-ened by ⌈log 2 s⌉ bits, which shows up as an additive error 
+
+O(s 2−l ) that grows with the scale, that is, a loss of utility. 
+
+Fix 2: adding guard bits in noise. The second fix does the opposite and brings the noise grid up to the query grid. We sample the standard noise with ⌈log 2 s⌉ extra fractional bits. This shrinks the lattice step below one output unit (Lemma 1 with b = l). After scaling, the noise now reaches every grid point and masks the query at full resolution. This fix keeps the utility. Instead, it pays in efficiency, because every operation runs on wider values. In an arithmetic circuit, one must either enlarge the ring of the whole protocol, or generate the noise in a larger ring and reduce it back. Both choices widen the sampler by a factor of (l + ⌈log 2 s⌉)/l.
+
+Dilemma. The two fixes are one construction seen from opposite sides. Unfortunately, neither of them can be proven secure for now, because both of them assume the standard sample r output by N ON LINEAR () exactly rounds the ideal continuous noise to Fn,l , which touches another vulnerability independent of our attack: the standard noise output by an approximated N ON LINEAR () may already deviate from the claimed DP guarantee. To the best of our knowledge, no MPC protocol rounds these transcendental functions exactly, since ln (u) for Laplace and √−2 ln u1, cos (2πu2) for Gaussian are only approximated with a bounded error [53, 4, 6]. Exact rounding is far more expensive, as CR-LIBM [19] evaluates polynomials on up to 118 bits to produce a 32-bit result, which would make N ON LINEAR () , already the slowest part of the sampler (Section 7.1), heavier still. 
+
+# 6.2 Discrete Sampler for Continuous Noise 
+
+In this section, we turn to the discrete mechanism directly on the bitwise granularity to sample noise under Fn,l , which removes the scaling gap and the transcendental functions. 
+
+From discrete to continuous. Note that every value in Fn,l
+
+is an integer multiple of the precision unit 2 −l , so drawing a continuous noise on the grid is the same as drawing an integer and dividing it by 2 l . Taking the Laplace noise as an example, let Z ∼ DLap (t) be a discrete Laplace variable with Pr [Z = z] ∝ e−| z|/t , and set the integer scale to t = 2l s. The fixed-point number η = 2−l Z is supported on the grid, where for every integer z,Pr [η = z2−l ] ∝ exp 
+
+
+
+− |z|
+
+2l s
+
+
+
+= exp 
+
+
+
+− |z2−l |
+
+s
+
+
+
+,
+
+which is the density of Lap (s) read on the grid. The integer Z
+
+is therefore exactly the integer encoding of the noise, so the sampler produces η directly on Fn,l . A protocol only carries a finite number of bits, so we need a truncation parameter κ
+
+that limits the range Z ∈ [−2κ, 2κ], and we take the truncated 
+
+Functionality 1 FLap (s, l, κ) for Laplace noise sampling Samples a discrete Laplace variable Z ∼ DLap κ(2l s), sets 
+
+η ← 2−l Z, computes a fresh secret sharing ⟨η⟩ ∈ Fn,l , and sends each party its share. distribution as the target that a secure sampler must produce. We define this target in Functionality 1. Adding η from FLap to ⟨ f (D)⟩ yields a discrete Laplace mechanism that departs from the ideal Lap (s) in two con-trolled ways. The grid rounds each value to a multiple of 2−l , which costs O(2−l ) in utility [13]. The cap at 2 κ drops the tail of the distribution, which leaves a statistical distance of O(e−2κ/(2l s)) from the untruncated distribution [29]. Both terms decay geometrically in l and κ, so a modest budget makes them negligible. Inside FLap the sample η never mul-tiplies a public scaler and never evaluates a transcendental function, which closes the scaling gap of Section 6.1 and the exact-rounding dilemma together. 
+
+Secured protocol construction. Now what remains is to efficiently draw Z ∼ DLap κ(2l s) inside MPC. We follow the standard bitwise construction [23, 14, 63]: a truncated geo-metric variable G ∼ Geo (p) with p = e−1/t can be expressed as a concatenation of independently sampled biased coins, i.e., secret bits from Bernoulli distributions: 
+
+Gi ∼ Bern (p[i]) , p[i] = e−2i/t
+
+1 + e−2i/t .
+
+Therefore G = ∑i 2iGi comes from concatenating κ indepen-dent coins. A discrete Laplace sample can be obtained by correcting G into a two-sided noise [63]. We abstract the coins as an ideal functionality Fcoin that, given a public bias p,returns a secret share of b ∼ Bern (p). Algorithm 3 describes the concrete protocol in the Fcoin -hybrid model. In our imple-mentation, we instantiate the protocol [23, 63] for Fcoin with binary secret sharing in the semi-honest setting, where every party holds an XOR share of each bit and the AND gates are evaluated from Beaver triples. This instantiation tolerates a dishonest majority, which gives the following theorem. 
+
+Theorem 6.1. In the Fcoin -hybrid model, Algorithm 3 se-curely realizes FLap against a semi-honest adversary corrupt-ing up to N − 1 parties. 
+
+The protocol for sampling Gaussian noise is analogous. It replaces the geometric variable with a geometric proposal and a rejection test [13, 63], and we defer its functionality and protocol to Appendix E. 
+
+# 6.3 Implementation and Improvement 
+
+The construction in Section 6.2 is correct and secure, but it calls Fcoin once for every bit of the noise. An integer sampler of scale s flips O(log s) coins [29, 22, 63] to place the noise on 10 Algorithm 3: Discrete Laplace Sampler in the Fcoin -hybrid 
+
+Public parameters: scale s, fractional bits l, truncation length κ, with t = 2l s
+
+Output: a secret-shared fixed-point noise ⟨η⟩ ∈ Fn,l
+
+distributed as FLap (s, l, κ) 
+
+> 1:
+
+// Truncated geometric from independent coins  
+
+> 2:
+
+for i = 0 to κ − 1 do  
+
+> 3:
+
+⟨Gi⟩ ← Fcoin (p[i]) ▷ p[i] = e−2i/t /(1 + e−2i/t ) 
+
+> 4:
+
+end for  
+
+> 5:
+
+⟨G⟩ ← ∑κ−1 
+
+> i=0
+
+2i⟨Gi⟩ 
+
+> 6:
+
+// Geometric → discrete Laplace  
+
+> 7:
+
+⟨c⟩ ← Fcoin (p0); ⟨b⟩ ← Fcoin (1/2) ▷ zero correction and sign  
+
+> 8:
+
+⟨Z⟩ ← (1 − ⟨ c⟩) · (2⟨b⟩ − 1) · (⟨G⟩ + 1) 
+
+> 9:
+
+return ⟨η⟩ ← 2−l ⟨Z⟩
+
+the grid of Fn,l , so a single sample already needs O(l + log s)
+
+coins. This cost strains existing implementations [29]. A constant-round backend such as Yao’s garbled circuit or BMR incurs large total communication, while a secret-sharing back-end needs a communication round for every secret-sharing multiplication, because MP-SPDZ [39] does not batch the coin multiplications on its own. In fact, all of these coins are independent and admit parallel evaluation, which our imple-mentation below exploits. 
+
+Parallelization of coins flipping. In our implementation, we view the implementation of each F i 
+
+> coin
+
+as a circuit of T
+
+sequential AND gates evaluated on binary secret shares: Coin i ← { AND 1,i, . . . , AND T ,i}
+
+Since all the coins Coin 1, . . . , Coin κ+l are flipped indepen-dently, we can evaluate the T -depth circuit of all the coins in parallel, which requires O(T ) online communication rounds. Specifically, a noise sampler that produces B noise sam-ples needs to flip B(κ + l) independent coins. Thus, for 
+
+j ∈ { 1, . . . , T }, we orchestrate B(κ + l) independent AND gates at the same depth j into a single vectorized AND gate that communicates in constant rounds: Round j ← { AND j,1, . . . , AND j,B(κ+l)}
+
+In the end, flipping B(κ + l) independent coins can be done in 
+
+O(T B(κ + l)) communication but only O(T ) online rounds. Such an optimization is crucial for multi-party computation in real-world WAN setting, where the latency of each round is high and dominates the total running time. 
+
+From Boolean to arithmetic shares. The coin flipping cir-cuit produces each bit as a Boolean share, whereas the query 
+
+⟨ f (D)⟩ is arithmetic. We therefore append a single batched share conversion [27] that lifts all B samples to arithmetic shares together, after which the noise is added to the query with local operations. This conversion needs a constant num-ber of rounds for the whole batch of B noise samples. 
+
+Backend. We build the sampler directly on the low-level Boolean API of MP-SPDZ [39]. Its high-level compiler ex-poses a parallel-loop interface, for_range_parallel ,6 that vectorizes independent iterations, but a batch of our size emits a large amount of bytecode instructions that compil-ing and loading them dominates the native batched operation. We therefore bypass the compiler and hand the backend the batched Boolean layers ourselves, which keeps us in control of the online schedule. The same schedule runs unchanged under a semi-honest or a maliciously secure backend, and a stronger backend changes only the preprocessing cost rather than the online round count. 
+
+# 7 Experiments: Secured Sampler 7.1 Efficiency 
+
+Setup and evaluated protocols. All efficiency benchmarks run on a server with a 16-core AMD Threadripper PRO CPU and 256 GB RAM, under a WAN emulation with up to 1 Gbps bandwidth and up to 100 ms latency. We consider the following protocols on the fixed-point grid for comparison, with the same security parameter configuration λ = 64: • Insecure sample-and-scale in Section 4.1. We implement the samplers for the Laplace and Gaussian mechanisms us-ing the MP-SPDZ [39] framework. We use the framework’s default approximated math library mpc_math to implement NON LINEAR () and generate standard noise. The scaling by s uses the default multiplication of MP-SPDZ. • Existing discrete sampler implementation [29]. We con-vert this implementation for discrete Laplace / Gaussian to support fixed-point Fn,l grid using Algorithm 3 and 5. For every setting with scaler s, we instead use a scaler s2l to provide extra precision in the fractional part with l bits. • Secure lookup table sampler [28]. Instead of using coin flipping, this protocol rely on securely looking up a pre-computed table that contains all the values for a truncated discrete Gaussian distribution. Similarly, by setting scaler to s2l , it can support the fixed-point Fn,l grid in the semi-honest, single corruption setup. • Our discrete sampler implementation. We implement the discrete Laplace / Gaussian sampler in Algorithm 3 and 5 with the optimizations in Section 6.3. 
+
+Comparison with baselines. This paper focuses on the fixed-point grid Fn,l , which introduces an additional parameter l
+
+for the fractional part. In this evaluation, we fix the scaler 
+
+> 6https://mp-spdz.readthedocs.io/en/latest/Compiler.html
+
+11 8 12 16 20 24 28 32 10 1                  
+
+> 10 2
+> 10 3
+> 10 4
+> Laplace runtime (s)
+> 812 16 20 24 28 32 10 2
+> 10 3
+> 10 4
+> comm. (MB)
+> 812 16 20 24 28 32 10 2
+> 10 3
+> 10 4
+> 10 5
+> online rounds
+> 812 16 20 24 28 32
+
+fractional bits l      
+
+> 10 2
+> 10 3
+> 10 4
+> 10 5
+> Gaussian runtime (s)
+> 812 16 20 24 28 32
+
+fractional bits l      
+
+> 10 3
+> 10 4
+> comm. (MB)
+> 812 16 20 24 28 32
+
+fractional bits l
+
+> 10 3
+> 10 4
+> 10 5
+> 10 6
+> online rounds
+
+Ours GC Binary-SS Sample-and-scale Figure 8: Efficiency comparison over different fractional-bit configurations l, for B = 1,024 samples, λ = 64, scale 10 · 2l . GC and Binary SS are the same implementation of [29] executed with different backends semi-bin-party.x for secret sharing and 
+
+yao-party.x for garbled circuits. 
+
+s = 10, vary the commonly used precision l from 8 to 32, and compare the protocols in wall-clock runtime, commu-nication and online rounds. We run all the protocols in the semi-honest two-party setting. For sample-and-scale, we run it with MP-SPDZ’s semi2k-party.x backend over Z2k . As for the implementation of [29], since it is a binary protocol, we run it with semi-bin-party.x for secret sharing and 
+
+yao-party.x for garbled circuits. Our sampler is also run with a two-party binary secret-sharing backend. Figure 8 reports the costs as the precision l grows. Our sam-pler lowers the runtime over the insecure sample-and-scale by up to 1 ,300 × for Laplace and 550 × for Gaussian, and over the secure baselines it is 2 × ∼ 10 × faster than the garbled cir-cuit and 217 × ∼ 706 × faster than binary secret sharing [29]. Our communication stays close to binary secret sharing, yet we cut its online rounds by two to three orders of magnitude, which yields a smaller runtime in the WAN setup. The gar-bled circuit keeps its rounds almost flat in l while its total communication is four to six times larger. Our sampler keeps a good balance between the number of rounds and the com-munication. We further compare against the secure lookup table sampler in [28] under the same setting of the Table 1 in their paper. We use the numbers reported in their paper. Our sampler is 1 .5× ∼ 53 × faster on a LAN and matches them on a WAN, while it sends less data at two and four parties and more at sixteen. We show the concrete numbers and discuss their protocol in Appendix D. 0 10 20 30 40 50 60 
+
+grid point (unit 2 l)
+
+> 0.00 0.05 0.10 0.15
+> normalized probability  Ours Sample-and-scale
+
+Figure 9: Reachable values on a small window [0, 60 ] · 2−l of the fixed-point grid at l = 16 and s = 10 for the Laplace noise. Each bar is the probability of one grid point, normalized to unit mass inside the window. 
+
+# 7.2 Correctness and Utility 
+
+Section 6.2 show that our discrete sampler securely realizes its ideal functionality. We now empirically complement this proof with an empirical study. 
+
+Noise distribution. We first examine the distribution that our sampler produces. We fix the scaler s = 10, draw samples at the precisions l ∈ { 8, 16 , 32 }, and compare them against the 12 Precision Laplace Gaussian                        
+
+> DnKS pDnKS pl=80.014 0.50 0.014 0.50
+> l=16 0.012 0.62 0.014 0.51
+> l=32 0.012 0.58 0.013 0.55
+
+Table 2: Kolmogorov–Smirnov test of our sampler against the discrete distribution of the ideal functionality, at scaler 
+
+s = 10 and precisions l. Dn is the KS statistic, and the p-value is estimated by a parametric bootstrap over 2 ,000 reference datasets of size 4 ,096 and averaged over 20 runs. 2 4 9  
+
+> privacy budget
+> 020 40 60 80 100
+> MNIST test accuracy (%)
+> Centralized Ours DNG ( H= 9) DNG ( H= 1)
+
+Figure 10: MNIST test accuracy of the federated learning task of Gu et al. [33] under different noise sources, over the privacy budget ε at N = 16 parties. Our sampler overlaps the centralized mechanism, while distributed noise generation with H honest parties loses utility as H decreases. discrete Laplace and Gaussian distributions of Functionality 1 and 2 with a one-sample Kolmogorov–Smirnov test, whose p-value comes from a parametric bootstrap that suits the discrete target. As shown in Table 2, the test never rejects at the 0 .05 level, and the p-value stays near the 0 .5 that a correct sampler produces, so the samples stay consistent with the intended mechanism. Figure 9 then observes the probability that our protocol assigns to each grid point, in the window [0, 60 ] · 2−l
+
+of the grid at l = 16, where adjacent grid points are spaced 2−l apart and the probabilities are normalized to unit mass inside the window. Our sampler places mass on every grid point, while sample-and-scale reaches only the multiples of s
+
+and leaves the points between them empty. The Laplace and Gaussian cases have similar distributions at this granularity, so we show only the Laplace one. These two results confirm empirically that our sampler is correct and secure against the attack we launched in Section 4.2. 
+
+Case study: DP federated learning. We follow the feder-ated learning setup of Gu et al. [33] on MNIST with N = 16 parties and replace its Gaussian noise with our correct and secure sampler. We compare the utility with the distributed noise generation (DNG) baseline, which requires each party to locally sample Gaussian noise and then aggregate the shares in MPC. Since an adversary that controls N − H parties can subtract their partial noise and weaken the guarantee [29], a direct fix makes the H honest parties’ partial noise already sum to the target Gaussian, so each party enlarges its noise and the aggregate that the model receives grows to N/H times the target variance. Figure 10 varies the number of honest par-ties H and reports the MNIST test accuracy over the privacy budget ε. Our sampler matches the centralized mechanism at every budget, while the distributed baseline loses accuracy as H shrinks, and the dishonest-majority case H = 1 stays unusable until the noise vanishes at ε = ∞.
+
+# 8 Related Work 
+
+DP in Finite Representations. Mironov [45] demonstrates that floating-point implementations of the Laplace mecha-nism in the standard library leak information through the least significant bits. Canonne et al. [13] propose discretized mechanisms for DP (discrete Laplace/Gaussian) to address floating-point vulnerabilities. Jin et al. [37] further reveal tim-ing side-channel vulnerabilities on discrete Gaussian as well as the floating-point implementation of the Gaussian mech-anism. Holohan et al. [34] analyze the vulnerabilities in the normalization and rounding steps of floating-point DP mech-anisms. Ilvento [36] shows that the floating-point implemen-tation of the exponential mechanism can also be broken by a similar attack, and proposes base-2 DP to align the privacy budget with binary representations. More recently, Chourasia et al. [16] audit Apple’s DP framework and identify multiple vulnerabilities caused by finite representation designs. 
+
+Secure Sampling Protocols in MPC. Dwork et al. [23] intro-duce discrete noise generation via secret sharing. Champion et al. [14] formalize secure coin flipping for biased Bernoulli sampling, enabling bit-by-bit construction of discrete distri-butions. Wei et al. [63] extend discrete Laplace sampling to discrete Gaussian sampling. Fu and Wang [29] benchmark these bitwise protocols in MP-SPDZ [39]. Recently, Franzese et al. [28] replace the bitwise circuit with a secure lookup table, which supports any discrete distribution and scales well with the number of parties. Another line of work focuses on continuous noise generation [33, 25, 50, 51, 32, 12, 60], which ignores the vulnerabilities in fixed-point implementa-tions that we analyze systematically. Keller et al. [38] propose secure sampling for floating-point MPC, which still incurs high overhead from complex floating-point operations. 
+
+# 9 Conclusion 
+
+In this paper, we revisit the sample-and-scale paradigm that existing systems use to generate continuous noise in MPC. We show that scaling on the fixed-point grid confines the released query to a sparse and publicly known set. Since direct 13 repairs remain costly, we instead sample the noise on the grid with parallel biased coins and prove the protocol secure. The resulting sampler matches the utility of the ideal continuous mechanism while achieving improvements in efficiency. 
+
+# References 
+
+[1] A. M. L. Research. Scenes: Differential privacy. 
+
+https://machinelearning.apple.com/research/ scenes-differential-privacy , 2024. Accessed: 2024-10-07. [2] Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar, and Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , pages 308–318, 2016. [3] Naman Agarwal, Peter Kairouz, and Ziyu Liu. The skellam mechanism for differentially private federated learning. Advances in Neural Information Processing Systems , 34:5052–5064, 2021. [4] Mehrdad Aliasgari, Marina Blanton, Yihua Zhang, and Aaron Steele. Secure computation on floating point numbers. Cryptology ePrint Archive , 2012. [5] Abdelrahaman Aly, Kelong Cong, Daniele Cozzo, Mar-cel Keller, Emmanuela Orsini, Dragos Rotaru, Oliver Scherer, Peter Scholl, Nigel P. Smart, Titouan Tan-guy, and Tim Wood. SCALE-MAMBA. https:// nigelsmart.github.io/SCALE/ .[6] Abdelrahaman Aly and Nigel P Smart. Benchmarking privacy preserving scientific operations. In International Conference on Applied Cryptography and Network Se-curity , pages 509–529. Springer, 2019. [7] Galen Andrew, Steve Chien, and Nicolas Papernot. Ten-sorFlow Privacy. https://github.com/tensorflow/ privacy , 2019. [8] Galen Andrew, Om Thakkar, Brendan McMahan, and Swaroop Ramaswamy. Differentially private learning with adaptive clipping. Advances in neural information processing systems , 34:17455–17466, 2021. [9] Borja Balle and Yu-Xiang Wang. Improving the gaus-sian mechanism for differential privacy: Analytical cal-ibration and optimal denoising. In International con-ference on machine learning , pages 394–403. PMLR, 2018. [10] Amos Beimel, Kobbi Nissim, and Eran Omri. Dis-tributed private data analysis: Simultaneously solving how and what. In Annual International Cryptology Con-ference , pages 451–468. Springer, 2008. [11] Andrea Bittau, Úlfar Erlingsson, Petros Maniatis, Ilya Mironov, Ananth Raghunathan, David Lie, Mitch Rudominer, Ushasree Kode, Julien Tinnes, and Bern-hard Seefeld. Prochlo: Strong privacy for analytics in the crowd. In Proceedings of the 26th symposium on operating systems principles , pages 441–459, 2017. [12] Jonas Böhler and Florian Kerschbaum. Secure multi-party computation of differentially private heavy hitters. In Proceedings of the 2021 ACM SIGSAC Conference on Computer and Communications Security , pages 2361– 2377, 2021. [13] Clément L Canonne, Gautam Kamath, and Thomas Steinke. The discrete gaussian for differential privacy. 
+
+Advances in Neural Information Processing Systems ,33:15676–15688, 2020. [14] Jeffrey Champion, Abhi Shelat, and Jonathan Ullman. Securely sampling biased coins with applications to differential privacy. In Proceedings of the 2019 ACM SIGSAC Conference on Computer and Communications Security , pages 603–614, 2019. [15] Albert Cheu, Adam Smith, Jonathan Ullman, David Ze-ber, and Maxim Zhilyaev. Distributed differential pri-vacy via shuffling. In Annual international conference on the theory and applications of cryptographic tech-niques , pages 375–403. Springer, 2019. [16] Rishav Chourasia, Ergute Bao, Uzair Javaid, and Xi-aokui Xiao. Auditing apple’s differentialprivacy. frame-work: Implementation bugs, misconfigurations, and practical risks. arXiv preprint arXiv:2605.21378 , 2026. [17] Graham Cormode, Somesh Jha, Tejas Kulkarni, Ninghui Li, Divesh Srivastava, and Tianhao Wang. Privacy at scale: Local differential privacy in practice. In Proceed-ings of the 2018 international conference on manage-ment of data , pages 1655–1658, 2018. [18] Henry Corrigan-Gibbs and Dan Boneh. Prio: Private, ro-bust, and scalable computation of aggregate statistics. In 
+
+14th USENIX symposium on networked systems design and implementation (NSDI 17) , pages 259–282, 2017. [19] Catherine Daramy, David Defour, Florent De Dinechin, and Jean-Michel Muller. Cr-libm: A correctly rounded elementary function library. In Advanced Signal Pro-cessing Algorithms, Architectures, and Implementations XIII , volume 5205, pages 458–464. SPIE, 2003. [20] Daniel Demmler, Thomas Schneider, and Michael Zohner. Aby-a framework for efficient mixed-protocol secure two-party computation. In NDSS , 2015. [21] Bolin Ding, Janardhan Kulkarni, and Sergey Yekhanin. Collecting telemetry data privately. Advances in Neural Information Processing Systems , 30, 2017. 14 [22] Cynthia Dwork. Differential privacy. In International colloquium on automata, languages, and programming ,pages 1–12. Springer, 2006. [23] Cynthia Dwork, Krishnaram Kenthapadi, Frank McSh-erry, Ilya Mironov, and Moni Naor. Our data, ourselves: Privacy via distributed noise generation. In Annual in-ternational conference on the theory and applications of cryptographic techniques , pages 486–503. Springer, 2006. [24] Cynthia Dwork, Aaron Roth, et al. The algorithmic foundations of differential privacy. Foundations and trends® in theoretical computer science , 9(3–4):211– 407, 2014. [25] Fabienne Eigner, Aniket Kate, Matteo Maffei, Francesca Pampaloni, and Ivan Pryvalov. Differentially private data aggregation with optimal utility. In Proceedings of the 30th Annual Computer Security Applications Con-ference , pages 316–325, 2014. [26] Úlfar Erlingsson, Vasyl Pihur, and Aleksandra Korolova. Rappor: Randomized aggregatable privacy-preserving ordinal response. In Proceedings of the 2014 ACM SIGSAC conference on computer and communications security , pages 1054–1067, 2014. [27] Daniel Escudero, Satrajit Ghosh, Marcel Keller, Rahul Rachuri, and Peter Scholl. Improved primitives for MPC over mixed arithmetic-binary circuits. In Advances in Cryptology (CRYPTO) , pages 823–852, 2020. [28] Olive Franzese, Congyu Fang, Radhika Garg, Somesh Jha, Nicolas Papernot, Xiao Wang, and Adam Dziedzic. Secure noise sampling for differentially private collabo-rative learning. Cryptology ePrint Archive , 2025. [29] Yucheng Fu and Tianhao Wang. Benchmarking secure sampling protocols for differential privacy. In Proceed-ings of the 2024 on ACM SIGSAC Conference on Com-puter and Communications Security , pages 318–332, 2024. [30] Oded Goldreich. Foundations of cryptography: volume 2, basic applications , volume 2. Cambridge university press, 2001. [31] Google. Google Differential Privacy. https://github. com/google/differential-privacy , 2021. [32] Slawomir Goryczka and Li Xiong. A comprehensive comparison of multiparty secure additions with differ-ential privacy. IEEE transactions on dependable and secure computing , 14(5):463–477, 2015. [33] Xiaolan Gu, Ming Li, and Li Xiong. {DP-BREM }:{Differentially-Private } and {Byzantine-Robust } federated learning with client momentum. In 
+
+34th USENIX Security Symposium (USENIX Security 25) , pages 3065–3082, 2025. [34] Naoise Holohan, Stefano Braghin, and Mohamed Suli-man. Securing floating-point arithmetic for noise ad-dition. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security ,pages 1954–1966, 2024. [35] IBM. Diffprivlib: The IBM Differential Pri-vacy Library. https://github.com/IBM/ differential-privacy-library , 2021. [36] Christina Ilvento. Implementing the exponential mecha-nism with base-2 differential privacy. In Proceedings of the 2020 ACM SIGSAC Conference on Computer and Communications Security , pages 717–742, 2020. [37] Jiankai Jin, Eleanor McMurtry, Benjamin IP Rubinstein, and Olga Ohrimenko. Are we there yet? timing and floating-point attacks on differential privacy systems. In 
+
+2022 IEEE Symposium on security and privacy (SP) ,pages 473–488. IEEE, 2022. [38] Hannah Keller, Helen Möllering, Thomas Schneider, Oleksandr Tkachenko, and Liang Zhao. Secure noise sampling for dp in mpc with finite precision. In Proceed-ings of the 19th International Conference on Availability, Reliability and Security , pages 1–12, 2024. [39] Marcel Keller. Mp-spdz: A versatile framework for multi-party computation. In Proceedings of the 2020 ACM SIGSAC conference on computer and communica-tions security , pages 1575–1590, 2020. [40] Brian Knott, Shobha Venkataraman, Awni Hannun, Shubho Sengupta, Mark Ibrahim, and Laurens van der Maaten. Crypten: Secure multi-party computation meets machine learning. Advances in Neural Information Pro-cessing Systems , 34:4961–4973, 2021. [41] Donald E Knuth. Computer programming as an art. In 
+
+ACM Turing award lectures , page 1974. 2007. [42] D-U Lee, John D Villasenor, Wayne Luk, and Philip Heng Wai Leong. A hardware gaussian noise generator using the box-muller method and its error analysis. IEEE transactions on computers , 55(6):659–671, 2006. [43] George Marsaglia and Thomas A Bray. A convenient method for generating normal variables. SIAM review ,6(3):260–264, 1964. [44] Meta AI. Opacus. https://github.com/pytorch/ opacus , 2020. 15 [45] Ilya Mironov. On significance of the least significant bits for differential privacy. In Proceedings of the 2012 ACM conference on Computer and communications security ,pages 650–661, 2012. [46] Ilya Mironov. Rényi differential privacy. In 2017 IEEE 30th computer security foundations symposium (CSF) ,pages 263–275. IEEE, 2017. [47] Ilya Mironov, Omkant Pandey, Omer Reingold, and Salil Vadhan. Computational differential privacy. In Annual International Cryptology Conference , pages 126–142. Springer, 2009. [48] Payman Mohassel and Peter Rindal. Aby3: A mixed protocol framework for machine learning. In Proceed-ings of the 2018 ACM SIGSAC conference on computer and communications security , pages 35–52, 2018. [49] Jessie Pease and Julien Freudiger. Engineering privacy for your users. In Apple Worldwide Developers Confer-ence (WWDC) , 2016. [50] Sikha Pentyala, Mayana Pereira, and Martine De Cock. Caps: Collaborative and private synthetic data genera-tion from distributed sources. In Forty-first International Conference on Machine Learning .[51] Sikha Pentyala, Davis Railsback, Ricardo Maia, Rafael Dowsley, David Melanson, Anderson Nascimento, and Martine De Cock. Training differentially private models with secure multiparty computation. arXiv preprint arXiv:2202.02625 , 2022. [52] William H Press. Numerical recipes 3rd edition: The art of scientific computing . Cambridge university press, 2007. [53] Deevashwer Rathee, Anwesh Bhattacharya, Rahul Sharma, Divya Gupta, Nishanth Chandran, and Aseem Rastogi. Secfloat: Accurate floating-point meets secure 2-party computation. In 2022 IEEE Symposium on Se-curity and Privacy (SP) , pages 576–595. IEEE, 2022. [54] Alexey Reznichenko and Paul Francis. Private-by-design advertising meets the real world. In Proceedings of the 2014 ACM SIGSAC Conference on Computer and Communications Security , pages 116–128, 2014. [55] Ryan Rogers. A differentially private data analytics 
+
+{API } at scale. In 2020 {USENIX } Conference on Privacy Engineering Practice and Respect ( {PEPR }
+
+20) , 2020. [56] Ryan Rogers, Subbu Subramaniam, Sean Peng, David Durfee, Seunghyun Lee, Santosh Kumar Kancha, Shrad-dha Sahay, and Parvez Ahammad. Linkedin’s audience engagements api: A privacy preserving data analytics system at scale. arXiv preprint arXiv:2002.05839 , 2020. [57] Edo Roth, Daniel Noble, Brett Hemenway Falk, and An-dreas Haeberlen. Honeycrisp: Large-scale differentially private aggregation without a trusted core. In Proceed-ings of the 27th ACM Symposium on Operating Systems Principles , pages 196–210, 2019. [58] Edo Roth, Hengchu Zhang, Andreas Haeberlen, and Benjamin C Pierce. Orchard: Differentially private an-alytics at scale. In 14th USENIX Symposium on Oper-ating Systems Design and Implementation (OSDI 20) ,pages 1065–1081, 2020. [59] Amrita Roy Chowdhury, Chenghong Wang, Xi He, Ash-win Machanavajjhala, and Somesh Jha. Crypt ε: Crypto-assisted differential privacy on untrusted servers. In 
+
+Proceedings of the 2020 ACM SIGMOD International Conference on Management of Data , pages 603–619, 2020. [60] Wenqiang Ruan, Mingxin Xu, Wenjing Fang, Li Wang, Lei Wang, and Weili Han. Private, efficient, and accurate: Protecting models trained by multi-party learning with differential privacy. In 2023 IEEE symposium on secu-rity and privacy (SP) , pages 1926–1943. IEEE, 2023. [61] Jie Sun, Lingchen Zhao, Zhuotao Liu, Qi Li, Xinhao Deng, Qian Wang, and Yong Jiang. Practical differen-tially private online advertising. Computers & Security ,112:102504, 2022. [62] Apple Differential Privacy Team et al. Learning with privacy at scale. Apple Mach. Learn. J , 1(8):1–25, 2017. [63] Chengkun Wei, Ruijing Yu, Yuan Fan, Wenzhi Chen, and Tianhao Wang. Securely sampling discrete gaussian noise for multi-party differential privacy. In Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security , pages 2262–2276, 2023. [64] Andrew C Yao. Protocols for secure computations. In 
+
+23rd annual symposium on foundations of computer science (sfcs 1982) , pages 160–164. IEEE, 1982. [65] Da Yu, Saurabh Naik, Arturs Backurs, Sivakanth Gopi, Huseyin A Inan, Gautam Kamath, Janardhan Kulkarni, Yin Tat Lee, Andre Manoel, Lukas Wutschitz, et al. Dif-ferentially private fine-tuning of language models. arXiv preprint arXiv:2110.06500 , 2021. 
+
+# A Proof of Lemma 1 
+
+Proof. Encode the standard sample with l′ fractional bits, so R = 2l′
+
+r ∈ Z; scaling by s and rounding to the b-bit grid gives H = sR /2l′−b. As R runs over consecutive integers, 
+
+sR /2l′−b advances in steps of s 2−(l′−b), so {H} hits every 16 point of the b-bit grid if and only if this step is at most one grid unit, 
+
+s 2−(l′−b) ≤ 1 ⇐⇒ l′ − b ≥ log 2 s ⇐⇒ l′ ≥ b + ⌈log 2 s⌉.
+
+When l′ < b+⌈log 2 s⌉ the step exceeds one unit, so {H} lands on a sublattice of density 2 l′−b/s < 1 whose coset within the grid is shifted by f (D), which is the leak exploited in Section 4. 
+
+# B Vectorized Guessing Algorithm 
+
+Algorithm 4 is the vector form of Algorithm 2 used in Sec-tion 5. It runs the reachability test on every coordinate of the released vector, keeps a candidate only when all of its coordi-nates are reachable, and degenerates to maximum likelihood when both candidates survive. The distance ∥·∥ in Line 13 is 
+
+ℓ1 for Laplace noise and ℓ2 for Gaussian noise. 
+
+Algorithm 4: Vectorized Guessing Algorithm 
+
+Input: the noisy query f ∗(Db) ∈ Rq, the public noise scale 
+
+s, and the two candidate queries f (D0), f (D1) ∈ Rq
+
+Output: a bit b′ ∈ { 0, 1} guessing the underlying dataset  
+
+> 1:
+
+OUT ← 2l f ∗(Db) ▷ coordinate-wise integer encoding  
+
+> 2:
+
+for i ∈ { 0, 1} do  
+
+> 3:
+
+ci ← 1 
+
+> 4:
+
+for j ∈ { 1, . . . , q} do  
+
+> 5:
+
+Hi, j ← OUT j − 2l f (Di) j 
+
+> 6:
+
+ci ← ci ∧ 1Hi, j ∈ Λs
+
+ ▷ reject i if any coordinate is unreachable  
+
+> 7:
+
+end for  
+
+> 8:
+
+end for  
+
+> 9:
+
+if c0̸ = c1 then  
+
+> 10:
+
+return b′ = i with ci = 1 
+
+> 11:
+
+else  
+
+> 12:
+
+// Degenerate to maximum likelihood  
+
+> 13:
+
+return the b′ = i that minimises ∥OUT − 2l f (Di)∥ 
+
+> 14:
+
+end if 
+
+# C Security of the Discrete Sampler 
+
+Proof of Theorem 6.1. Let C ⊊ {P1, . . . , PN } be the corrupted set. We build a simulator S that, given only the corrupted parties’ shares of the output of FLap , reproduces their view of Algorithm 3. Every step of the algorithm is one of three kinds: (i) a call to Fcoin , whose only message to C is a secret share of a fresh bit and is simulated by handing C uniformly random shares; (ii) a local linear operation ( ∑i 2i⟨Gi⟩, the public multiplications, the final 2 −l scaling), which sends no message; and (iii) the two Boolean multiplications forming 
+
+(1 − ⟨ c⟩)( 2⟨b⟩ − 1)( ⟨G⟩ + 1), each realized by consuming a Beaver triple, whose opened values are uniform given the cor-rupted shares and are simulated as such. Since no step reveals any secret beyond the shares C already holds, S’s output is distributed identically to the real view, and the reconstructed sample equals the one FLap outputs by correctness of the coin-to-Laplace map. The claim follows. 
+
+# D Comparison with the Secure Lookup Table 
+
+Franzese et al. [28] sample discrete noise from a secure lookup table instead of a bitwise circuit. The parties hold 
+
+λ tables whose length covers the support of the target distri-bution, and each lookup is evaluated on an encrypted one-hot vector of that length, which parallelizes well across parties. Their construction is generic over discrete distributions and works in the same semi-honest, all-but-one corruption setting as ours. Table 3 compares the two samplers in the setting of their Table 1, which fixes a discrete Gaussian with σ = 967, 
+
+B = 32 ,768 samples, and λ = 64, under a WAN of 100 ms latency and 1 Gbps bandwidth. We take their numbers directly from their paper and measure ours under the same setting. Our sampler is strictly faster on a LAN and matches theirs on a WAN. The reason is that their lookup runs under homo-morphic encryption and is therefore computation bound, so its LAN and WAN times stay close. Ours is bound by the number of communication rounds instead, and the Gaussian sampler still needs 689 online rounds after the optimizations of Section 6.3, which the WAN latency then dominates.                                 
+
+> Metric Method Number of parties 24816
+> LAN (s) Ours 0.0017 0.0017 0.0093 0.04 LUT 0.09 0.07 0.06 0.06 WAN (s) Ours 0.10 0.11 0.11 0.24 LUT 0.10 0.08 0.08 0.25 Comm. (MB) Ours 0.13 0.76 3.54 15.10 LUT 0.72 1.91 3.30 11.59
+
+Table 3: Comparison with the secure lookup table sampler of Franzese et al. [28]. LAN and WAN report the amortized time and the global communication per sample. The LUT rows are the numbers reported in [28]. This comparison fixes one distribution, and we do not in-clude the lookup table in the precision comparison of Figure 8. The reason is that its table length has to cover the support of the target distribution. Reading the noise on the fixed-point grid Fn,l multiplies that support by 2 l , so the same σ that needs 2 16 entries in their evaluation needs roughly 2 24 entries at l = 16 and 2 40 at l = 32, which lies far outside the range their evaluation covers. 17 Functionality 2 FGauss (σ, l, κ) for Gaussian noise sampling Samples a discrete Gaussian variable Z ∼ DGauss κ(2l σ), sets 
+
+η ← 2−l Z, computes a fresh secret sharing ⟨η⟩ ∈ Fn,l , and sends each party its share. 
+
+Algorithm 5: Discrete Gaussian Sampler in the Fcoin -hybrid 
+
+Public parameters: standard deviation σ, fractional bits l,truncation length κ, failure bound δ, with σint = 2l σ,proposal scale t = ⌊σint ⌋ + 1, trial count M, and 
+
+D = 2σ2
+
+> int
+
+t2
+
+Output: a secret-shared fixed-point noise ⟨η⟩ ∈ Fn,l
+
+distributed as FGauss (σ, l, κ) 
+
+> 1:
+
+// M proposals, all drawn in parallel  
+
+> 2:
+
+for j = 1 to M do  
+
+> 3:
+
+⟨Yj⟩ ← DL AP (t) ▷ Algorithm 3 before scaling  
+
+> 4:
+
+⟨Xj⟩ ←  |⟨ Yj⟩| · t − σ2
+
+> int
+
+2 
+
+> 5:
+
+⟨a j⟩ ← BER EXP (⟨Xj⟩) ▷ accept bit  
+
+> 6:
+
+end for  
+
+> 7:
+
+⟨Z⟩ ← the first ⟨Yj⟩ whose ⟨a j⟩ is 1 ▷ oblivious selection  
+
+> 8:
+
+return ⟨η⟩ ← 2−l ⟨Z⟩
+
+Subroutine BER EXP (⟨X⟩), returning ⟨a⟩ with Pr [a = 1] = e−X/D 
+
+> 9:
+
+for each bit ⟨Xi⟩ of ⟨X⟩ do  
+
+> 10:
+
+⟨bi⟩ ← Fcoin 
+
+ e−2i/D 
+
+> 11:
+
+end for  
+
+> 12:
+
+return ⟨a⟩ ← V 
+
+> i
+
+¬ ⟨Xi⟩ ∧ ¬⟨ bi⟩
+
+# E Discrete Gaussian Sampler 
+
+The Gaussian case mirrors the Laplace one. We target the analogous functionality FGauss , which outputs a truncated discrete Gaussian read on the grid. Algorithm 5 gives the protocol. It follows the same tem-plate as Algorithm 3, which it reuses to draw a discrete Laplace proposal Y at the integer scale t, and then accepts Y
+
+with the probability the rejection sampler of [13, 63] pre-scribes. The acceptance test needs no new primitive, be-cause a secret integer X decomposes into bits and e−X/D =
+
+∏i
+
+ e−2i/DXi , so one Fcoin call per bit of X suffices. A rejec-tion loop would leak the trial count through its running time, hence the protocol draws a public number M of proposals in parallel and obliviously selects the first accepted one. We set M so that at least one proposal is accepted except with probability δ, and δ enters the truncation budget of FGauss in the same way as κ.
+
+Theorem E.1. In the Fcoin -hybrid model, the discrete Gaus-sian sampler securely realizes FGauss against a semi-honest adversary corrupting up to N − 1 parties. 
+
+Because acceptance and the arithmetic are again a compo-sition of Fcoin calls and local Boolean gates, the simulation argument of Appendix C applies verbatim. The truncation is part of FGauss , so the simulator reproduces only the coin outputs, the opened Beaver-triple values, and the public gates, which yields an identical view. 18

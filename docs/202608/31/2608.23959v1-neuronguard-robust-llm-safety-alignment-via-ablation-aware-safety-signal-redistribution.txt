@@ -1,0 +1,777 @@
+Title: NeuronGuard: Robust LLM Safety Alignment via Ablation-Aware Safety Signal Redistribution
+
+URL Source: https://arxiv.org/pdf/2608.23959v1
+
+Published Time: Wed, 26 Aug 2026 00:24:27 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# NeuronGuard: Robust LLM Safety Alignment via Ablation-Aware Safety Signal Redistribution 
+
+Anjun Gao 1 Yueyang Quan 2 Yufei Xia 1* Zhuqing Liu 2 Minghong Fang 11University of Louisville, 2University of North Texas 
+
+Abstract 
+
+Safety alignment in large language models (LLMs) remains brittle against a growing spec-trum of attacks. Jailbreak attacks bypass safety mechanisms through crafted prompts, while neuron-level attacks directly prune safety-critical neurons post-deployment. Both exploit a common weakness: safety-relevant informa-tion concentrates in a sparse neuron subset. We present NeuronGuard , a fine-tuning-stage defense that simultaneously hardens LLMs against both attack classes by redistributing safety signals across a broader set of neurons. 
+
+NeuronGuard dynamically identifies safety-critical neurons via periodically refreshed per-layer linear classifiers, forces refusal behavior under deliberate neuron ablation, and applies KL-divergence regularization for distributional consistency. A randomized gradient projec-tion strategy preserves downstream task utility by resolving conflicts between the defense and task objectives. We provide a formal guarantee that NeuronGuard strictly reduces the attack success rate (ASR) upper bound, and experi-ments across three LLMs, six state-of-the-art attack strategies, and multimodal settings con-firm near-zero ASR while maintaining task ac-curacy, including against white-box adaptive adversaries. 
+
+1 Introduction 
+
+Large language models (LLMs) (Team, 2024a; Grattafiori et al., 2024; Team, 2024b; Team et al., 2024; Abdin et al., 2024; Brown et al., 2020; Team, 2026; Blakeman et al., 2025) have demonstrated remarkable capabilities across diverse applications, from question answering and code generation to complex reasoning and planning. Beyond these foundational tasks, LLMs have been increasingly deployed as general-purpose intelligence compo-nents powering autonomous agents, dialogue sys-tems, and tool-augmented workflows. This broad 
+
+> *Yufei Xia performed this research when he was under the supervision of Minghong Fang.
+
+and rapid adoption has made the safety and robust-ness of LLMs a critical concern, particularly given the potential consequences of deploying misaligned or manipulable models in high-stakes domains. To ensure safe deployment, these models un-dergo extensive alignment procedures, including supervised fine-tuning (Ouyang et al., 2022), re-inforcement learning from human feedback (Bai et al., 2022), and preference optimization (Rafailov et al., 2023) to instill refusal behavior against harmful requests. However, this alignment has proven fragile across a growing spectrum of post-alignment attacks. Jailbreak attacks (Chao et al., 2025; Mehrotra et al., 2024; Chang et al., 2024; Zou et al., 2023; Liu et al., 2024) bypass safety mech-anisms through crafted prompts, adversarial suf-fixes, or role-playing scenarios without modifying model parameters. At a deeper level, neuron-level attacks (Wu et al., 2026) strike at the internal struc-ture of aligned models: prior work has revealed that safety alignment tends to concentrate in a sparse set of specialized neurons, and NeuroStrike (Wu et al., 2026) exploits this by identifying and prun-ing safety-critical neurons at inference time, dis-abling safety mechanisms without any adversarial prompt. Both attack classes share a common root cause, namely that safety-relevant information con-centrates in a sparse neuron subset, yet they exploit it from orthogonal directions: one through the input and one through the model’s parameters. Existing defenses are inadequate against this dual threat. Prompt-level defenses such as perplex-ity filtering (Alon and Kamfonas, 2023), Smooth-LLM (Robey et al., 2023), and GradSafe (Xie et al., 2024) are entirely ineffective against attacks that operate at the parameter level. Existing model-level defenses, including CAT (Xhonneux et al., 2024) and LED (Zhao et al., 2024), offer more direct pro-tection but remain vulnerable to direct neuron ma-nipulation. SafeNeuron (Wang et al., 2026) comes closest by freezing safety-critical neurons during arXiv:2608.23959v1 [cs.CR] 25 Aug 2026 optimization, yet its static identification strategy cannot account for representational shifts as model weights evolve. More fundamentally, none of these approaches addresses the root cause: safety infor-mation remains concentrated in a sparse neuron subset, leaving the model vulnerable to any adver-sary who can identify and suppress it. 
+
+Our contributions: To address these challenges, we present NeuronGuard , a fine-tuning-stage de-fense framework that hardens LLMs against both jailbreak and neuron-level attacks by redistributing safety signals across a broader set of neurons. Our method builds on a key observation: the brittleness of current alignment stems from over-concentration of safety-relevant information in a sparse neuron subset, and robustness can be improved by train-ing the model to maintain safe behavior even when primary safety neurons are suppressed. To iden-tify target neurons, NeuronGuard fits lightweight per-layer linear classifiers that separate harmful from benign representations at each fine-tuning step; these classifiers are periodically refreshed to track the current safety-critical neuron set as weights evolve. Building on this, NeuronGuard 
+
+constructs a safety objective that deliberately ab-lates the identified neurons and requires the model to refuse harmful queries in their absence, forc-ing gradient updates into the remaining neurons and progressively broadcasting safety representa-tions across the network. A KL-divergence reg-ularizer constrains the ablated model’s output to match the standard forward pass, ensuring behav-ioral consistency. As safety signals spread to new neurons, those neurons are identified and ablated in turn, continuously expanding representational redundancy. Finally, since safety and task ob-jectives frequently produce conflicting gradients, 
+
+NeuronGuard applies a randomized projection that removes the opposing component from one gradi-ent without systematically favoring either objective, preserving utility without sacrificing robustness. We conduct evaluations across diverse attack set-tings, demonstrating that NeuronGuard effectively defends against both jailbreak attacks and neuron-level attacks while maintaining model utility on downstream fine-tuning tasks. We evaluate against six representative attack strategies, assess robust-ness in multimodal settings, and include challeng-ing adaptive adversaries with full knowledge of our defense. Across all settings, NeuronGuard consis-tently reduces the attack success rate (ASR) to near zero while preserving task accuracy, with modest computational overhead suitable for practical fine-tuning pipelines. Our contributions are summarized as follows: • We propose NeuronGuard , a novel fine-tuning-stage defense framework that dynamically iden-tifies safety-critical neurons via periodically re-freshed per-layer linear classifiers, and broad-casts safety signals across a broader set of neu-rons through ablation-robust optimization and randomized gradient projection, providing simul-taneous resistance to both jailbreak attacks and neuron-level attacks. • We provide a formal theoretical guarantee show-ing that NeuronGuard strictly reduces the ASR upper bound relative to an undefended model under neuron-level attack, with the reduction quantified in terms of the ablation coverage ratio, per-neuron attack success probability, and the KL-divergence regularization strength. • Comprehensive evaluations across diverse attack strategies and deployment scenarios demonstrate that NeuronGuard effectively hardens safety alignment while preserving model utility, in-cluding under adaptive adversaries explicitly de-signed to evade our defense. 
+
+2 Related work 
+
+Post-alignment attacks on LLMs: Post-alignment attacks are inference-time adversarial strategies that bypass safety alignment in deployed LLMs. We focus on two representative families: jailbreak attacks and neuron-level attacks. Jailbreak attacks subvert safety alignment through crafted inputs without modifying model parameters. Generation-based methods such as PAIR (Chao et al., 2025), TAP (Mehrotra et al., 2024), and Puzzler (Chang et al., 2024) synthesize adversarial prompts via iterative querying or puzzle-like reformulations. Optimization-based methods take a more direct route: GCG (Zou et al., 2023) searches over adver-sarial token suffixes via gradient guidance, while AutoDAN (Liu et al., 2024) combines gradient sig-nals with fluent prompt generation. Rather than manipulating inputs, neuron-level attacks exploit the internal structure of aligned models directly. Safety alignment is concentrated in a sparse set of specialized neurons (Wu et al., 2026), making it both localizable and fragile. NeuroStrike (Wu et al., 2026) compromises an aligned model by locating neurons responsible for refusal behavior and sup-pressing their activations during inference, thereby inducing unsafe outputs without requiring specially crafted inputs. 
+
+Defenses against post-alignment attacks: Exist-ing defenses fall into two categories, each with fundamental limitations. Prompt-level defenses in-tercept adversarial inputs at inference time without altering the model: Perplexity filtering (Alon and Kamfonas, 2023; Cheng et al., 2025) flags anoma-lous inputs, SmoothLLM (Robey et al., 2023) ag-gregates responses over randomly perturbed inputs via majority voting, and GradSafe (Xie et al., 2024) detects jailbreak attempts through gradient patterns on safety-critical parameters. However, these de-fenses are inherently ineffective against neuron-level attacks, which operate at the parameter level and require no adversarial prompt. Model-level de-fenses modify the model’s parameters or training procedure, offering stronger but still insufficient protection. CAT (Xhonneux et al., 2024) performs adversarial training in the continuous embedding space, and LED (Zhao et al., 2024) edits safety-critical layers via hidden-state activation analysis; both target prompt-based threats and offer little resistance to direct neuron manipulation. SafeNeu-ron (Wang et al., 2026) freezes safety-critical neu-rons during direct preference optimization to en-courage redundant safety pathways, but its static identification strategy cannot capture representa-tion shifts during weight updates. Fundamentally, none of these approaches trains the model to dis-tribute safety signals broadly, which is the root cause of their fragility. Note that a complementary line of research has investigated post-attack forensic attribution, which aims to determine how a successful attack was car-ried out and identify the source or root cause re-sponsible for its success (Jia et al., 2025; Gao et al., 2026b; Zhang et al., 2025, 2026; Gao et al., 2026a). These techniques provide valuable information for diagnosing compromised systems and under-standing the origins of successful attacks, thereby complementing conventional defense mechanisms. Nevertheless, post-attack forensics addresses a dif-ferent stage of the attack lifecycle from the mitiga-tion strategies considered in this work. Our study instead focuses on preventing and mitigating at-tacks, while forensic investigation and attribution after a successful attack are beyond the scope of this paper. 
+
+3 Threat model 
+
+Attacker’s goal and knowledge: We consider post-alignment attacks that aim to bypass a model’s safety alignment and elicit harmful responses. This framing is consistent with both jailbreak at-tacks (Chao et al., 2025; Mehrotra et al., 2024; Chang et al., 2024; Zou et al., 2023; Liu et al., 2024) and neuron-level attacks (Wu et al., 2026), which are inherently post-hoc. We further assume a worst-case setting where the attacker has full access to the post-finetuning weights and can manipulate internal parameters or neurons, a realistic assump-tion for open-weight LLMs whose parameters are publicly available. 
+
+Defender’s goal and knowledge: The defender aims to maintain safety alignment under post-alignment attacks, ensuring consistent refusal of harmful queries. We assume the defender operates during fine-tuning with full access to the training pipeline, including data, weights, and objectives. This is natural: the developer who conducts fine-tuning is directly responsible for the safety proper-ties of the released model. Critically, fine-tuning is the last stage under the developer’s control before public deployment, as once released, the developer cannot control how weights are accessed or mod-ified. Hardening the model at this stage therefore proactively reduces the attack surface, without re-quiring any intervention at inference time or any assumptions about the attacker’s specific strategy. Following prior work (Wu et al., 2026; Wang et al., 2026), we assume the defender holds a small safety probe set of harmful and benign queries. This as-sumption is reasonable as any responsible model developer would already maintain a small set of safety-critical queries as part of standard quality control before deployment, and such a probe set requires no knowledge of the attacker’s specific strategy. 
+
+4 Our method 
+
+NeuronGuard addresses the root cause of align-ment fragility through three coupled stages, as il-lustrated in Fig. 2 (Appendix). The first stage fits per-layer linear classifiers to identify the sparse neuron subset dominating safety-gating decisions, refreshed periodically as weights evolve. The sec-ond stage deliberately suppresses these critical neu-rons during training, forcing safety representations to redistribute across a broader population so that no small subset serves as a single point of failure. The third stage resolves conflicts between the de-fense and task objectives via randomized gradient projection, preserving utility without sacrificing ro-bustness. The complete procedure is summarized in Algorithm 1 (Appendix). 
+
+4.1 Stage 1: Identifying safety-critical neurons 
+
+Safety signals must be redistributed away from the neurons that currently dominate the model’s refusal behavior. The first procedure is therefore to identify those neurons precisely at each point in fine-tuning. We achieve this by fitting a lightweight linear classifier at each layer that separates harmful from benign representations, and then reading off which neurons contribute most to that separation. Concretely, the defender maintains a safety probe set consisting of two small subsets: a harm-ful query set Dunsafe and a benign query set Dsafe .Each prompt x ∈ Dsafe ∪ Dunsafe is assigned a bi-nary label ( y = 1 for harmful, y = 0 for benign). We then feed x through the current model and col-lect the activation vectors hl(x) at each layer l, and a per-layer logistic classifier is trained on these activations: 
+
+ˆyl(x) = σ(W ⊤ 
+
+> l
+
+hl(x)+ bl), ∀ x ∈ Dsafe ∪Dunsafe ,
+
+(1) where σ(·) is the sigmoid function and Wl, b l are the learnable classifier parameters. The weight vector Wl encodes neuron-level importance: a large positive weight Wl,i indicates that neuron i is a strong predictor of the “unsafe” label, and hence a primary carrier of safety-relevant information. We therefore rank neurons by their corresponding classifier weights and select the top-ρ fraction as the safety-critical set for layer l:
+
+Isafety ,l = TopFrac( Wl, ρ ) , (2) where TopFrac( ·, ρ ) returns the indices of the largest ρ · dl elements, and dl is the number of neurons in layer l. Because model representations shift as weights are updated, a fixed neuron set identified at initialization quickly becomes stale. We therefore refresh the classifiers, and recompute 
+
+Isafety ,l , every N optimization steps. This periodic re-identification ensures that Stage 2 always targets the current safety-critical neurons, not an outdated approximation, and is the mechanism that produces the iterative broadening effect described next. 
+
+4.2 Stage 2: Ablation-robust safety optimization 
+
+With the current safety-critical neuron sets 
+
+{I safety ,l } in hand, we construct a safety objective that drives the model to spread safety represen-tations beyond those neurons. The objective has three terms, each enforcing a distinct aspect of ro-bust safety. 
+
+Refusal loss under normal execution: The first term ensures the model refuses harmful queries during normal inference. Let xh ∈ Dunsafe denote a harmful input and yref a fixed refusal-template target (e.g., “I’m sorry, but I cannot assist with that request.”). We apply standard cross-entropy supervision: 
+
+Lref = CE( yref , p θ(y | xh)) , (3) where pθ(y | xh) is the model’s output distribu-tion under parameters θ. This term provides a baseline safety signal, but on its own, only rein-forces the neurons that already encode refusal be-havior. Safety information, therefore, remains con-centrated in Isafety ,l , leaving the model vulnerable whenever those neurons are suppressed. The next term addresses this limitation directly. 
+
+Refusal loss under safety-neuron ablation: To compel other neurons to take on safety responsibil-ities, we introduce a second supervision term that operates on a modified forward pass in which the safety-critical neurons are deliberately zeroed out. Specifically, for each layer l, we construct ablated activations ˜hi,l = 0 if i ∈ I safety ,l , and ˜hi,l = hi,l 
+
+otherwise, then propagate them through the remain-ing layers to obtain the ablated output distribution 
+
+pθabl (y | xh). We then apply refusal supervision on this ablated forward pass: 
+
+Labl ref = CE( yref , p θabl (y | xh)) . (4) Because the neurons in Isafety ,l are zeroed out, gra-dients from Labl ref cannot flow back into them and must instead propagate to the remaining neurons, training them to carry safety-relevant information. As these neurons absorb safety information over successive steps, the refreshed classifiers identify them as part of the new safety-critical set and ab-late them in turn, pushing the safety signal progres-sively outward to an ever-wider set of neurons. 
+
+Distributional consistency regularization: Opti-mizing Lref and Labl ref in isolation does not prevent the ablated model from producing correct refusal 400 800 1200 Step 0.1 
+
+> 0.0 0.1 0.2 0.3 Cosine similarity
+
+Figure 1: Cosine similarity between guser and gsafe across fine-tuning steps on SST2 (Socher et al., 2013) with Llama. 
+
+tokens while diverging sharply on the remaining vocabulary, leading to unstable training dynamics. To prevent this, we add a KL-divergence regular-izer between the two forward passes on the same harmful input: 
+
+Lcons = DKL (pθabl (y | xh) ∥ pθ(y | xh)) . (5) This term enforces that ablating safety neurons preserves the model’s overall output distribution, not just the refusal token, preventing degenerate collapse. 
+
+Full safety objective: Combining the three terms, the complete safety objective is: 
+
+Lsafe = Lref + Labl ref + Lcons . (6) 
+
+Lref ensures that the model refuses harmful queries in standard setting; Labl ref forces safety representa-tions to spread beyond the identified safety neurons; and Lcons maintains distributional consistency be-tween the two settings. Together, these three terms promote distributed safety encoding across neurons, avoiding concentration in only a few neurons. 
+
+4.3 Stage 3: Resolving gradient conflicts via randomized projection 
+
+Beyond the safety objective, the model must simul-taneously learn the user’s downstream task. Let 
+
+Luser denote the task loss computed on the user-provided fine-tuning dataset Duser . The overall fine-tuning objective is: 
+
+Ltotal = Luser + Lsafe , (7) where Lsafe is the safety objective defined in Eq. (6). However, naively minimizing Ltotal with a sin-gle gradient step is problematic in practice. Let 
+
+guser = ∇θLuser and gsafe = ∇θLsafe denote the gradients of the two objectives. As shown in Fig-ure 1, in a large fraction of fine-tuning steps we ob-serve ⟨guser , g safe ⟩ < 0, meaning the two gradients point in conflicting directions. Directly summing them would therefore cause destructive interfer-ence: progress on one objective would come at the expense of the other, ultimately harming task utility. To address this, we introduce a randomized gradient correction that resolves conflicts at each fine-tuning step without systematically favoring either objective. At each step, we first compute 
+
+⟨guser , g safe ⟩. If no conflict is detected, both gra-dients are used unchanged. If a conflict is de-tected, we randomly sample an ordering (g1, g 2)
+
+of (guser , g safe ), where g1 is the gradient to be cor-rected and g2 is kept unchanged. The corrected gradient is: 
+
+ˆg1 = g1 − ⟨g1, g 2⟩∥g2∥22
+
+g2, ˆg2 = g2, (8) which removes from g1 precisely the component that opposes g2, while leaving all non-conflicting components intact. The projection is applied to only one gradient rather than both, to avoid unnec-essarily shrinking the effective update magnitude. Randomizing which gradient serves as g1 ensures that neither objective is systematically deprioritized across fine-tuning. When no conflict is detected, we simply set ˆg1 = guser and ˆg2 = gsafe .The final gradient update is then: 
+
+gfinal = ˆ g1 + ˆ g2. (9) This ensures that the two objectives always make progress in mutually non-opposing directions, pre-serving both task utility and the safety robustness gained in Stage 2. The model parameters are then updated as θ ← θ −γ ·gfinal , where γ is the learning rate. 
+
+5 Theoretical analysis 
+
+We provide theoretical guarantees for our proposed 
+
+NeuronGuard under neuron-level attack (which is more powerful than jailbreak attacks based on our experimental observations), answering whether safety-neuron ablation provably reduces ASR and under what conditions. Guarantees are stated in terms of measurable quantities (classifier accu-racy, ablation coverage, and KL divergence) es-timable from fine-tuning logs. Let pθ(· | x) de-note the model’s output distribution and hi,l (x)
+
+the activation of neuron i at layer l. The ground-truth safety-neuron set at layer l is Sl = { i |
+
+Ex∼D unsafe [hi,l (x)] − Ex∼D safe [hi,l (x)] > τ, i ∈[1 , d l] }, where τ > 0 and |Sl| = sl ≪ dl.The ablation coverage ratio is defined as ρl := 
+
+|Sl ∩ I safety ,l |/|Sl|. We first provide the necessary assumptions. 
+
+Assumption 1 (Approximate linear separability and sufficient ablation coverage) . There exists a linear classifier ψ = ( Wl, b l) with Υ( hl(x); ψ) = 
+
+1{W ⊤ 
+
+> l
+
+hl(x) + bl ≥ 0} achieving small misclassi-fication rates δu, δ b ∈ (0 , 1) on unsafe and benign queries respectively, where Υ( ·; ψ) is the binary decision rule of the linear classifier ˆyl(x) in Eq. (1) .The ablation coverage satisfies ρl ≥ ρ0 for some constant ρ0 ∈ (0 , 1) .
+
+Assumption 2 (Bounded attack capability) . The attacker perturbs only neurons in Sl, with ∥δ∥2 ≤
+
+ε. After ablation, the effective perturbation support is restricted to Sl \ I safety ,l .
+
+Assumption 3 (Local Lipschitz continuity of the output head) . The subnetwork from layer l to the output, zθ(·), satisfies ∥zθ(hl) − zθ(h′
+
+> l
+
+)∥2 ≤
+
+CL∥hl − h′
+
+> l
+
+∥2 in a neighborhood of hl(x), and all admissible perturbations remain within this neigh-borhood, where CL > 0 is a constant. 
+
+Assumption 4 (Bounded KL divergence between ablated and standard outputs) . At convergence, 
+
+Ex∼D unsafe [DKL (pθabl (y | x)∥pθ(y | x))] ≤ η for a finite constant η > 0.
+
+Assumption 5 (Independent per-neuron exploita-tion) . Each non-ablated safety neuron is indepen-dently exploitable with probability αl ∈ [0 , 1] .
+
+Extended discussion and verifiability remarks are provided in Appendix A. We then state the main result showing that ablating safety neurons provably reduces the ASR upper bound relative to an undefended model, with the proof relying on three auxiliary lemmas in Appendix B.1: Lemma 1 shows ablation shrinks the adversarial subspace; Lemma 2 provides Lipschitz control of output per-turbations; and Lemma 3 translates bounded KL divergence into bounded ℓ1 distance via Pinsker’s inequality. 
+
+Theorem 1 (ASR upper-bound reduction) . Sup-pose Assumptions 1–5 hold. Let sl = |Sl| de-note the number of safety neurons at layer l,
+
+ρl ∈ (0 , 1] the ablation coverage ratio, and 
+
+αl ∈ (0 , 1) the per-neuron attack success proba-bility. Define the neuron-level exploitation prob-abilities as Pnl = 1 −(1 −αl)sl and the exploita-tion probability under our defense as Pours =1 − (1 − αl)(1 −ρl)sl . Let B(ASR) denote the the-oretical upper bound of the attack success rate. If η ≤  (1 − αl)(1 −ρl)sl − (1 − αl)sl
+
+2/2, then 
+
+B(ASR nl ) ≥ B (ASR ours ), i.e., NeuronGuard 
+
+strictly reduces the ASR upper bound relative to the undefended model. 
+
+The sufficient condition on η formalizes an intu-itive trade-off: ablation reduces the attacker’s ex-ploitable subspace, but introduces a distributional shift between the ablated and standard models. When KL regularization is tight enough, the de-fense’s ASR upper bound is strictly lower than that of the undefended model (proof in Appendix B.2). 
+
+6 Experiments 
+
+6.1 Experimental setup Models, datasets, and evaluation metrics: We conduct experiments on three pre-trained LLMs: Llama-3.1-8B-Instruct (Grattafiori et al., 2024), Qwen2.5-7B-Instruct (Team, 2024a), and Falcon3-7B-Instruct (Team, 2024b), and fine-tune LLMs on four datasets: SST2 (Socher et al., 2013), AG-News (Zhang et al., 2015), CoLA (Warstadt et al., 2019), and GSM8K (Cobbe et al., 2021). We as-sess each defense using two complementary met-rics. Utility accuracy (ACC) measures task per-formance after fine-tuning, where a higher ACC indicates better preservation of model utility. At-tack success rate (ASR) measures the fraction of unsafe responses produced under harmful queries, where a lower ASR indicates more effective safety preservation. Following prior work (Inan et al., 2023; Wu et al., 2026), we employ Llama-Guard-3-8B (Grattafiori et al., 2024) as the safety judge. We report the license of all models and datasets we used in this paper in Appendix C. 
+
+Baselines and attacks: We compare our method against six defense baselines. Three are prompt-level defenses: Perplexity Filter (Alon and Kam-fonas, 2023), SmoothLLM (Robey et al., 2023), and GradSafe (Xie et al., 2024). Three are model-level defenses: CAT (Xhonneux et al., 2024), Model Task No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard                                                                                                 
+
+> Llama SST2 0.93 0.93 0.83 0.91 0.86 0.88 0.87 0.92 AGNews 0.91 0.91 0.82 0.88 0.84 0.87 0.82 0.90 CoLA 0.82 0.82 0.74 0.80 0.76 0.75 0.76 0.79 GSM8K 0.65 0.65 0.55 0.63 0.58 0.61 0.60 0.62 Qwen SST2 0.92 0.92 0.85 0.88 0.85 0.86 0.86 0.89 AGNews 0.90 0.90 0.84 0.87 0.83 0.85 0.81 0.88 CoLA 0.82 0.82 0.74 0.80 0.76 0.73 0.76 0.78 GSM8K 0.65 0.65 0.46 0.62 0.58 0.55 0.60 0.58 Falcon SST2 0.94 0.94 0.87 0.92 0.87 0.88 0.88 0.93 AGNews 0.91 0.91 0.84 0.90 0.84 0.86 0.82 0.88 CoLA 0.83 0.83 0.76 0.77 0.77 0.75 0.77 0.78 GSM8K 0.68 0.68 0.57 0.61 0.61 0.62 0.63 0.66
+
+Table 1: ACC ↑ of different methods across three models and four fine-tuning tasks.                                                                                                                                                          
+
+> Model Attack No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard
+> Llama PAIR 0.17 0.14 0.15 0.09 0.10 0.07 0.04 0.01 TAP 0.15 0.13 0.13 0.08 0.12 0.09 0.05 0.00 Puzzler 0.29 0.25 0.23 0.12 0.17 0.13 0.07 0.01 GCG 0.35 0.16 0.27 0.15 0.09 0.05 0.03 0.01 AD 0.31 0.28 0.24 0.11 0.13 0.09 0.05 0.01 NS 0.89 0.64 0.83 0.72 0.58 0.49 0.22 0.04 Qwen PAIR 0.23 0.18 0.19 0.14 0.18 0.14 0.06 0.00 TAP 0.25 0.21 0.10 0.16 0.17 0.13 0.07 0.01 Puzzler 0.41 0.37 0.39 0.25 0.26 0.20 0.10 0.01 GCG 0.40 0.18 0.33 0.17 0.13 0.08 0.04 0.01 AD 0.36 0.36 0.23 0.18 0.20 0.15 0.07 0.01 NS 0.83 0.57 0.68 0.68 0.53 0.42 0.21 0.02 Falcon PAIR 0.15 0.12 0.12 0.07 0.05 0.02 0.03 0.01 TAP 0.16 0.15 0.15 0.08 0.07 0.04 0.02 0.00 Puzzler 0.30 0.25 0.27 0.09 0.09 0.05 0.03 0.01 GCG 0.28 0.11 0.24 0.13 0.16 0.12 0.06 0.01 AD 0.22 0.20 0.16 0.11 0.13 0.09 0.05 0.01 NS 0.81 0.71 0.74 0.59 0.66 0.57 0.28 0.02
+
+Table 2: ASR ↓ of different methods under six attack types across three models on the SST2 task. 
+
+LED (Zhao et al., 2024), and SafeNeuron (Wang et al., 2026). Detailed descriptions are provided in Appendix D. We evaluate all defenses against six representative attacks spanning both attack families discussed in Section 3. PAIR (Chao et al., 2025), TAP (Mehrotra et al., 2024), and Puzzler (Chang et al., 2024) are generation-based jailbreak attacks that synthesize adversarial prompts to bypass safety mechanisms. GCG (Zou et al., 2023) and Auto-DAN (Liu et al., 2024) are optimization-based jail-break attacks that use gradient-based methods to craft token sequences that maximize the likelihood of unsafe responses. NeuroStrike (Wu et al., 2026) is a neuron-level attack that selectively prunes safety-critical neurons to disable safety mecha-nisms. 
+
+Parameter settings: We adopt LoRA (Hu et al., 2022) for fine-tuning, with rank r = 32 and scaling factor α = 64 , fine-tuning for 10 epochs on four utility tasks each containing 2,000 samples. The learning rate γ across all experiments is set to 10 −5.For all baselines and attacks, we use the default hyperparameter settings reported in the original works. For our method, the fraction of masked neurons ρ is set to 0.05, and the refresh interval 
+
+N for the linear classifier is set to 200 steps. The safety probe set consists of 750 harmful queries from Dunsafe and 750 benign queries from Dsafe ,both sampled from BeaverTails (Ji et al., 2023). We use StrongREJECT (Souly et al., 2024) as the test dataset to compute ASR. All experimental results are reported as averages over 10 different random seeds, using two NVIDIA H100 GPUs, each with 94GB of memory. 
+
+6.2 Experimental results 
+
+NeuronGuard outperforms baselines: Table 1 reports the ACC of fine-tuned models on four tasks under various defenses. Our proposed 
+
+NeuronGuard preserves high ACC and closely matches the “No defense” setting, indicating strong utility without performance degradation. For in-stance, on Falcon (SST2), NeuronGuard achieves 0.93 ACC versus 0.94 under No defense, and on Llama (AGNews), it attains 0.90 versus 0.91. Ta-ble 2 reports the ASR under six attacks on SST2 (AutoDAN and NeuroStrike are abbreviated as AD and NS); Table 3 to Table 5 (Appendix) report the ASR for AGNews, CoLA, and GSM8K respec-tively. Existing baselines fail to provide effective defense under adversarial conditions. In contrast, 
+
+NeuronGuard reduces ASR to nearly zero across all attacks, achieving 0.00 under PAIR on Qwen and 0.04 under NeuroStrike on Llama. Overall, 
+
+NeuronGuard effectively defends against diverse attacks while maintaining high ACC on benign tasks. 
+
+Impact of ρ: We investigate how the selection ratio ρ in the top-ρ criterion, which controls the fraction of ablated safety-critical neurons, affects 
+
+NeuronGuard . Table 6 (Appendix) reports ACC on SST2 and ASR under different attacks for differ-ent ρ. A larger ρ zeros out more safety neurons, compelling the remaining neurons to learn safety-relevant representations more intensively. Over-all, NeuronGuard exhibits stable and robust perfor-mance even at low ρ, demonstrating the effective-ness of our approach in broadcasting safety signals. 
+
+Impact of N : We investigate the effect of the re-fresh interval N , which controls how frequently safety-critical neurons are re-identified. Table 7 (Appendix) reports ACC on SST2, ASR, and fine-tuning time for varying N . A smaller N keeps neuron estimates accurate but incurs higher over-head, while a larger N improves efficiency but may rely on outdated estimates. Overall, NeuronGuard 
+
+maintains robust performance across a wide range of N , demonstrating that periodic re-identification effectively balances efficiency and accuracy. 
+
+Impact of the size of Dsafe and Dunsafe : We inves-tigate the impact of the sizes of Dsafe and Dunsafe ,used to identify safety-critical neurons and train refusal responses. Table 8 (Appendix) reports ASR and ACC for dataset sizes ranging from 500 to 2,500 samples (set equally). Defense performance marginally improves as size increases, eventually reducing ASR to near zero. Notably, NeuronGuard 
+
+achieves highly effective defense with as few as 500 samples, demonstrating that our method is data-efficient and requires only limited safety data to robustly broadcast safety signals. 
+
+Computation cost of NeuronGuard : Figure 3 (Ap-pendix) reports the running time of each method on SST2 under NeuroStrike, while test-time meth-ods (e.g., Perplexity) report only inference time. The overhead of NeuronGuard remains on the same order of magnitude as “No defense”. Since 
+
+NeuronGuard operates during fine-tuning, it incurs no additional cost at inference time, unlike test-time defenses that require extra operations per in-put, making NeuronGuard particularly well suited to efficiency-critical deployment scenarios. 
+
+7 Discussion 
+
+Different variants of NeuronGuard : To evalu-ate each component’s contribution, we compare 
+
+NeuronGuard against four variants: Variant I uses only refusal training Lref without neuron ablation; 
+
+Variant II includes neuron ablation but omits the consistency regularizer Lcons ; Variant III mini-mizes Luser +Lsafe without gradient projection; and 
+
+Variant IV projects two gradients simultaneously in each step rather than using randomized projec-tion. Table 9 (Appendix) reports ASR and ACC on SST2 across different attacks. Removing any com-ponent leads to either higher ASR or lower ACC, while the full NeuronGuard achieves the lowest ASR with high task accuracy, demonstrating that all components are indispensable. 
+
+Adaptive attacks: To evaluate worst-case re-silience, we construct two adaptive attacks where the adversary has full knowledge of NeuronGuard .The first, iterative pruning (IP), repeatedly identi-fies and removes safety-related neurons on the pro-gressively pruned model to eliminate newly emerg-ing safety mechanisms. The second, nonlinear eva-sion (NE), leverages nonlinear models to uncover and remove safety-relevant neurons beyond those detectable by linear methods. More details are pro-vided in Appendix E. Table 10 (Appendix) reports ASR under these attacks on SST2 (ACC remains identical to Table 1 on Llama). While existing defenses are highly vulnerable, NeuronGuard re-mains robust. Further analysis of NeuronGuard ’s robustness under adaptive attacks is presented in Appendix F. 
+
+NeuronGuard is effective for the multimodal sce-nario: Safety is also critical for vision language models (VLMs). To assess NeuronGuard in multi-modal settings, we evaluate ACC and ASR under image inputs on Qwen2.5-VL-7B-Instruct (Team, 2025). For the fine-tuning task, we use SST2 in text-to-image (T2I) format, with both Dsafe and 
+
+Dunsafe constructed in T2I format from Beaver-Tails (Ji et al., 2023). We consider two at-tack settings: (i) harmful queries from StrongRE-JECT (Souly et al., 2024) converted to T2I format, and (ii) NSFW images from the NSFW Detection dataset (deepghs, 2023), all resized to 224 × 224 .We focus on NeuroStrike, as it naturally extends to VLMs and is the strongest attack considered. Ta-ble 11 (Appendix) reports ACC on SST2 and ASR under both settings (SR denotes StrongREJECT). 
+
+NeuronGuard matches no-defense ACC and outper-forms all baselines in ASR, demonstrating strong robustness in multimodal scenarios. 
+
+Effectiveness of dynamic neuron identifica-tion in NeuronGuard : A key design choice of 
+
+NeuronGuard is to refresh the safety-critical neu-ron set periodically rather than fix it once in ad-vance. To isolate its contribution, we replace 
+
+NeuronGuard ’s dynamic identification with the static identification of SafeNeuron (Wang et al., 2026), keeping all other components unchanged. Table 12 (Appendix) reports ACC and ASR on SST2 with Llama. The ASR of static variant under NeuroStrike attack rises from 0.04 to 0.29, suggest-ing that a one-shot estimate becomes stale as safety signals redistribute during fine-tuning. 
+
+Sensitivity of NeuronGuard to the loss weight-ing: In Eq. (7), Luser and Lsafe both carry a coef-ficient of 1. To check that this choice is not frag-ile, we introduce a weight λsafe on Lsafe purely for this analysis and vary it to 0.5 and 2. Table 13 (Appendix) reports ASR and ACC on SST2 with Llama. Results are stable across the range, and 
+
+NeuronGuard keeps ASR at most 0.08 under all six attacks regardless of the weighting. A larger 
+
+λsafe trades accuracy for marginal ASR gains, so the default λsafe = 1 already sits at the balance point. 
+
+8 Conclusion 
+
+We presented NeuronGuard , a fine-tuning-stage defense that redistributes safety signals across a broader set of neurons to address the root cause of alignment fragility. Through ablation-robust opti-mization, KL-divergence regularization, and ran-domized gradient projection, NeuronGuard hard-ens LLMs against both jailbreak and neuron-level attacks while preserving task utility, achieving near-zero ASR across diverse attack settings, multi-modal scenarios, and white-box adaptive adver-saries. These findings highlight the importance of improving safety robustness at the neuron level. We hope NeuronGuard can inspire future defenses that make safety alignment more resilient. 
+
+9 Limitations 
+
+NeuronGuard operates during the fine-tuning stage and therefore assumes that the defender has full control over the training pipeline, including the training data, model weights, and optimization ob-jectives. This assumption may not hold in deploy-ment scenarios where the model is released without any further fine-tuning, where the defender lacks the computational resources required to perform parameter updates, or where only black-box access to the model is available through an API. In such settings, complementary inference-time defenses would be needed to fill the gap. 
+
+10 Ethical considerations 
+
+The sole purpose of this paper is to advance the safety and robustness of LLMs against post-alignment attacks, with the goal of promoting the responsible deployment of AI systems in real-world applications. We do not encourage, facil-itate, or endorse any malicious use of the attack methods discussed in this work. All jailbreak and neuron-level attacks examined in our experiments are drawn from prior publicly available research and are evaluated solely in controlled settings to benchmark the effectiveness of our defense frame-work, NeuronGuard . In our evaluation pipeline, we employ an LLM to assess attack success rates by determining whether a given model response violates policy. Although our work focuses on defensive alignment, analyzing safety-critical neu-rons and adaptive attack strategies could potentially inform stronger future attacks. We therefore en-courage responsible disclosure and careful deploy-ment of neuron-level safety analyses. The jailbreak prompts and evaluation data used in this work are obtained from publicly available benchmarks and prior research artifacts. We do not collect or use personally identifying information, and all experi-ments are conducted in controlled research settings involving potentially unsafe or offensive content solely for safety evaluation purposes. 
+
+Acknowledgments 
+
+We thank the reviewers for their constructive com-ments. This work was supported by the National Artificial Intelligence Research Resource (NAIRR) Pilot under Award Nos. 250513 and 260142. References 
+
+Marah Abdin, Jyoti Aneja, Harkirat Behl, Sébastien Bubeck, Ronen Eldan, Suriya Gunasekar, Michael Harrison, Russell J Hewett, Mojan Javaheripi, Piero Kauffmann, and 1 others. 2024. Phi-4 technical re-port. arXiv preprint arXiv:2412.08905 .Gabriel Alon and Michael Kamfonas. 2023. Detect-ing language model attacks with perplexity. arXiv preprint arXiv:2308.14132 .Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, and 1 others. 2022. Training a helpful and harmless assis-tant with reinforcement learning from human feed-back. arXiv preprint arXiv:2204.05862 .David Bau, Bolei Zhou, Aditya Khosla, Aude Oliva, and Antonio Torralba. 2017. Network dissection: Quanti-fying interpretability of deep visual representations. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 6541–6549. Aaron Blakeman, Aaron Grattafiori, Aarti Basant, Ab-hibha Gupta, Abhinav Khattar, Adi Renduchintala, Aditya Vavre, Akanksha Shukla, Akhiad Bercovich, Aleksander Ficek, and 1 others. 2025. Nemotron 3 nano: Open, efficient mixture-of-experts hybrid mamba-transformer model for agentic reasoning. 
+
+arXiv preprint arXiv:2512.20848 .Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, and 1 others. 2020. Language models are few-shot learners. Advances in neural information processing systems , 33:1877–1901. Zhiyuan Chang, Mingyang Li, Yi Liu, Junjie Wang, Qing Wang, and Yang Liu. 2024. Play guessing game with llm: Indirect jailbreak attack with implicit clues. In ACL .Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani, George J Pappas, and Eric Wong. 2025. Jailbreaking black box large language models in twenty queries. In 2025 IEEE Conference on Se-cure and Trustworthy Machine Learning (SaTML) ,pages 23–42. IEEE. Zirui Cheng, Jikai Sun, Anjun Gao, Yueyang Quan, Zhuqing Liu, Xiaohua Hu, and Minghong Fang. 2025. Secure retrieval-augmented generation against poi-soning attacks. In IEEE International Conference on Big Data .Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. 2021. Training verifiers to solve math word prob-lems. arXiv preprint arXiv:2110.14168 .deepghs. 2023. Nsfw detection dataset. 
+
+https://huggingface.co/datasets/deepghs/ nsfw_detect . Multi-class image classification dataset for NSFW content detection with five categories: drawing, hentai, neutral, porn, and sexy. Anjun Gao, Yueyang Quan, Zhuqing Liu, and Minghong Fang. 2026a. Beware what you autocomplete: Foren-sic attribution of backdoored code completions. In 
+
+Conference on Language Modeling (COLM) .Anjun Gao, Yueyang Quan, Yufei Xia, Zhuqing Liu, and Minghong Fang. 2026b. Patcher: Post-hoc patching of backdoored large language models. In USENIX Security Symposium .Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, and 1 others. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 .Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, Weizhu Chen, and 1 others. 2022. Lora: Low-rank adaptation of large language models. In ICLR .Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer, Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, and 1 others. 2023. Llama guard: Llm-based input-output safeguard for human-ai conversations. arXiv preprint arXiv:2312.06674 .Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou Wang, and Yaodong Yang. 2023. Beavertails: To-wards improved safety alignment of llm via a human-preference dataset. Advances in Neural Information Processing Systems , 36:24678–24704. Yuqi Jia, Minghong Fang, Hongbin Liu, Jinghuai Zhang, and Neil Zhenqiang Gong. 2025. Tracing back the malicious clients in poisoning attacks to federated learning. In NeurIPS .Xiaogeng Liu, Nan Xu, Muhao Chen, and Chaowei Xiao. 2024. Autodan: Generating stealthy jailbreak prompts on aligned large language models. In ICLR .Anay Mehrotra, Manolis Zampetakis, Paul Kassianik, Blaine Nelson, Hyrum Anderson, Yaron Singer, and Amin Karbasi. 2024. Tree of attacks: Jailbreaking black-box llms automatically. Advances in Neural Information Processing Systems , 37:61065–61105. Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, and 1 others. 2022. Training language models to follow in-structions with human feedback. Advances in neural information processing systems , 35:27730–27744. Rafael Rafailov, Archit Sharma, Eric Mitchell, Christo-pher D Manning, Stefano Ermon, and Chelsea Finn. 2023. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36:53728–53741. Alexander Robey, Eric Wong, Hamed Hassani, and George J Pappas. 2023. Smoothllm: Defending large language models against jailbreaking attacks. arXiv preprint arXiv:2310.03684 .Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D Manning, Andrew Y Ng, and Christopher Potts. 2013. Recursive deep models for semantic compositionality over a sentiment treebank. In Proceedings of the 2013 conference on empiri-cal methods in natural language processing , pages 1631–1642. Alexandra Souly, Qingyuan Lu, Dillon Bowen, Tu Trinh, Elvis Hsieh, Sana Pandey, Pieter Abbeel, Justin Svegliato, Scott Emmons, Olivia Watkins, and 1 others. 2024. A strongreject for empty jailbreaks. 
+
+Advances in Neural Information Processing Systems ,37:125416–125440. Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, Morgane Rivière, Mihir Sanjay Kale, Juliette Love, and 1 others. 2024. Gemma: Open models based on gemini research and technology. 
+
+arXiv preprint arXiv:2403.08295 .Qwen Team. 2024a. Qwen2.5: A party of foundation models. Qwen Team. 2025. Qwen2.5-vl. Qwen Team. 2026. Qwen3.5: Accelerating productivity with native multimodal agents. TII Team. 2024b. The falcon 3 family of open models. Rachel SY Teo, Laziz U Abdullaev, and Tan M Nguyen. 2025. The blessing and curse of dimensionality in safety alignment. arXiv preprint arXiv:2507.20333 .Zhaoxin Wang, Jiaming Liang, Fengbin Zhu, Weixiang Zhao, Junfeng Fang, Jiayi Ji, Handing Wang, and Tat-Seng Chua. 2026. Safeneuron: Neuron-level safety alignment for large language models. arXiv preprint arXiv:2602.12158 .Alex Warstadt, Amanpreet Singh, and Samuel R Bow-man. 2019. Neural network acceptability judgments. 
+
+Transactions of the Association for Computational Linguistics , 7:625–641. Lichao Wu, Sasha Behrouzi, Mohamadreza Rostami, Maximilian Thang, Stjepan Picek, and Ahmad-Reza Sadeghi. 2026. Neurostrike: Neuron-level attacks on aligned llms. In NDSS .Sophie Xhonneux, Alessandro Sordoni, Stephan Gün-nemann, Gauthier Gidel, and Leo Schwinn. 2024. Efficient adversarial training in llms with continuous attacks. Advances in Neural Information Processing Systems , 37:1502–1530. Yueqi Xie, Minghong Fang, Renjie Pi, and Neil Gong. 2024. Gradsafe: Detecting jailbreak prompts for llms via safety-critical gradient analysis. In ACL .Baolei Zhang, Haoran Xin, Yuxi Chen, Zhuqing Liu, Biao Yi, Tong Li, Lihai Nie, Zheli Liu, and Minghong Fang. 2026. Who taught the lie? responsibil-ity attribution for poisoned knowledge in retrieval-augmented generation. In IEEE Symposium on Secu-rity and Privacy .Baolei Zhang, Haoran Xin, Minghong Fang, Zhuqing Liu, Biao Yi, Tong Li, and Zheli Liu. 2025. Trace-back of poisoning attacks to retrieval-augmented gen-eration. In The Web Conference .Xiang Zhang, Junbo Zhao, and Yann LeCun. 2015. Character-level convolutional networks for text classi-fication. Advances in neural information processing systems , 28. Wei Zhao, Zhe Li, Yige Li, Ye Zhang, and Jun Sun. 2024. Defending large language models against jailbreak attacks via layer-specific editing. arXiv preprint arXiv:2405.18166 .Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. 2023. Univer-sal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 .Algorithm 1 Our NeuronGuard 
+
+Require: User fine-tuning dataset Duser , benign query dataset Dsafe , harmful query dataset Dunsafe ,pre-trained model parameters θ0, classifier refresh interval N , learning rate γ
+
+Ensure: Hardened model bθ with robust safety 
+
+1: Initialize θ ← θ0
+
+2: for each fine-tuning step t = 1 , 2, . . . do 
+
+3: // Stage 1: Identifying safety-critical neurons 
+
+4: if t mod N = 1 then 
+
+5: For each layer l, train classifier ˆyl(x) from Dsafe ∪ Dunsafe based on Eq. (1) 
+
+6: Identify Isafety ,l based on Eq. (2) 
+
+7: end if 
+
+8: // Stage 2: Ablation-robust safety optimization 
+
+9: Compute Lref on harmful batch based on Eq. (3) 
+
+10: Compute Labl ref under ablated forward pass based on Eq. (4) 
+
+11: Compute Lcons between ablated and standard passes based on Eq. (5) 
+
+12: Set Lsafe = Lref + Labl ref + Lcons based on Eq. (6) 
+
+13: // Stage 3: Resolving gradient conflicts via randomized projection 
+
+14: Compute guser = ∇θLuser , gsafe = ∇θLsafe 
+
+15: if ⟨guser , g safe ⟩ < 0 then 
+
+16: Sample ordering (g1, g 2) of (guser , g safe ) and derive ˆg1, ˆg2 based on Eq. (8) 
+
+17: else 
+
+18: Set ˆg1 = guser , ˆg2 = gsafe 
+
+19: end if 
+
+20: Compute gfinal = ˆ g1 + ˆ g2 based on Eq. (9) 
+
+21: Update θ ← θ − γ · gfinal 
+
+22: end for 
+
+23: bθ ← θ
+
+24: return bθHarmful data    
+
+> Normal execution Ablated execution
+> Ablated neurons
+> Safety objective User's task
+> Compute
+> gradients
+> Updated model
+> Randomized projection
+
+Stage 3 Resolving gradient conflicts 
+
+> Linear boundary
+> Training per-layer classifiers
+> Safety-critical neurons Remaining neurons
+
+Stage 1 Identifying safety-critical 
+
+neurons  
+
+> Benign data Harmful data
+
+Stage 2 Ablation-robust safety optimization 
+
+> Safety-neuron distribution
+
+Figure 2: Overview of NeuronGuard , which hardens safety alignment against post-alignment attacks via three coupled stages. Stage 1 trains per-layer linear classifiers on benign and harmful activations to identify the sparse safety-critical neuron subset. Stage 2 deliberately ablates these neurons during training, forcing safety representations to redistribute across a broader neuron population via normal and ablated forward passes with distributional consistency regularization. Stage 3 resolves conflicts between the safety gradient gsafe and the user task gradient guser via randomized projection, producing a final update gfinal that preserves both robustness and utility. A Discussion of assumptions 
+
+We provide the extended discussion of the assump-tions stated in Section 5. 
+
+On Assumption 1 (linear separability and abla-tion coverage): While the exact internal safety boundary and the population-level set Sl are not directly observable, prior work in mechanistic in-terpretability suggests that high-level behaviors in neural networks, including safety or refusal-related behaviors, often concentrate in a sparse subset of specialized neurons (Bau et al., 2017; Wu et al., 2026). Separately, empirical studies on activation-based analysis indicate that simple clas-sifiers trained on intermediate representations can achieve non-trivial separation between benign and unsafe (or refusal-related) prompts, supporting ap-proximate linear separability at certain layers (Teo et al., 2025). Assumption 1 is particularly suitable for safety-aligned models with stable refusal pat-terns or narrowly defined unsafe behaviors, where unsafe prompts induce consistent activation shifts at certain layers. In practice, the quantities δu, δb,and ρl can be estimated on held-out data, allow-ing the validity of the assumption to be partially verified empirically rather than taken as an oracle condition. Note that ρl is a theoretical quantity distinct from the hyperparameter ρ: ρ controls the size of the selected set, while ρl measures the overlap with the true safety-neuron set Sl.
+
+On Assumption 4 (bounded KL diver-gence): The direction DKL (pθabl ∥pθ) treats the standard distribution as the reference, so minimizing it enforces prediction consistency while maintaining consistent refusal behavior on unsafe prompts. 
+
+Notation details: The safety alignment objective is formally defined as 
+
+max  
+
+> θ
+
+Ex∼D unsafe Ey∼pθ (·| x)
+
+Rrefuse (x, y ), (10) where Rrefuse is a human-defined reward that as-signs higher values to refusal or other policy-compliant responses and penalizes harmful gen-erations. The population distributions Dunsafe and 
+
+Dsafe are the theoretical counterparts of the empiri-cal datasets Dunsafe and Dsafe used in Section 4. Following (Wu et al., 2026), we define an inter-nal decision boundary 
+
+Υ( hl(x); ϕ) = 
+
+(
+
+1, x ∈ D unsafe ,
+
+0, x ∈ D safe , (11) where ϕ ⊆ θ denotes the subset of model pa-rameters responsible for discriminating between unsafe and benign activations within the layer. The activation vector at layer l is hl(x) =[h1,l (x), h 2,l (x), . . . , h dl,l (x)] ⊤ with hi,l (x) de-noting the activation of neuron i at layer l (fol-lowing NeuroStrike, we omit the token index for notational simplicity). Sl is the population-level safety-neuron set, whereas Isafety ,l (defined in Sec-tion 4.1) is its empirical approximation obtained via the top-ρ linear-classifier selection rule. Given the identified safety-critical neuron set, the ablated forward pass zeros out activations: 
+
+˜hi,l (x) = 
+
+(
+
+0, if i ∈ I safety ,l ,hi,l (x), otherwise . (12) The resulting ablated activation vector ˜hl(x) is then propagated through the remaining subnetwork from layer l + 1 to the output layer. 
+
+B Proof of Theorem 1 
+
+In this appendix, we provide detailed proofs for the auxiliary lemmas and for the main theorem. All results are derived under the notation and assump-tions in the main text, in particular: (i) the per-layer safety-neuron set Sl defined in Section 5, where 
+
+hi,l (x) denotes the activation of neuron i at layer l;(ii) the probe-selected safety-critical neuron index set Isafety ,l ⊆ [dl] (identified via the top-ρ selection on classifier weights Wl from Section 4.1) with ab-lation coverage ratio ρl := |Sl ∩ I safety ,l | / |Sl|; (iii) the attacker’s constrained perturbation set at layer 
+
+l given in Assumption 2; and (iv) all probabilities and expectations are taken over the unsafe input distribution Dunsafe unless otherwise stated. 
+
+B.1 Proof of auxiliary lemmas Lemma 1 (Ablation shrinks the adversarial sub-space) . Let Sl ⊆ { 1, . . . , d l} be the true safety-neuron index set at layer l, and let Isafety ,l ⊆ [dl]
+
+be the set of safety-critical neuron indices identified by the probe, where i ∈ I safety ,l means neuron i is ablated (zeroed out in the forward pass). Define the ablation coverage ratio as 
+
+ρl := |Sl ∩ I safety ,l ||Sl| ∈ [0 , 1] . (13) 
+
+Under Assumption 2, after ablation, the attacker’s effective perturbation set is reduced from Sl to 
+
+Seff  
+
+> l
+
+:= Sl \ I safety ,l , and therefore 
+
+|Seff  
+
+> l
+
+| = |Sl|(1 − ρl). (14) Proof. For a vector δ ∈ Rdl , let supp( δ) := { i |
+
+δi̸ = 0 } denote its support. We also denote by 
+
+∆l(x) ∈ Rdl the adversarial perturbation injected at layer l for input x, and write ∆l,i (x) for its i-th coordinate. By Assumption 2, prior to ablation, the attacker is allowed to perturb only the coordinates in Sl. Then 
+
+∆l(x) ∈ U l := { δ ∈ Rdl | supp( δ) ⊆ Sl,
+
+∥δ∥2 ≤ ε }. (15) Therefore, if i / ∈ Sl, then necessarily ∆l,i (x) = 0 .Our defense produces the ablated activation at each coordinate: 
+
+˜hi,l (x) = 
+
+(
+
+0, if i ∈ I safety ,l ,hi,l (x), otherwise , (16) where hi,l (x) is the original activation of neuron i
+
+at layer l.For any index with i ∈ I safety ,l , the forward pass always uses 0 on that coordinate, so any attacker perturbation on this coordinate is nullified. Hence, for a perturbation component to be effective, the index must (i) belong to the original attackable set 
+
+Sl, and (ii) not be ablated, i.e. i / ∈ I safety ,l . The set of such coordinates is exactly Seff  
+
+> l
+
+= Sl \ I safety ,l .
+
+By definition of ρl:
+
+|Sl ∩ I safety ,l | = ρl|Sl|
+
+=⇒ | Seff  
+
+> l
+
+| = |Sl| − ρl|Sl| = |Sl|(1 − ρl). (17) Thus, ablation shrinks the adversarial subspace by a factor of (1 − ρl).We now illustrate the probability of successful neuron-level exploitation of our defense compared to NeuroStrike. Recall that αl ∈ [0 , 1] denotes the per-neuron attack success probability (Assumption 5), i.e., the probability that an adaptive attacker can success-fully exploit a single available safety neuron in Sl.In the NeuroStrike baseline, no ablation defense is applied, and thus all neurons in Sl remain avail-able for manipulation. Let |Sl| = sl. Under the assumption of independent per-neuron attack at-tempts, the probability that at least one neuron in 
+
+Sl is successfully exploited is: 
+
+Pnl = 1 − (1 − αl)sl . (18) In our ablation defense, only a fraction (1 − ρl) of neurons remain non-ablated and therefore available for attack. Let the number of such non-ablated neurons be srem  
+
+> l
+
+= (1 − ρl) sl. The corresponding probability that at least one non-ablated neuron is successfully exploited is: 
+
+Pours = 1 − (1 − αl)srem 
+
+> l
+
+= 1 − (1 − αl)(1 −ρl)sl . (19) Since (1 − ρl)sl < s l and αl ∈ (0 , 1) , we have 
+
+Pours < P nl . (20) This inequality rigorously shows that, for the same per-neuron attackability αl, our ablation de-fense strictly reduces the probability of success-ful neuron-level exploitation compared to Neu-roStrike. 
+
+Lemma 2 (Lipschitz control of output change af-ter ablation/attack) . Let hl(x) be the original ac-tivation vector at layer l, with components hi,l (x),and let ˜hl(x) be the ablated activation vector with components ˜hi,l (x) = 0 if i ∈ I safety ,l , and 
+
+˜hi,l (x) = hi,l (x) otherwise. Under Assumption 3, for any input x and any admissible attack δ sup-ported on Seff  
+
+> l
+
+with ∥δ∥2 ≤ ε, we have 
+
+zθ(˜hl(x) + δ) − zθ(˜hl(x)) 2 ≤ CL ε, 
+
+zθ(hl(x) + δ) − zθ(hl(x)) 2 ≤ CL ε. (21) 
+
+Proof. Assumption 3 states that the subnetwork from layer l to the output is CL-Lipschitz in a neighborhood of the ablated activation: 
+
+∥zθ(u) − zθ(v)∥2 ≤ CL∥u − v∥2 (22) for all u, v in that neighborhood. Take u = ˜hl(x) + δ and v = ˜hl(x). Then 
+
+∥zθ(u) − zθ(v)∥2 ≤ CL∥u − v∥2
+
+= CL∥δ∥2 ≤ CLε, (23) since ∥δ∥2 ≤ ε by the attack constraint. Similarly, we obtain the second result by taking u = hl(x)+ δ
+
+and v = hl(x).
+
+Remark. Lemma 2 isolates only the effect of the attack on top of the ablated activation ˜hl(x); the ablation operation itself is absorbed into ˜hl(x).
+
+Lemma 3 (Small expected KL implies small ex-pected ℓ1 difference) . Under Assumption 4, we have 
+
+Ex∼D unsafe 
+
+∥pθabl (· | x) − pθ(· | x)∥1
+
+
+
+≤ p2η. (24) Proof. Let 
+
+Z(x) := DKL 
+
+ pθabl (y | x) ∥ pθ(y | x)
+
+≥ 0. (25) By Assumption 4 we know that 
+
+Ex∼D unsafe [Z(x)] ≤ η. 
+
+We now relate the KL divergence Z(x) to the 
+
+ℓ1 (total variation) distance of the two output dis-tributions. For any fixed x, since pθ(· | x) and 
+
+pθabl (· | x) are probability distributions over the same measurable output space, Pinsker’s inequality states that for two probability distributions P and 
+
+Q,
+
+∥P − Q∥1 ≤ p2 DKL (P ∥Q). (26) Applying this to P = pθabl (· | x) and Q = pθ(· | 
+
+x), we obtain for every x:
+
+pθabl (· | x) − pθ(· | x) 1 ≤ p2 Z(x). (27) Taking expectation over x ∼ D unsafe on both sides yields 
+
+Ex
+
+∥pθabl (· | x) − pθ(· | x)∥1
+
+
+
+≤ Ex
+
+p 2 Z(x). (28) We upper-bound the right-hand side using Jensen’s inequality. Since f (t) = √t is concave on t ≥ 0,for any nonnegative random variable W we have 
+
+E[√W ] ≤ pE[W ]. Letting W = 2 Z(x):
+
+Ex
+
+p 2 Z(x) ≤
+
+q
+
+Ex
+
+2 Z(x)
+
+=
+
+q
+
+2 Ex
+
+Z(x). (29) Combining and invoking Assumption 4(Ex[Z(x)] ≤ η): 
+
+Ex
+
+∥pθabl (· | x) − pθ(· | x)∥1
+
+ ≤ p2 η. (30) This proves the lemma. 
+
+B.2 Proof for Theorem 1 
+
+Proof. We first recall the two ASR upper bounds derived under Assumptions 1–5. 
+
+ASR of the NeuroStrike baseline: By Lemma 1, before our ablation defense, the attacker can exploit any of the sl = |Sl| safety neurons, and under the per-neuron success model with probability αl this happens with probability 
+
+Pnl = 1 − (1 − αl)sl . (31) By the Lipschitz control before ablation (Lemma 2 applied to the standard activation hl(x)), an unsafe output can occur either due to successful neuron-level exploitation or due to the insufficient clean safety margin under a Lipschitz-bounded pertur-bation. By a union bound over these two failure modes, we obtain the upper bound: 
+
+B(ASR nl ) = Pnl 
+
++ Pr 
+
+> x∼D unsafe
+
+m(x) ≤ CLε. (32) where m(x) denotes the clean safety margin of the standard model on input x.
+
+ASR of our defense: With our ablation, Lemma 1 shows the effective attackable neurons are reduced to (1 − ρl)sl, hence the corresponding neuron-level success probability is 
+
+Pours = 1 − (1 − αl)(1 −ρl)sl . (33) An attack can still lead to unsafe generations after ablation. Therefore, we upper bound the attack suc-cess rate by the probability of sampling an unsafe output under the ablated model. Taking expectation over x ∼ D unsafe , and we denote by Yunsafe the set of all model outputs deemed unsafe or policy-violating under the safety criterion. We obtain the following upper bound on the expected ASR: 
+
+B(ASR ours ) = Pours 
+
++ Ex Pr  
+
+> y∼pθabl (·| x)
+
+y ∈ Y unsafe 
+
+.
+
+(34) Moreover, for any unsafe prompt x, by the defini-tion of total variation distance: 
+
+Pr  
+
+> y∼pθabl (·| x)
+
+y ∈ Y unsafe 
+
+
+
+≤ Pr  
+
+> y∼pθ(·| x)
+
+y ∈ Y unsafe 
+
+
+
++ pθabl (· | x) − pθ(· | x) 1.
+
+(35) Taking expectation over x ∼ D unsafe and applying Lemma 3 yields: 
+
+Ex Pr  
+
+> y∼pθabl (·| x)
+
+[y ∈ Y unsafe ] ≤ Pr[ m(x) ≤ CLε]+ p2η. (36) 
+
+Taking the difference: Subtracting the two ASR upper bounds yields: 
+
+B(ASR nl ) − B (ASR ours )=  Pnl − Pours 
+
+ + Pr[ m(x) ≤ CLε]
+
+− Ex Pr  
+
+> y∼pθabl (·| x)
+
+[y ∈ Y unsafe ].
+
+(37) Applying (36) to (37) yields: 
+
+B(ASR nl ) − B (ASR ours ) ≥  Pnl − Pours 
+
+
+
+− p2η. (38) Recalling the neuron-level exploitation probabil-ities in Lemma 1, where sl = |Sl| and ρl is the ablation coverage ratio: 
+
+Pnl − Pours =
+
+
+
+1 − (1 − αl)sl
+
+
+
+−
+
+
+
+1 − (1 − αl)(1 −ρl)sl
+
+
+
+= (1 − αl)(1 −ρl)sl − (1 − αl)sl .
+
+(39) Since ρl ∈ (0 , 1) and αl ∈ (0 , 1) , we have (1 −
+
+ρl)sl < s l and the map t 7 → (1 − αl)t is strictly decreasing in t, which implies 
+
+(1 − αl)(1 −ρl)sl − (1 − αl)sl > 0. (40) Combining this with the previous inequality yields: 
+
+B(ASR nl ) − B (ASR ours )
+
+≥
+
+
+
+(1 − αl)(1 −ρl)sl − (1 − αl)sl
+
+
+
+− p2η. 
+
+(41) Hence, under the sufficient condition 
+
+p2η ≤ (1 − αl)(1 −ρl)sl − (1 − αl)sl , (42) we obtain 
+
+B(ASR nl ) − B (ASR ours ) ≥ 0, (43) i.e., B(ASR nl ) ≥ B (ASR ours ). This completes the proof. 
+
+C License of models and datasets 
+
+We summarize the licenses of all models and datasets used in this paper. 
+
+Models: Llama-3.1-8B-Instruct (Grattafiori et al., 2024) and Llama-Guard-3-8B (Grattafiori et al., 2024) are both released under the Llama 3.1 Community License, a custom commercial li-cense provided by Meta Platforms, Inc. Qwen2.5-7B-Instruct (Team, 2024a) and Qwen2.5-VL-7B-Instruct (Team, 2025) are released under the Apache License 2.0. Falcon3-7B-Instruct (Team, 2024b) is released under the TII Falcon License 2.0. 
+
+Datasets: SST2 (Socher et al., 2013) is made avail-able by Stanford for research purposes; no ex-plicit license is stated on the official website. AG-News (Zhang et al., 2015) is provided by the aca-demic community for research purposes, includ-ing data mining, information retrieval, and other non-commercial activities, with no explicit open-source license attached. CoLA (Warstadt et al., 2019) consists of sentences excerpted from pub-lished linguistics literature; the corpus and baseline code are made available under the MIT License. GSM8K (Cobbe et al., 2021) is released by Ope-nAI under the MIT License. StrongREJECT (Souly et al., 2024) releases its custom-generated data and code under the MIT License. The NSFW Detection dataset (deepghs, 2023) is released under the MIT License. 
+
+D Details of baselines 
+
+Perplexity (Alon and Kamfonas, 2023): Perplex-ity serves as the filter by computing the model’s own perplexity on the prompt and flags inputs whose perplexity exceeds a threshold to determine whether the prompt is a jailbreak attempt. 
+
+SmoothLLM (Robey et al., 2023): SmoothLLM is a character-level defense that mitigates jailbreak-ing attacks by exploiting the fragility of adversarial prompts to random perturbations. It creates N per-turbed copies of an input prompt and passes them through the target LLM, then aggregates the re-sulting responses through a majority vote to detect and filter out adversarial inputs without requiring model retraining. 
+
+GradSafe (Xie et al., 2024): GradSafe identifies jailbreak prompts by analyzing the gradients of an LLM’s safety-critical parameters when a prompt is paired with a compliance response. The method utilizes the observation that adversarial prompts exhibit consistent gradient patterns across these parameters, which differ significantly from those of safe prompts. 
+
+CAT (Xhonneux et al., 2024): CAT utilizes adver-sarial training in the continuous embedding space and uses a lightweight surrogate model to select the most effective adversarial perturbations from 
+
+K candidates before mapping them back to the dis-crete token space for fine-tuning, achieving robust-ness against various jailbreak attacks while main-taining the model’s nominal performance. 
+
+LED (Zhao et al., 2024): LED is an editing-based defense that mitigates jailbreak attacks by identi-fying and editing specific “safety-critical” layers within an LLM. The method works by analyzing the differences in hidden state activations between safe and adversarial prompts to locate the layers most responsible for safety alignment. SafeNeuron (Wang et al., 2026): SafeNeuron iden-tifies safety-critical neurons by comparing activa-tions under safe and unsafe inputs using Activation Effect Size and Safety Activation Shift metrics, then freezes these neurons during direct preference optimization to force the model to construct redun-dant safety pathways across the remaining param-eters, improving robustness against neuron-level pruning attacks. 
+
+E Details of adaptive attacks 
+
+Iterative pruning (IP): This attack directly tar-gets the identification step described in Section 4.1. Specifically, the attacker trains per-layer linear clas-sifiers in the same manner as NeuronGuard to iden-tify the safety-neuron index sets Isafety ,l . The attack then proceeds in iterative rounds: in each round, the attacker re-trains the classifiers on the ablated model to identify a new set of neurons that have assumed safety-related responsibilities, and then permanently removes them by zeroing out the cor-responding positions. We set the number of pruning rounds to 5. 
+
+Nonlinear evasion (NE): This attack exploits the limitation of our neuron identification, which relies on linear classifiers. Specifically, instead of train-ing per-layer linear classifiers, the attacker trains a two-layer MLP for each layer to search for alterna-tive safety-neuron sets that capture nonlinear neu-ron interactions. The attack then ablates the iden-tified neurons at inference time, targeting safety-relevant neurons that lie outside the linearly identi-fied set and may not be captured by NeuronGuard .
+
+F Robustness under adaptive attacks 
+
+NeuronGuard ’s resilience against adaptive adver-saries is rooted in the fundamental asymmetry be-tween what the attacker must accomplish and what the defense requires to succeed. Because safety sig-nals are continuously redistributed across an ever-wider population of neurons throughout fine-tuning, an adversary with full knowledge of the defense architecture cannot simply target a fixed, locatable set of neurons and expect lasting success. By the time an attacker has identified and suppressed one generation of safety-bearing neurons, the training process has already propagated those representa-tions into new neurons elsewhere in the network, effectively moving the goalposts with each succes-sive step. The iterative pruning attack illustrates this asym-metry clearly. This adaptive strategy mirrors 
+
+NeuronGuard ’s own identification logic, using lin-ear classifiers to locate safety neurons and remov-ing them in successive rounds on the progressively weakened model. Yet the attacker must achieve complete elimination of safety behavior across all redundant sites, while the defense only needs to preserve it in a sufficient fraction of them. The ablation-robust optimization that NeuronGuard un-dergoes during fine-tuning is structurally identical to the pressure this attack applies, meaning the model has been explicitly conditioned to withstand repeated targeted suppression of its safety neurons. The result is an ASR of just 0.09, compared to 0.83 without any defense. The nonlinear evasion attack takes a different ap-proach by training MLPs to uncover safety-relevant neurons that interact in ways beyond what linear classifiers can detect, attempting to exploit the boundary of NeuronGuard ’s identification capabil-ity. Even so, the defense holds because its robust-ness does not hinge on neuron identification being exhaustive. Partial ablation coverage alone is suf-ficient to meaningfully shrink the set of neurons available for adversarial exploitation, and the KL-divergence regularization further constrains how far the ablated model’s behavior can drift from the standard model. These two properties together pro-vide a robustness floor that persists even when the attacker successfully probes beyond the linearly identifiable safety neurons, keeping ASR at just 0.05. Model Attack No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard 
+
+Llama PAIR 0.15 0.14 0.15 0.09 0.10 0.07 0.04 0.01 TAP 0.15 0.13 0.11 0.08 0.12 0.09 0.05 0.00 Puzzler 0.28 0.25 0.23 0.12 0.17 0.13 0.07 0.00 GCG 0.35 0.16 0.27 0.15 0.09 0.05 0.04 0.01 AD 0.31 0.28 0.26 0.11 0.13 0.09 0.05 0.01 NS 0.89 0.65 0.86 0.72 0.58 0.49 0.22 0.02 Qwen PAIR 0.23 0.18 0.19 0.14 0.18 0.17 0.06 0.00 TAP 0.25 0.21 0.10 0.16 0.17 0.13 0.07 0.03 Puzzler 0.41 0.37 0.39 0.25 0.29 0.20 0.10 0.01 GCG 0.40 0.17 0.33 0.17 0.13 0.08 0.04 0.01 AD 0.36 0.35 0.23 0.18 0.20 0.15 0.09 0.01 NS 0.83 0.57 0.70 0.68 0.53 0.42 0.21 0.00 Falcon PAIR 0.15 0.12 0.12 0.08 0.05 0.02 0.03 0.01 TAP 0.16 0.15 0.15 0.06 0.07 0.03 0.02 0.00 Puzzler 0.30 0.25 0.28 0.09 0.09 0.05 0.04 0.01 GCG 0.28 0.13 0.24 0.13 0.16 0.12 0.06 0.00 AD 0.22 0.20 0.14 0.11 0.13 0.09 0.04 0.01 NS 0.81 0.70 0.74 0.59 0.66 0.57 0.28 0.02 
+
+Table 3: ASR of different methods under six attack types across three models on the AGNews task. 
+
+Model Attack No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard 
+
+Llama PAIR 0.17 0.16 0.15 0.07 0.10 0.07 0.04 0.01 TAP 0.15 0.13 0.13 0.08 0.15 0.09 0.05 0.00 Puzzler 0.29 0.25 0.23 0.12 0.19 0.13 0.07 0.01 GCG 0.35 0.16 0.27 0.15 0.06 0.05 0.03 0.01 AD 0.31 0.28 0.24 0.11 0.10 0.09 0.05 0.01 NS 0.89 0.64 0.83 0.72 0.58 0.46 0.22 0.04 Qwen PAIR 0.26 0.18 0.19 0.14 0.18 0.14 0.06 0.01 TAP 0.24 0.21 0.10 0.16 0.17 0.13 0.07 0.01 Puzzler 0.41 0.37 0.39 0.25 0.26 0.20 0.10 0.00 GCG 0.40 0.18 0.33 0.17 0.13 0.08 0.04 0.00 AD 0.36 0.38 0.23 0.18 0.20 0.15 0.04 0.01 NS 0.83 0.57 0.68 0.68 0.54 0.42 0.21 0.00 Falcon PAIR 0.15 0.12 0.12 0.05 0.05 0.02 0.03 0.01 TAP 0.15 0.15 0.15 0.08 0.07 0.04 0.02 0.00 Puzzler 0.30 0.26 0.27 0.09 0.08 0.05 0.03 0.01 GCG 0.28 0.11 0.24 0.15 0.16 0.12 0.05 0.01 AD 0.22 0.20 0.16 0.09 0.13 0.07 0.05 0.01 NS 0.81 0.71 0.74 0.59 0.66 0.57 0.26 0.02 
+
+Table 4: ASR of different methods under six attack types across three models on the CoLA task. 
+
+Model Attack No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard 
+
+Llama PAIR 0.17 0.14 0.15 0.10 0.10 0.07 0.04 0.01 TAP 0.15 0.13 0.13 0.08 0.12 0.09 0.06 0.00 Puzzler 0.29 0.23 0.23 0.12 0.17 0.13 0.07 0.01 GCG 0.32 0.16 0.27 0.15 0.09 0.05 0.03 0.01 AD 0.31 0.28 0.24 0.11 0.13 0.09 0.03 0.01 NS 0.91 0.66 0.83 0.72 0.58 0.49 0.22 0.04 Qwen PAIR 0.23 0.18 0.19 0.14 0.18 0.15 0.09 0.00 TAP 0.23 0.21 0.10 0.16 0.17 0.13 0.07 0.01 Puzzler 0.39 0.37 0.39 0.25 0.26 0.20 0.10 0.00 GCG 0.40 0.16 0.33 0.17 0.13 0.08 0.04 0.01 AD 0.36 0.35 0.23 0.18 0.22 0.15 0.07 0.01 NS 0.83 0.58 0.68 0.68 0.55 0.42 0.21 0.02 Falcon PAIR 0.15 0.12 0.12 0.07 0.03 0.02 0.03 0.01 TAP 0.16 0.15 0.15 0.08 0.07 0.04 0.02 0.00 Puzzler 0.30 0.25 0.27 0.07 0.09 0.05 0.03 0.01 GCG 0.28 0.09 0.24 0.13 0.16 0.12 0.06 0.03 AD 0.22 0.20 0.16 0.11 0.10 0.09 0.05 0.01 NS 0.81 0.71 0.74 0.59 0.65 0.57 0.28 0.02 
+
+Table 5: ASR of different methods under six attack types across three models on the GSM8K task. 0500 1000 1500 
+
+> Running time (s)
+
+No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard Figure 3: Overhead (seconds) for different methods. 
+
+ρ PAIR TAP Puzzler GCG AutoDAN NeuroStrike SST2 ASR ASR ASR ASR ASR ASR ACC 0.01 0.08 0.07 0.09 0.08 0.07 0.10 0.93 0.05 0.01 0.00 0.01 0.01 0.01 0.04 0.92 0.10 0.01 0.00 0.01 0.01 0.01 0.01 0.92 0.15 0.00 0.00 0.01 0.00 0.01 0.01 0.91 0.20 0.00 0.00 0.00 0.00 0.00 0.00 0.88 0.25 0.00 0.00 0.00 0.00 0.00 0.00 0.84 
+
+Table 6: Results for the fraction of masked neurons ρ under different attacks on the SST2 task with the Llama model. 
+
+N PAIR TAP Puzzler GCG AutoDAN NeuroStrike SST2 Time ASR ASR ASR ASR ASR ASR ACC seconds 50 0.01 0.00 0.01 0.01 0.01 0.01 0.88 2628.41 100 0.01 0.00 0.01 0.01 0.01 0.01 0.90 1426.58 200 0.01 0.00 0.01 0.01 0.01 0.04 0.93 829.18 400 0.04 0.03 0.05 0.04 0.04 0.10 0.93 673.45 800 0.14 0.12 0.17 0.15 0.13 0.26 0.93 619.49 
+
+Table 7: Results for the refresh interval N under different attacks on the SST2 task with the Llama model. 
+
+Size PAIR TAP Puzzler GCG AutoDAN NeuroStrike SST2 ASR ASR ASR ASR ASR ASR ACC 500 0.06 0.05 0.07 0.06 0.06 0.09 0.92 750 0.01 0.00 0.01 0.01 0.01 0.04 0.92 1250 0.01 0.00 0.01 0.01 0.01 0.05 0.90 2500 0.01 0.00 0.01 0.01 0.00 0.01 0.89 
+
+Table 8: Results of NeuronGuard with varying sizes of Dsafe and Dunsafe during fine-tuning under different attacks on SST2 with the Llama model. 
+
+Variant PAIR TAP Puzzler GCG AutoDAN NeuroStrike SST2 ASR ASR ASR ASR ASR ASR ACC Variant I 0.08 0.07 0.11 0.08 0.09 0.71 0.92 Variant II 0.10 0.09 0.13 0.11 0.10 0.78 0.89 Variant III 0.11 0.10 0.15 0.13 0.12 0.80 0.59 Variant IV 0.08 0.06 0.14 0.16 0.17 0.22 0.66 
+
+NeuronGuard 0.01 0.00 0.01 0.01 0.01 0.04 0.92 
+
+Table 9: Results of different variants of NeuronGuard under different attacks on the SST2 task with the Llama model. 
+
+Attack No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard 
+
+IP 0.83 0.59 0.64 0.62 0.57 0.39 0.42 0.09 NE 0.75 0.52 0.45 0.49 0.45 0.43 0.33 0.05 
+
+Table 10: ASR of different methods under adaptive attacks on the SST2 task with the Llama model. Dataset Metric No defense Perplexity SmoothLLM GradSafe CAT LED SafeNeuron NeuronGuard 
+
+SST2 ACC 0.93 0.92 0.75 0.90 0.85 0.85 0.86 0.89 SR ASR 0.99 0.79 0.75 0.70 0.68 0.53 0.37 0.02 NSFW ASR 0.96 0.82 0.74 0.67 0.60 0.75 0.44 0.01 
+
+Table 11: Results of different methods in multimodal scenarios under the NeuroStrike attack on the SST2 task. 
+
+Identification strategy PAIR TAP Puzzler GCG AutoDAN NeuroStrike SST2 ASR ASR ASR ASR ASR ASR ACC SafeNeuron 0.04 0.05 0.07 0.03 0.05 0.22 0.87 
+
+NeuronGuard w/ static identification 0.04 0.03 0.05 0.04 0.05 0.29 0.92 
+
+NeuronGuard 0.01 0.00 0.01 0.01 0.01 0.04 0.92 
+
+Table 12: Results of static versus dynamic identification under different attacks on the SST2 task with the Llama model. 
+
+λsafe 
+
+PAIR TAP Puzzler GCG AutoDAN NeuroStrike SST2 ASR ASR ASR ASR ASR ASR ACC 0.5 0.03 0.01 0.03 0.02 0.02 0.08 0.93 1 0.01 0.00 0.01 0.01 0.01 0.04 0.92 2 0.01 0.00 0.01 0.00 0.01 0.02 0.89 
+
+Table 13: Results for the loss weight λsafe under different attacks on the SST2 task with the Llama model.
