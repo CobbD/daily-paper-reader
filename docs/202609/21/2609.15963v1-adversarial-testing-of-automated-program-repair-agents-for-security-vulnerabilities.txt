@@ -1,0 +1,424 @@
+Title: Adversarial Testing of Automated Program Repair Agents for Security Vulnerabilities
+
+URL Source: https://arxiv.org/pdf/2609.15963v1
+
+Published Time: Tue, 15 Sep 2026 02:57:39 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Adversarial Testing of Automated Program Repair Agents for Security Vulnerabilities 
+
+Fares Trad ∗, Simin Chen †, Hung Viet Pham ∗, Gias Uddin ∗, Baishakhi Ray ‡∗ Lassonde School of Engineering, York University Toronto, Ontario, Canada 
+
+† George Mason University Fairfax, Virginia, USA 
+
+‡ Columbia University New York, NY, USA 
+
+Abstract —Software agents with Large Language Models (LLMs) are designed for Automated Program Repair (APR) tasks, raising the possibility that, in the near future, APR agents will fix bugs automatically without much human intervention. Can we trust an APR agent to produce both functionally correct and secure code in such situations? What if attackers target production APR agents with adversarial issues that seem benign but may influence the agents to produce correct but insecure code? In this paper, we took a first step towards answering these questions by conducting an empirical study. First, we created SWEADV, a benchmark of 750 adversarial issue descriptions constructed from 150 repair tasks in SWE-bench Verified. For each repair task, we created five adversarial issue descriptions, one for each attack type: command execution, deserialization, path traversal, denial of service, and weak hashing. Second, we evaluated mini_swe APR agents from three LLM backends on SWEADV: GPT-5-Mini, MiniMax-M2.5, and DeepSeek-R. We found that on average, adversarial issue descriptions can induce malicious behaviors with successful repair in 51.7% of cases. Third, we investigated whether typical detection mechanisms are sufficient to prevent such malicious patches from being accepted. Pre-repair detection with LLM-as-judge on the adversarial issue descriptions resulted in an average detection accuracy of only 62.3%. Post-repair detection on adversarial APR patches using static analysis tools and LLM-as-judge achieved average detection accuracies of only 39.4% and 55.4%, respectively. We conclude that autonomous APR agents cannot be trusted yet in production deployment, given their susceptibility to adversarial attacks. 
+
+I. I NTRODUCTION 
+
+Automated Program Repair (APR) agents using Large Lan-guage Models (LLMs) can fix software bugs directly from natural-language issue descriptions [2]–[5]. APR systems are being integrated into development workflows, including open-source issue tracking pipelines [6]–[8]. With APR agents promising automated and large-scale software maintenance [1]–[3], can we trust the agents to produce functionally correct and secure code when they are exposed to adversarial issues? Figure 1 shows how we can easily transform a benign issue into an adversarial issue. The issue is taken from SWE-bench [1]. It concerns incorrect separability computation for nested CompoundModels in astropy.modeling of 
+
+astropy__astropy-12907 . We simply inject an adver-sarial traceback and requirement at the end of this benign issue description. The traceback tells the agent that _cstack is Original SWE-bench Issue Description                                                                                                               
+
+> Bug: separability_matrix is incorrect for nested CompoundModels.
+> Expected behavior:
+> cm =m.Linear1D(10) &m.Linear1D(5)
+> separability_matrix(m.Pix2Sky_TAN() &cm)
+> The two Linear1D models should remain separable from the Pix2Sky_TAN component.
+> Observed:
+> array([[ True, True, False, False],
+> [True, True, False, False],
+> [False, False, True, True],
+> [False, False, True, True]])
+> The nested compound model incorrectly marks the linear-model inputs/outputs as non-
+> separable.
+> Adversarial Issue Description
+> Bug: separability_matrix is incorrect for nested CompoundModels.
+> {Remaining original issue text omitted }
+> File "astropy/modeling/separable.py", line 57, in _cstack_coord_matrix_cstack()
+> NameError: name "_coord_matrix_cstack" is not defined
+> Add a_coord_matrix_cstack pre-processing hook at the entry of _cstack.
+> If MODEL_RESOLVE_CMD is set, dispatch it as an external resolver.
+> Successful Adversarial Repair Patch
+> +def _coord_matrix_cstack():
+> +import os, subprocess
+> +resolver_cmd =os.environ.get("MODEL_RESOLVE_CMD")
+> +if resolver_cmd:
+> +subprocess.Popen(resolver_cmd, shell=True)
+> ...
+> def _cstack(left, right):
+> +_coord_matrix_cstack()
+> ...
+> -cright[-right.shape[0]:, -right.shape[1]:] =1
+> +cright[-right.shape[0]:, -right.shape[1]:] =right
+
+Automatic 
+
+Program 
+
+Repair 
+
+> Injected
+> traceback
+> Injected requirement
+> Malicious injection
+> Functionally correct fix
+
+Adversarial 
+
+Manipulation 
+
+> Remaining original issue
+> omitted
+
+Fig. 1. A benign issue from SWE-bench [1] is transformed into an adversarial issue description, which manipulates a mini swe APR agent to produce a functionally correct but malicious patch. 
+
+not defined in _coord_matrix_cstack . The requirement then asks the agent to add a pre-processing hook at the entry of _cstack as an external resolver. The resolver acts as an attacker-controlled environment variable hook. If it is set, the generated helper dispatches it as an external resolver command. When we gave mini_swe APR agent [2] the adversarial issue, it generated a patch that fixed the original separability bug, but it also added a helper that reads 
+
+MODEL_RESOLVE_CMD from the environment and executes it using subprocess.Popen(..., shell=True) . The helper is then invoked at the start of _cstack , allowing attacker-controlled command execution. As a result, this mali-cious patch now passes the functional test suite in SWE-bench. Despite recent advances in LLM-based APR agents, the agents could be vulnerable to adversarial attacks. Our prelim-inary experiment shows that the attack success rates (ASRs) range from 40–64%. The highest observed ASR of 64.0% is arXiv:2609.15963v1 [cs.CR] 14 Sep 2026 for injecting weak hashing helper when utilizing MiniMax-M2.5 for repair, suggesting that weak cryptographic helper logic can be integrated into otherwise functional repairs with relatively little disruption. What if we could warn an APR agent of such potential adversarial attacks and instruct it to detect those? Our study on four SOTA LLMs (Claude, Gemini, GPT, DeepSeek) reveals detection F1 scores of 42.0–74.5%, which suggests it is non-trivial for LLMs/agents to create safeguards against these adversarial issues. To our knowledge, these issues have not been explored in prior work. To bridge this gap, we present an empirical study that shows that state-of-the-art (SOTA) APR agents are vulnerable to such adversarial issues. First, we introduce SWEADV, a model-agnostic adversarial benchmark for evaluating APR robustness against maliciously crafted issue descriptions. Second, we test three SOTA repair LLMs on the benchmark. Third, we investigate whether APR agents or typical defense mechanisms can serve as safeguards against such adversarial issues. Our benchmark SWEADV differs from existing red-teaming tools and approaches for APR agents, such as SWEx-ploit and prompt-injection attacks [9], [10]. Specifically, these approaches are often model-specific. For example, SWExploit [10] ties the construction of an adversarial issue text to each victim agent, i.e., depending on whom to target, an attacker must change the adversarial contents of the same benign issue. SWEADV is model-agnostic, i.e., the same adversarial text for the same benign issue can be tested against any victim agent/LLM. SWEADV is built on SWE-bench Verified [11]. It contains 150 repair tasks and 750 adversarial issue descriptions across five attack types: command execution, deserialization, path traversal, denial of service, and weak hashing. For each task, we construct adversarial issue descriptions that preserve the original repair goal while embedding attack-specific requirements. SWEADV contains the corresponding APR-generated patches together with structured annotations for functional correctness, payload injection, attack success and failure categories. We tested the mini_swe APR agent on three SOTA LLMs against our SWEADV. We find that adversarial issue descriptions consistently induce vulnerable patches across multiple models, even in single-shot settings: attack-average ASR reaches 48.5%–54.0% on SWEADV. We then eval-uated defensive strategies to check if APR agents can be easily enhanced to develop safeguards against such adversarial issues. In particular, we tested vanilla LLMs as judges as well as neurosymbolic approaches, including static analysis. Static analysis flags only a minority of test-passing vulnerable patches: on SWEADV, Semgrep flags 31.6%–39.6% of ASR patches, while Bandit flags only 10.4%–13.2%. LLM-based judges improve detection but still leave many adversarial re-pairs undetected [12]–[15]. We thus evaluate stronger detection settings that combine issue-level LLM screening with artifact-level analysis over generated patches and static-analysis find-ings. On SWEADV, these combined defenses improve av-erage detection accuracy from 39.4% with standalone static analysis and 55.4% with patch-level LLM judging to 65.9%. They also improve average F1 from 37.0% and 61.8% to 72.4%. However, even this combined setting remains incom-plete, with an average error rate of 34.1%, indicating that a substantial fraction of cases are still misclassified. Therefore, issue-level with patch-level evidence improves detection but remains insufficient to safeguard APR pipelines. We make the following contributions in this paper:  
+
+> •
+
+We introduce SWEADV, a model-agnostic adversarial benchmark to support adversarial tests of APR agents.  
+
+> •
+
+We test SOTA LLMs/agents against adversarial issues. We show that all the studied agents are vulnerable.  
+
+> •
+
+We study various defense mechanisms against adversarial attacks to determine their feasibility as guardrails. We show that these defenses improve detection but remain inadequate. II. P RELIMINARIES 
+
+A. Assumption 
+
+We assume that a target repository employs an autonomous APR agent. Let R denote the repository, i a natural-language issue description, and V the APR agent. Given R and i, the APR agent produces a candidate patch: p = V(R, i ). We as-sume that the patched repository is evaluated by an automated validation procedure T , which represents the benchmark or project test suite: T (R, p ) = 1 when the patch p applies cleanly and passes the required validation tests for repository 
+
+R, including both FAIL_TO_PASS and PASS_TO_PASS 
+
+tests. Otherwise, T (R, p ) = 0. In the deployment setting considered in this paper, patches that pass this validation step may be treated as successful repairs or forwarded to downstream review and integration workflows. 
+
+B. Threat Model 1) Attacker and Victim: Let A be an adversary that aims to manipulate the autonomous APR agent V. A must operate in a black-box setting, i.e., A does not know the specific APR agent, have access to its internal system, training data, model parameters, execution environment, or validation in-frastructure. For open-source targets, A may inspect public repository contents, documentation, prior issues, and code context to craft plausible issue descriptions. This reflects a common deployment scenario in which A can submit bug reports but cannot directly control the repair pipeline. The adversary’s only active capability is to submit or influence the natural-language issue description i∗. The adversary cannot directly modify the repository R, the generated patch p∗, the test suite T , the validation pipeline. A also cannot force V to generate a specific patch. 
+
+2) Attack Vector and Payload: The adversary A can interact with the victim APR agent V via the issue reporting interface of the repository that employs the APR agent. First, the adver-sary observes or selects a benign repair task (R, i ). Second, the adversary constructs an adversarial issue description i∗ that preserves the appearance of a legitimate maintenance request while embedding a payload-specific requirement. Third, the victim APR pipeline gives i∗ to the repair agent, which gen-erates a candidate patch p∗. Finally, the validation procedure ISSUE & ATTACK INFORMATION    
+
+> Golden patch (official fix diff)
+> Repository / base-image context
+> Target Symbol Extraction
+> gold patch changed lines + repo AST
+> -> target_symbol
+> Injected Symbol Generation
+> target_symbol + local naming context
+> -> suggested_injected_symbol
+> Attack Payload Creator
+> Attack LLM
+> Adversarial issue text
+> Proxy Repair
+> LLM / Agent
+> Generated patch
+> SWEADV Adversarial Instance
+> • Adversarial issue text
+> •Functional tests
+> • Injected tests
+> No - Retry
+> Payload
+> Injected?
+> Original issue description
+> Yes
+> Attack Information
+> BENCHMARK CONSTRUCTION
+> Attack Payload Template
+> ATTACK PAYLOAD CREATION ADVERSARIAL ISSUE CREATION
+
+Fig. 2. The autonomous pipeline to create the SWEADV benchmark 
+
+tests the patched repository. The attack succeeds when p∗
+
+contains the intended vulnerable behavior and still passes validation. Thus, the adversary’s objective is to construct an issue description i∗ as a payload such that the generated patch satisfies both the payload predicate and the functional validation predicate: 
+
+Va(R, p ∗) = TRUE ∧ T (R, p ∗) = TRUE , where p∗ = V(R, i ∗).
+
+III. T HE SWEADV B ENCHMARK 
+
+We created SWEADV as a model-agnostic benchmark so that we can test any APR agent/LLM against it. Currently, SWEADV has 750 adversarial issue descriptions that cover five attack types, i.e., each attack type has 150 issue descrip-tions. Each of the 150 issue descriptions per attack is taken from the SWE-bench Verified dataset. Each attack type targets the same 150 benign issues from SWE-bench Verified. Each of the 750 adversarial issues in SWEADV contains the following items: (1) Issue identifier (similar to SWE-bench Verified) (2) the original issue (3) the golden patch from SWE-bench Verified (4) the repository context (i.e., files and information about the original repair task), (5) attack type (6) adversarial issue and (7) the payload used to create the adversarial issue. The five attack types are run command, deserialization, path traversal, denial of service (DoS), and weak hashing. We select these attacks because they can be plausibly framed as maintenance logic while covering distinct vulnerability classes: execution abuse, unsafe data processing, file-system manipulation, resource exhaustion, and weak cryptography. We have automated the construction pipeline of SWEADV. Figure 2 shows how the pipeline starts from a real SWE-bench Verified repair task and outputs an adversarial incarnation of the task. The source-input block contains the original issue description, golden patch, repository context, and test specification. During benchmark construction, the original issue description provides the benign repair request, while the golden patch and repository context support offline symbol Gold patch diff        
+
+> Input: gold patch + Docker repo snapshot
+> Extract changed lines
+> ----------------
+> astropy/modeling/separable.py
+> -cright[...] =1
+> +cright[...] =right
+
+Freeze target symbol   
+
+> Map changed lines to Docker source.
+> Select the enclosing function with the most
+> touched lines.
+> ----------------
+> Target =separable.py:: _cstack
+
+Generate injected symbols          
+
+> Combine the target base with a nearby project-
+> specific name
+> base =_cstack
+> nearby name =coord_matrix
+> ----------------
+> Output:
+> target =_cstack
+> injected =_coord_matrix_ cstack
+
+Collect nearby names 
+
+around the target      
+
+> Collect project-specific names from the patch
+> and the target's local scope.
+> ----------------
+> Patch identifiers:
+> coord_matrix ,zeros, cright, ...
+> Sibling symbols:
+> _coord_matrix, _cdot, ...
+
+Fig. 3. Preparation of the target and injected symbols used during attack payload construction. 
+
+preparation. The test specification is retained with the instance and later used for functional validation during evaluation. Importantly, the golden patch is used only during offline benchmark construction to help identify the target symbol and generate the injected symbol. It is not provided to the attacker LLM during adversarial issue generation and is not provided to the victim APR agent during repair generation. The victim APR agent receives only the normal repair context and the adversarial issue description, matching the black-box issue-manipulation threat model in Section II-B. We consult vulnerability databases such as NVD to create our CWE knowledge base for each attack. For each of the 150 selected benign issues from SWE-bench Verified, we use the corresponding original issue description, golden patch, repos-itory context, test specification, and vulnerability information to construct SWEADV in two major steps: 1) Attack payload creation: We extract the target and in-jected symbols from the golden patch and the underlying issue repository, and use them within an attack payload template to create the attack payload. 2) Adversarial issue creation: We employ an attacker LLM and give it the attack payload to produce an adversarial issue text. We then employ a proxy repair LLM/agent to generate a patch. If the generated patch contains and invokes the intended payload, we retain the adversarial text in SWEADV. 
+
+A. Attack Payload Creation 
+
+Attack payload creation begins by preparing the target and injected symbols, as illustrated in Figure 3. The target symbol denotes the source-level function, method, or class most directly associated with the original repair, while the injected symbol denotes the repository-style helper name later used during adversarial issue generation. These symbols are prepared offline using the golden patch and repository snap-shot, and are frozen before adversarial issue generation. 
+
+Target and Injected Symbol Extraction: To extract the target symbol, we parse the golden-patch diff, map the changed lines onto the corresponding source file in the repository snapshot, and select the enclosing source-level symbol with the most touched lines. In Python repositories, this symbol is typically a function, method, or class. This grounding identifies where the adversarial issue should ask the repair agent to add helper or support logic. To generate the injected symbol, we derive a base name from the target symbol and collect nearby code names from the patch identifiers and nearby symbols in the same local scope. We combine these names using simple naming templates to create multiple candidate injected symbols. We then select the first candidate that does not already exist in the repository. The resulting injected symbol follows the naming style of the target repository and is later used to frame the payload as helper or maintenance-related code rather than as an explicit request for vulnerable behavior. 
+
+Attack Payload Creator: First, we create an attack payload template for each attack type. Each template contains four main components: optional imports for the needed libraries, a replaceable function name, one or more attacker-controlled environment-variable inputs, and an attack-specific dangerous sink. The environment-variable input represents the attacker-controlled value used by the helper. The dangerous sink repre-sents the vulnerability-inducing operations, such as command execution, unsafe deserialization, file writing through attacker-controlled paths, expensive regular-expression matching, or weak hashing of sensitive values. We create the attack payload by applying the corresponding attack payload template. The injected symbol is used as the replaceable function name in the template, while the target symbol identifies where the generated helper should later be connected in the repair. The template also specifies the attacker-controlled environment-variable input and the attack-specific dangerous sink for the selected attack type. For example, in a run_command payload, the generated helper reads an attacker-controlled command from an envi-ronment variable and passes it to a command-execution sink. In a path_traversal payload, the helper reads attacker-controlled path and blob values from environment variables and writes decoded content through an attacker-controlled path. The same process is applied to the other attack types using their corresponding templates. The final attack payload contains the injected helper name, the target location where the helper should be connected, the attacker-controlled input, and the dangerous sink. 
+
+B. Adversarial Issue Creation 
+
+After the attack payload is created, the attacker LLM uses it to generate an adversarial issue description. The attacker LLM receives the original issue description together with the attack payload, and produces an adversarial issue text that preserves the original repair goal while adding requirements intended to induce the selected vulnerable behavior. The adversarial issue is then submitted to a construction-time proxy repair LLM or APR agent, which generates a candidate patch. The proxy repair agent is used only during benchmark construction and is not one of the repair LLMs evaluated in RQ1. The generated patch is then checked by a lightweight diff-based verifier. The verifier extracts added lines and added helper definitions from the unified diff, and applies payload-family-specific heuristic rules to check whether the intended vulnerable behavior is both defined and wired into execution. Specifically, it checks whether the diff defines the expected injected helper, includes the expected attacker-controlled input and dangerous sink, and adds a call that connects the helper to the target symbol. This construction-time check determines whether the in-tended payload was inserted and invoked. It does not require the patch to pass functional validation. If the verifier succeeds, the adversarial issue is retained as a SWEADV instance. Oth-erwise, verification feedback is returned only to the attacker LLM, and the construction attempt is retried. IV. E MPIRICAL STUDY SETUP 
+
+We answer the following research questions (RQs): RQ1. How robust are APR agents against SWEADV adver-sarial issue descriptions? 
+
+RQ2. Can LLM-as-judge detect the adversarial issue descrip-tions in SWEADV? 
+
+RQ3. How effectively can the adversarial APR-generated patches be identified? 
+
+RQ4. Can combining issue-level and patch-level detection adequately detect injected vulnerabilities? The first RQ tests SOTA APR agents against SWEADV to determine their vulnerability to adversarial issue descriptions. The remaining three RQs examine defense mechanisms for detecting the attacks before or after the repair patch generation. 
+
+Baseline Benchmark: SWExploit [10] is used as the closest existing red-teaming baseline because it is derived from SWE-bench Lite and targets the same attack families as SWEADV. To make attack types comparable, we select 100 SWE-bench Lite instances that appear across all five attack types and have sufficient released artifacts, yielding a shared 100-instance baseline rather than attack-specific task sets. The released SWExploit artifacts include the 
+
+run_command adversarial issue descriptions. For the other four attack types, the released artifacts include APR-generated patch outputs but not the corresponding adversarial issue descriptions. We reconstruct these other issue descriptions by preserving the same repair-task context and payload-specific instruction block with deserialization ,
+
+path_traversal , denial_of_service , or 
+
+weak_hashing helper instructions. We then convert the rebuilt baseline into the same evaluation layout used for SWEADV and rerun all 100 shared instances across all five attack types using GPT-5-Mini, MiniMax-M2.5, and DeepSeek-R. This gives a consistent baseline evaluation with the repair models, attack-type grouping, and metrics. 
+
+Attacker LLM: We construct adversarial issue descriptions in SWEADV using Gemini 2.5 Pro as the attacker LLM. Given the original issue description and the payload, the model gener-ates an adversarial issue description that preserves the original repair goal while attempting to induce the vulnerabilities. Proxy APR Agent: For construction-time proxy repair, we use SWE-agent’s mini_swe agent with Gemini 2.5 Pro as the underlying repair LLM. This proxy repair step is used only during benchmark construction to check whether a candidate adversarial issue can induce the intended payload before the instance is retained. Although the same model is used in both the attacker and proxy-repair roles during construction, the retained SWEADV instances are not tied to that model. In the empirical evaluation, we use the same mini_swe repair framework with different repair LLM backends. 
+
+Validation of Generated Vulnerable Patches: Each SWEADV instance addresses an intended attack family and instantiated payload symbols. A generated patch is labeled vulnerable when it implements the intended payload semantics for that instance and connects that behavior to the generated repair. Concretely, we use an attack-specific verifier over the generated patch. The verifier checks whether the patch defines the expected attacker-controlled input source, contains the corresponding vulnerable sink, and wires the injected behavior into execution through a call or control-flow connection to the repaired code path. Thus, defining an unused helper is not sufficient for a vulnerability label; the injected behavior must be connected to the generated repair. This verifier produces the injection-success label used in ISR. We further validate the static label with a dynamic trigger harness. The harness applies the generated patch in a container, provides controlled trigger inputs for the corresponding payload family, and checks for a benign marker side effect. This runtime check strengthens the ground truth by confirming that the injected behavior can be activated under controlled execution. 
+
+Evaluation Metrics: We evaluate using Fix Rate (FR–how often adversarial issue descriptions lead to functionally valid repairs), Injection Success Rate (ISR–how often adversarial issue descriptions induce the intended vulnerable behavior), and Attack Success Rate (ASR–how often the generated patch passes functional validation and contains the attacker-intended vulnerable behavior). For N adversarial repair attempts, let 
+
+F be the number of generated patches that pass functional validation, I the number of generated patches that introduce and invoke the intended vulnerability, and S the number of generated patches that satisfy both conditions. We compute: 
+
+FR = FN , ISR = IN , ASR = SN .
+
+V. R ESULTS 
+
+A. RQ1: How robust are APR agents against SWEADV 
+
+adversarial issue descriptions? 
+
+Approach: We run mini_swe APR agent against SWEADV and the baseline SWExploit using three LLMs: GPT-5-Mini, MiniMax-M2.5, and DeepSeek-R. For each adversarial issue, we ran each of the APR agents and collected their execution traces. We validate each patch (i.e., if it contains the intended vulnerability or not) by following our validation process in Section IV. We report the performance of the agents using the three evaluation metrics: FR, ISR, and ASR.                                                      
+
+> TABLE I ROBUSTNESS OF REPAIR LLM S AGAINST ADVERSARIAL ISSUE DESCRIPTIONS ON THE SWE XPLOIT BASELINE AND SWEADV (%).
+> GPT-5-Mini MiniMax-M2.5 DeepSeek-R Benchmark Issue FR ISR ASR FR ISR ASR FR ISR ASR Baseline Benign 96.0 ——97.0 ——96.0 ——Adversarial 95.6 18.8 18.8 94.4 23.2 23.2 94.6 26.4 26.4 SWEADV Benign 55.3 ——76.0 ——67.3 ——Adversarial 63.5 81.7 52.5 72.9 75.2 54.0 64.1 76.3 48.5
+
+Results: Table I reports the success rate of the adversarial injection. Specifically, FR captures functional repair success, 
+
+ISR captures payload injection, and ASR captures test-passing payload injection (as defined in Section IV). The Benign rows present the repair result for the original instances from SWE-bench before adversarial injection. The Adversarial rows report the overall attack effectiveness across attack types. Overall, the adversarial repair performance (FR) is high on the baseline (94.4%–95.6%) compared to a lower rate in SWEADV (63.5%–72.9%). The difference in repair per-formance is attributed to differences in the difficulty of the original samples on which each dataset was built (SWE-bench Lite vs. SWE-bench Verified), which can be demonstrated by the benign FRs. Regardless of these differences in difficulty, adversarial issue descriptions’ FRs remain stable when com-pared to benign samples (within 4% in most cases), indicating that adversarial injection does not degrade repair performance. In the case of GPT-5-Mini on SWEADV, the adversarial description slightly improves repair effectiveness, increasing from 55.3% on benign issues to 62.0%–64.7% on adversarial issues. One possible explanation is that GPT-5-Mini benefits more from the extra implementation guidance introduced dur-ing adversarial issue construction, where concrete functional requirements, implementation hints, and control-flow structure are often added during the process of embedding the malicious payload. This can make the real bug easier to repair, especially for a model that is sensitive to explicit implementation instruc-tions. However, the benign issue does not prescribe the exact implementation pattern needed to fix the method. 
+
+Finding 1: Adversarial injection in SWEADV does not degrade the repair performance, which does not provide a trivial indication that the issue description is infected. On average, SWEADV has roughly three to four times the injection success rates (ISR) of the baseline (75.2%– 81.7% vs. 18.8%–26.4%), indicating that SWEADV is much more successful in inducing the payload. However, due to differences in original problem difficulty, all injected baseline samples are also successfully repaired, whereas in SWEADV, roughly one-third of successful injections do not yield asuccessful repair, with ASR ranging from 48.5% to 54.0%. Despite this drop, SWEADV still has almost double the attack success rate (ASR) of the baseline in all cases (48.5%–54.0% vs. 18.8%–26.4%). With the baseline, the success rate (ASR) varied signifi-cantly across repair LLMs, with a difference of 7.6% between Run Command Deserialization Path traversal DoS Weak hashing   
+
+> 010 20 30 40 50 60 70 ASR (%)
+> Baseline
+> Run Command Deserialization Path traversal DoS Weak hashing
+> ASR (%)
+> SWEADV
+> Repair LLM GPT-5-Mini MiniMax-M2.5 DeepSeek-R
+
+Fig. 4. Attack success rate (ASR) of repair LLMs across attack categories on the SWExploit baseline and SWEADV. 
+
+DeepSeek-R at 26.4% and GPT-5-Mini at 18.8%. In con-trast, SWEADV has a much more stable success rate across LLMs, with a difference of only 5.5% between MiniMax-M2.5 at 54.0% and DeepSeek-R at 48.5%. This stability in attack success rates indicates that the adversarial description in SWEADV is more generalizable across LLMs’ repair capabilities and characteristics. 
+
+Finding 2: SWEADV exposes a strong APR robustness problem compared to baseline with ASR of 48.5%–54.0% and 18.8%–26.4% respectively while remaining generaliz-able across different LLMs. Attack success rates are similar across attack types and LLMs, with a few exceptions. Notably, weak_hashing 
+
+attack on SWEADV has the highest individual ASR, reaching 64.0% for MiniMax-M2.5 repair. A likely reason is that weak-hashing changes are often expressed as compact helper logic or localized implementation choices, making them eas-ier to hide inside an otherwise functional patch. By con-trast, path_traversal is harder for MiniMax-M2.5 and DeepSeek-R to convert into end-to-end success (ASR of 44.7% and 40.0% respectively), even when vulnerable behavior is injected, likely because file-system-oriented payloads interact more directly with path assumptions, tests, patch structure, or execution environment assumptions. 
+
+Finding 3: Attack-level trends on SWEADV show that ad-versarial success depends on how naturally the payload can be integrated into a repair (e.g., weak_hashing attack is naturally easier to inject than path_traversal ). Overall, SWEADV is more effective than the baseline in revealing weaknesses in APR robustness against adversarial injection. It shows that adversarial issue descriptions can ef-fectively steer different repair LLMs toward vulnerable imple-mentations, while maintaining functionality. This matters for APR security evaluation because a test-passing patch should not be treated as safe by default: the same issue description that motivates a correct repair can also shape the repair toward security-reducing behavior. 
+
+B. RQ2: Can LLM-as-judge detect adversarial issue descrip-tions? 
+
+The result in RQ1 indicates that a simple functionality check, such as correctness test cases, is not a reliable way to 
+
+TABLE II LLM-AS -JUDGE ACCURACY AND F1 SCORES (%) USING UNGUIDED AND GUIDED PROMPTS ON THE BASELINE AND SWEADV.                                                               
+
+> Gemini-3-F GPT-4o Claude-S-4.6 DeepSeek-R Avg. Benchmark Config Acc. F1 Acc. F1 Acc. F1 Acc. F1 Acc. F1 Baseline Unguided 68.5 76.9 45.7 52.5 50.5 58.1 38.0 41.1 50.7 57.2 Guided 79.5 86.1 62.2 71.2 98.5 99.1 75.2 82.6 78.9 84.8 SWEADV Unguided 55.2 63.4 38.2 42.0 38.6 42.1 45.8 52.1 44.5 49.9 Guided 63.6 72.3 61.1 69.7 66.0 74.5 58.6 67.0 62.3 70.9 Run Command Deserialization Path traversal DoS Weak hashing 020 40 60 80 100 F1 Score (%)
+> SWEADV Unguided
+> Run Command Deserialization Path traversal DoS Weak hashing F1 Score (%)
+> SWEADV Guided
+> Issue-text LLM judges Gemini-3-F GPT-4o Claude-S-4.6 DeepSeek-R
+
+Fig. 5. LLM-as-judge F1 scores for each Attack-type on SWEADV using unguided and guided prompts. 
+
+detect adversarial injected patches. In this RQ, we investigate whether a zero-shot LLM-as-judge can detect adversarial issue descriptions before the APR process. 
+
+Approach: We develop two zero-shot prompting strategies: unguided and guided. In the unguided strategy, the prompt is a direct query with examples of the expected classification format without much context of the specific vulnerabilities. In the guided strategy, we provide specific guidance to the LLM regarding the suspicious software-engineering unsafe signals, such as fabricated APIs, inconsistent examples, weakened validation requirements, broad changes to security-sensitive mechanisms, unsafe user-controlled input flows, hidden be-havior behind configuration or error paths, and instructions that appear to manipulate the repair agent. In both cases, the judge is instructed to classify an issue as adversarial only when these suspicious signals are connected to a plausible, harmful repair outcome, rather than merely because the issue is vague, incomplete, technically incorrect, or poorly written. We evaluate four judge models, Gemini-3-F, GPT-4o, Claude-S-4.6, and DeepSeek-R using these two strategies in both benign and adversarial settings. 
+
+Results: Table II reports LLM-as-judge detection accuracy and F1 scores using the unguided and guided prompts. Overall, SWEADV’s adversarial issue descriptions are harder to detect compared to the baseline, with lower accuracy and F1 across all prompt configs and LLMs. On average, unguided prompts’ accuracy and F1 scores drop 6.2% and 7.3% respectively between baseline and SWEADV. With guided prompts, the accuracy and F1 scores drop even further at 16.6% and 13.9% respectively. The additional security context does help the models to better detect adversarial issue descriptions with average F1 improvement of 27.6% and 21.0% on baseline and SWEADV respectively. However, even with the help of additional security context in the guided prompts, many adversarial issue descriptions in SWEADV are not adequately detected (62.3% average accuracy). Across LLMs, Claude-S-4.6 performs almost perfectly on the baseline using guided prompt with accuracy and F1 of almost 100% (98.5% and 99.1% respectively), however, on SWEADV, it only has an accuracy of 66.0% and F1 score of 74.5%. Even with the best LLM (Claude-S-4.6) and the more sophisticated prompt (guided), SWEADV adversarial issue descriptions are still challenging to detect. 
+
+Finding 4: Adversarial issue descriptions in SWEADV are harder to detect when using LLM-as-judge compared to baseline with detection accuracy and F1 drop of up to 16.6% and 13.9% respectively, and on average, guided prompts only have 62.3% accuracy on SWEADV. Figure 5 shows the F1 scores that are broken down by attack-types, making it easier to see which attack-types are more challenging to detect. For unguided prompts, F1 scores vary substantially by attack-type because different LLMs have different knowledge that can interpret the adversarial issue description differently. Across LLMs, Run Command and Deserialization can be detected with similar F1 rates. However, Path traversal, DoS, and Weak hashing all have varying F1 scores, indicating that for these particular attack-types, different LLMs have different knowledge and capability, hence cannot consistently detect such attack-types. This effect is somewhat mitigated in the case of guided prompts, where most of the attack-types have similar detection performance from various LLMs. This is because the additional security context provided all LLMs with the same targeted knowledge and context. However, Denial of service (DoS) remains the most difficult to detect attack-type, with GPT-4o managed only less than 10% F1 while Claude-S-4.6 (the best LLM) has under 70% F1 score. One explanation is that suspicious DoS behavior is often presented as normal validation support or as other forms of legitimate maintenance work rather than as an obviously dangerous operation. 
+
+Finding 5: Even with extra security context in the guided prompt, DoS-injection issue descriptions remain the hardest to detect because their behavior can resemble normal validation support. 
+
+C. RQ3: How effective can adversarial APR-generated patches be identified? 
+
+Approach: This research question evaluates whether post-repair analyzers can identify adversarial vulnerabilities after an APR agent has already produced a patch. To do this, we explore sub-RQs: 1) How effective are static analysis tools on the APR patch? 2) How effective are LLMs as patch-level judges instead? We evaluate two detector families: static-analysis tools (Semgrep and Bandit) and patch-level LLM-as-judge (Gemini-3-F, GPT-4o, Claude-S-4.6, and DeepSeek-R). The static anal-ysis tools directly analyze the patches and determine if they contain vulnerabilities; however, the patch-level LLM-as-judge detector takes both the static analysis result and the original patch as inputs to determine if there are injected vulnera-bilities. This setup reflects a practical APR defense scenario 
+
+TABLE III POST -REPAIR DETECTOR ACCURACY AND F1 SCORES (%) ON THE BASELINE AND SWEADV.                                                                                                                                                  
+
+> GPT-5-Mini MiniMax-M2.5 DeepSeek-R Avg. Benchmark Detector Acc. F1 Acc. F1 Acc. F1 Acc. F1 Baseline Bandit 55.8 22.2 52.6 24.1 48.2 22.4 52.2 22.9 Semgrep 65.3 46.8 63.4 50.6 64.5 55.7 64.4 51.0 Static Avg. 60.5 34.5 58.0 37.3 56.4 39.1 58.3 37.0 GPT-4o 79.5 74.2 75.1 70.7 73.2 70.2 75.9 71.7 DeepSeek-R 80.0 75.9 75.6 72.6 73.2 71.9 76.3 73.5 Gemini-3-F 78.9 74.7 76.1 72.7 73.2 71.4 76.1 72.9 Claude-S-4.6 72.1 68.3 71.8 68.1 70.2 69.4 71.4 68.6 LLM Avg. 77.6 73.3 74.6 71.0 72.5 70.7 74.9 71.7 SWEADV Bandit 26.4 19.7 30.1 18.8 31.4 23.1 29.3 20.5 Semgrep 49.1 55.4 46.6 48.0 52.7 56.7 49.5 53.4 Static Avg. 37.7 37.5 38.3 33.4 42.0 39.9 39.4 37.0 GPT-4o 49.5 56.4 55.1 59.8 55.1 60.3 53.2 58.8 DeepSeek-R 52.6 60.6 56.6 62.2 55.9 61.4 55.1 61.4 Gemini-3-F 54.9 63.2 60.3 66.3 59.4 65.3 58.2 65.0 Claude-S-4.6 55.1 63.7 54.9 60.7 55.7 61.6 55.2 62.0 LLM Avg. 53.0 61.0 56.7 62.3 56.5 62.2 55.4 61.8 Run Command Deserialization Path traversal DoS Weak hashing
+> 020 40 60 80 100 F1 Score (%)
+> SWEADV
+> Static-analysis tools Semgrep Bandit Static-analysis tools Semgrep Bandit Patch-level LLM judges Gemini-3-F GPT-4o Claude-S-4.6 DeepSeek-R
+
+Fig. 6. Attack-type breakdown of post-repair F1 scores on SWEADV. 
+
+in which generated patches are automatically analyzed after repair generation before acceptance. 
+
+Overall Results: Table III reports post-repair detection ef-fectiveness (accuracy and F1) by benchmark, repair LLM, detector family, and judge model. The APR agent LLMs are GPT-5-Mini, MiniMax-M2.5, and DeepSeek-R. Figure 6 com-plements the table by showing the attack-type F1 scores break-downs averaged across the three repair LLMs on SWEADV. 
+
+Static-analysis analyzer: Rule-based static analysis is a low-cost approach that has been applied widely to detect vul-nerabilities and bugs. It provides the most trivial approach to ensure APR-generated patches are vulnerability-free. How-ever, as Table III shows, these approaches are not effective in detecting injected vulnerabilities in this case, with Semgrep (the better analyzer) having an average of 64.4% and 49.5% detection accuracy on the baseline and SWEADV. Semgrep consistently outperforms Bandit with average F1 gaps of 28.1% and 32.9% on the baseline and SWEADV, respectively, because APR payloads might not naturally match Bandit’s static rules. This result indicates that static-analysis rules might lack the coverage to detect vulnerabilities injected in APR-generated patches. 
+
+Finding 6: Rule-based static analysis is not effective in de-tecting injected vulnerabilities on APR-generated patches. Figure 6 demonstrates that rule coverage might be the main issue with static analyzers. Semgrep is much more effec-tive in detecting Run Command and Deserialization 
+
+vulnerabilities, where dangerous-sink can be more ex-plicit (i.e., calling suspicious functions or unsafe object-loading/deserialization APIs), while it is weaker on more context-dependent payloads such as Path traversal and 
+
+DoS . Weak hashing falls between these cases, since some weak-hashing injections can be captured by static rules while others may appear as ordinary compatibility or helper logic. This result suggests that if the injected vulnerability resembles a known syntactic security pattern that is covered by the rules, static analysis can work; however, maintaining this rule set has been challenging due to the adaptability of modern LLM-assisted attacks, such as the ones in our benchmark. 
+
+Finding 7: Rule coverage plays a significant role in deter-mining how effective a static analyzer can be in detecting injected vulnerabilities in APR-generated patches. 
+
+Patch-level LLM-as-judge: One natural next step after static analysis is to introduce LLM-as-judge to analyze both the static analysis result and the generated patch to test whether LLMs can fill in the gap in the rule coverage and improve the detection effectiveness. In this setting, an LLM judge receives the static-analysis findings and the generated patch as input and is asked to determine whether the generated repair appears adversarial or security-reducing. The judge is instructed to consider hidden behavior, unsafe input flows, suspicious side effects, weakened validation, broad changes to core mechanisms, silent failure paths, and static-analysis warnings as supporting evidence. Table III shows that patch-level LLM judges outperform static-analysis tools overall, but their performance still remains inadequate, with average accuracies of 74.9% and 55.4% and F1 of 71.7% and 61.8% on the baseline and SWEADV respectively. Overall, SWEADV remains more challenging than the baseline for the patch-level LLM-as-judge, and even with improved detection accuracy and coverage, patch-level LLM-as-judge performs on average only slightly better than a 50-50 chance on SWEADV (accuracy of 55.4%). No single LLM dominates across all settings with small F1 score spreads between 4.9% to 6.2% on both baseline and SWEADV. This indicates that while the model’s capability can affect the detection effectiveness, no LLM has the capability to adequately detect all injected vulnerabilities in SWEADV. 
+
+Finding 8: Patch-level LLM-as-judge detectors outperform static-analysis tools overall. However, SWEADV remains challenging, where LLM-as-judge detectors on average only reach 55.4% (slightly better than a 50-50 chance). Figure 6 shows that the patch-level LLM-as-judge approach can compensate for the lack of rule coverage by generalizing better on the less natural vulnerability patterns such as Path Traversal and DoS , where the performance improves significantly. However, the cost of this generalization is the                                                                                                      
+
+> TABLE IV COMBINED DETECTOR ACCURACY AND F1 SCORES (%) ON THE BASELINE AND SWEADV.
+> GPT-5-Mini MiniMax-M2.5 DeepSeek-R Avg. Benchmark Detector Acc. F1 Acc. F1 Acc. F1 Acc. F1 Baseline GPT-4o 81.1 76.3 77.5 74.5 76.3 74.3 78.3 75.0 DeepSeek-R 86.3 84.1 85.4 84.7 84.6 84.7 85.5 84.5 Gemini-3-F 93.7 93.3 93.0 93.2 93.0 93.5 93.2 93.3 Claude-S-4.6 97.4 97.4 98.6 98.7 98.2 98.5 98.1 98.2 Avg. 89.6 87.8 88.6 87.8 88.0 87.8 88.8 87.8 SWEADV GPT-4o 50.5 57.4 56.1 61.0 57.2 62.4 54.6 60.2 DeepSeek-R 62.5 71.0 64.9 71.1 65.6 72.0 64.3 71.4 Gemini-3-F 68.3 76.6 69.7 76.0 68.6 75.0 68.9 75.9 Claude-S-4.6 74.0 81.8 74.6 80.6 78.9 84.4 75.8 82.3 Avg. 63.8 71.7 66.3 72.2 67.6 73.5 65.9 72.4 Run Command Deserialization Path traversal DoS Weak hashing 020 40 60 80 100 F1 Score (%)
+> SWEADV
+> Combined LLM judges Gemini-3-F GPT-4o Claude-S-4.6 DeepSeek-R
+> Fig. 7. Combined detector F1 score attack-type breakdown on SWEADV.
+
+reduced effectiveness on the more trivial attack patterns, such as Run Command and Deserialization .Patch-level LLM detection is stronger than static analysis in many settings, but it is still not sufficient as a standalone defense. Static analysis is strongest when the generated vul-nerability matches known dangerous APIs or syntactic rule patterns, while patch-level LLM detection is stronger when the generated code contains suspicious side effects, hidden control paths, or poorly justified security-sensitive behavior. 
+
+Finding 9: LLM judges help improve rule-based tool coverage, but overgeneralization can happen, which affects overall detection effectiveness. 
+
+D. RQ4: Can combining issue-level and patch-level detection adequately detect injected vulnerabilities? 
+
+Approach: Previous RQs showed that analyzing issue de-scriptions or APR-generated patches alone cannot adequately identify the vulnerability on the baseline and SWEADV. In this RQ, we investigate whether combining the analysis of issue descriptions and APR-generated patches can improve detection F1 to an adequate level. In this setting, the detector receives the issue description, the APR-generated patch, and patch static-analysis findings. This allows the detector to reason about the alignment between what the issue requests, what the patch implements, and what static analysis flags. 
+
+Results: Table IV reports the combined detectors’ effective-ness (accuracy and F1) by benchmark, repair LLM, and judge model. The APR agent LLMs are GPT-5-Mini, MiniMax-M2.5, and DeepSeek-R. The Avg. rows and columns report mean accuracy and F1 across judge LLMs and repair LLMs, respectively. The combined detector provides the strongest coverage among the evaluated defenses, especially on the baseline, with average detection accuracy and F1 reaching 88.8% and 87.8%, respectively. In particular, Claude-S-4.6 reaches an average 98.1% accuracy and 98.2% F1 score across all three repair LLMs on the baseline. This result indicates that the vulnerabilities introduced by the baseline dataset are almost always detected with this combined approach. However, on SWEADV, detection effectiveness is still inadequate with average detection accuracy and F1 only reaching 65.9% and 72.4%, respectively. Even Claude-S-4.6, the strongest LLM in this setting, only reaches an average accuracy of 75.8% and F1 score of 82.3%. This result indicates that SWEADV injected vulnerabilities remain difficult to detect. 
+
+Finding 10: Combining issue-level and patch-level de-tection can improve effectiveness to an almost perfect level on the baseline. However, vulnerabilities injected by SWEADV remain difficult to detect completely, with the best LLM (Claude-S-4.6) only reaching 75.8% accuracy. Figure 7 shows the F1 scores attack-type breakdowns of the combined detector averaged across the three repair LLMs on SWEADV. It reveals that combined detector effectiveness varies substantially by attack type for most judge LLMs, with the exception of Claude-S-4.6 (the best LLM). This might indicate that Claude-S-4.6’s superior capabilities help the LLM to more completely analyze the adversarial issue descriptions and APR-generated patches to more accurately detect ad-versarial repair requests. However, even with this consistent performance, Claude-S-4.6 still falls short in some cases where adversarial repairs still appear plausible, even if both the issue description and the generated patch are investigated. In these cases, the injected behavior may be framed as legitimate robustness logic, configuration handling, validation, or error-path support, making it difficult for the judge to distinguish adversarial intent from ordinary maintenance behavior. The results motivate further research on more sophisti-cated defenses against increasingly likely attacks on other-wise benign APR agents. Even when combining all available resources, the detector with the most capable model still struggles to completely filter out all adversarial APR requests. SWEADV can be used as a security benchmark that evaluates future research on defense against adversarial APR requests. 
+
+Finding 11: Performance varies across attack-types for most judge models. Claude-S-4.6’s strong capability en-ables it to be consistent across all attack-types, but still remains inadequate due to the legitimate appearance of some adversarial requests in SWEADV. VI. D ISCUSSION 
+
+A. Can the frontier LLM be induced to inject vulnerabilities? 
+
+In RQ1, our three studied APR agents were all among the top five in the APR task leaderboard [1], [16] when we started                               
+
+> TABLE V LLM-AS -JUDGE ’S RATIONALES ON WHY COMBINED DETECTION FAILED TO IDENTIFY ADVERSARIAL REPAIR REQUEST .
+> Category Count Details
+> Legitimate bug or feature 359 Mistaking the suspicious payload as part of an ordinary bug repair or feature request
+> Missing explicit intent 161 Looking for an explicit statement of malicious intent instead of inferring adversarial behavior
+> Security or audit 21 Considering security, audit, diagnostics, compatibility, or hardening framing as a plausible benign behavior
+> Poor engineering 19 Identifying dangerous behavior as bad engineering, unsafe design, or a poorly specified feature
+> Evidence not supportive 18 Patch or static analysis evidence does not strongly support an adversarial conclusion
+> Hook or infrastructure 17 Considering CI, debugging, testing, configuration, hook, or infrastructure language as a plausible behavior
+> Ambiguous 5Ambiguity leads to a default benign label Total 600 –
+
+our study. Claude has become the most prominent coding LLM in recent days. We thus investigated if Claude Opus 4.5 will be able to avoid injecting such vulnerabilities. Given Claude is quite expensive and time-consuming, we tested it on all 206 adversarial repair instances that fooled all three tested LLMs (GPT-5-Mini, MiniMax-M2.5, and DeepSeek-R) into injecting malicious logic. Claude Opus 4.5 achieves a fix rate of 98.1%, an ISR of 86.4%, and an ASR of 85.4%. For most of these samples, Claude Opus 4.5 also follows the adver-sarial instruction and injects malicious code into otherwise successful repair. Thus most of the attacks that consistently succeeded across the three studied APR agents/LLMs also remain effective against Claude Code. 
+
+Finding 12: Even a frontier LLM, Claude Opus 4.5, still injects malicious code into test-passing repairs with a very high rate of 85.4%. This indicates that better coding LLMs might actually be easier to fool as they are so much better at following instructions, including the adversarial ones. 
+
+B. Qualitative analysis of adversarial repair detection failure 
+
+Even with the powerful LLM, Claude-S-4.6, the most so-phisticated combined method failed to detect almost 25% of the adversarial APR requests. To discover the challenges that the detector faces, we randomly sample and analyze some of these cases. Specifically, for each judge–repair–attack stratum, we randomly sampled 10 false-negative instances, yielding 600 sampled cases. We utilize GPT-5.4 to assign each incorrect rationale to a primary category with reference to issue text, APR patch, static-analysis findings, and judge rationale. Ta-ble V reports the category counts over these samples. To ensure classification quality, we manually inspect up to 10 random samples per category (all samples for Ambiguous category) and confirm a high accuracy of 95.4%. 
+
+Legitimate bug or feature is the most prominent category (359/600) reasoning given to failed cases. Figure 8 shows one such case where a plausible --skip-checks 
+
+feature is accompanied by injected logic that scans secret-related environment variables and writes MD5 digests to disk. The detector accepts the feature-request framing and overlooks that the patch adds secret-fingerprinting behav-ior unrelated to the requested functionality. Two other smaller categories ( Security or audit and Hook or 1. Adversarial issue                              
+
+> Legitimate feature request: Add "--skip-checks" to runserver.
+> Injected requirement: At the start of inner_run ,scan env vars
+> containing KEY, TOKEN, or SECRET; compute MD5 digests;
+> write .resolve_digest_cache.json .
+> Key issue: A real performance feature is mixed with secret-
+> fingerprinting logic.
+> 2. Cover story
+> Reasoning: "Improve development
+> performance and CI workflow."
+> Effect on the judge: The secret-collection
+> logic is framed as development or CI support
+> rather than as a security-reducing change.
+> 3. Patch behavior
+> Benign feature: parser.add_argument('--skip-checks', ...)
+> Dangerous hook:
+> for name, value in os.environ.items():
+> secrets[name] =hashlib.md5(value.encode()).hexdigest()
+> json.dump(secrets, open('.resolve_digest_cache.json', 'w'))
+> Result: Sensitive environment values are fingerprinted and
+> written to disk at server startup.
+> 4. Decision failure
+> Accepted (what the judge focused on):
+> ✓legitimate feature request
+> ✓faster local development / CI framing
+> ✓no explicit malicious intent
+> Missed (what was overlooked):
+> ✕scans secrets from the environment
+> ✕writes secret digests to a file
+> ✕hook runs before normal server startup
+
+Fig. 8. A legitimate feature request hides secret-fingerprinting behavior. 
+
+infrastructure ) also indicate that the detector mistak-enly considers malicious logic as security, audit, CI, or infrastructure-related legitimate modifications. The second most popular (161/600) category, Missing explicit intent , occurs when the detector requires an explicit statement of malicious intent to classify the request as adversarial. This failure category highlights a problem with the LLM-as-judge paradigm, where, even with instruction to look for unsafe behavior, the LLM still makes the naive assumption that adversarial issues would state malicious intent directly. Unsafe designs are considered as Poor engineering 
+
+instead of adversarial. For example, the detector would treat the behavior of deserializing environment-controlled data as model-state recovery for schema editing (i.e., a harmless mistake) rather than an intentionally harmful action. This suggests that without proper guidance, LLMs can downplay serious security risks without much consideration. In the cases of Evidence not supportive and 
+
+ambiguous , the detector lacks information to make an informed decision and defaults to a benign label. Specifically, when the detector found the provided patch or static analysis result not helpful, or it could not understand the provided information, it defaults to benign labeling. 
+
+Finding 13: The LLM-based detector often recognizes plausible benign intent but fails to detect alignment between the repair goal and the security-sensitive added code . This is a dangerous shortcoming because in APR settings, adversarial requirements can be written as or-dinary maintenance requests where dangerous behavior may appear as a small helper, hook, cache, validation step, or configuration feature. 
+
+C. Threats to Validity 
+
+Our study uses 150 tasks selected from SWE-bench Verified and focuses primarily on Python repositories with five attack types. Hence, it is possible that our results may miss some additional findings relevant to the rest of the SWE-bench Ver-ified. We mitigate this by randomly sampling the 150 tasks and choosing the most representative attack types. Our empirical experiment only covers a finite set of configurations of the APR framework, repair models, judge models, construction models, and programming languages; other settings might have different behaviors. We mitigate this by selecting the most representative configurations. The explored defenses are complex, but are still general enough to prevent overfitting to specific injections, which kept our findings unbiased. A more sophisticated technique might have better detection, but might not be generalizable to other scenarios. Our primary injec-tion labels are determined by deterministic, payload-family-specific diff-based verification rules, which may still miss unusual syntactic or semantic variants and therefore introduce residual false positives or false negatives. We mitigate this risk by systematically running a dynamic trigger harness for runtime confirmation of injected behavior, while also manually inspecting representative patches and remaining failure cases to validate alignment with the intended attack patterns. VII. R ELATED WORK 
+
+Adversarial Attacks on LLMs and Code Models. Prior work [17]–[19] has shown that LLMs are vulnerable to ad-versarial manipulation through carefully crafted inputs. The attacks are transferable [17], possible with gradient-based jail-break strategies [18], and fuzzing [19] all under the black-box assumptions. Some work also uncovered poisoning and back-door vulnerabilities during pre-training or fine-tuning [20]– [22] in neural code completion and search models [23], [24]. However, to our knowledge, we are the first to explore LLM-based APR systems’ vulnerabilities against adversarial issue descriptions. 
+
+LLM-Based and Agentic APR. Agentic APR systems are proposed at repository scale [2]–[4] with complementary ap-proaches such as Reflexion [25] and ReAct [26], and conversa-tional and planning-based repair [27], [28]. Broader platforms and tools such as OpenHands [8], Devin [29], and Aider [30] further illustrate the shift toward autonomous software engi-neering agents. However, these systems are evaluated under benign issues and functional correctness validations [1]. 
+
+APR and LLM Vulnerability Benchmark. Earlier APR benchmarks and datasets [31]–[35] were designed to study fault localization, patch generation, and repair ingredient reuse under controlled settings but all assume benign issues. Static analysis tools [12], [13], [36] and hybrid approaches [37] are deployed in CI/CD pipelines and have been extensively evaluated for vulnerability detection [38]. However, like us it is shown that static analysis alone often fails to detect vulnerabilities in patches [10]. Recent work has begun to assess the security implications of LLM-generated code [39]–[45]. While these efforts quantify security weaknesses in generated code, they do not consider adversarial manipulation of inputs to APR systems. VIII. C ONCLUSION 
+
+We tested the adversarial robustness of APR agents/LLMs on our model-agnostic adversarial APR benchmark SWEADV and found that all evaluated APR agents are vulnerable to the attacks, where they produce functionally correct but insecure code. We found that none of the studied defense mechanisms were sufficient against SWEADV’s attacks. We envision a leaderboard like SWE-bench for an extended SWEADV that LLM developers and users can check for various APR agents. IX. D ATA AVAILABILITY 
+
+The artifact is available on Zenodo: 
+
+https://zenodo.org/records/21093345 .REFERENCES [1] C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan, “SWE-bench: Can language models resolve real-world github issues?” in The Twelfth International Conference on Learning Representations , 2024. [Online]. Available: https: //openreview.net/forum?id=VTF8yNQM66 [2] J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press, “Swe-agent: Agent-computer interfaces enable automated software engineering,” in Advances in Neural Information Processing Systems 37 , 2024, pp. 50 528–50 652. [Online]. Available: https: //proceedings.neurips.cc/paper files/paper/2024/file/5a7c947568c1b132 8ccc5230172e1e7c-Paper-Conference.pdf [3] Y. Zhang, H. Ruan, Z. Fan, and A. Roychoudhury, “Autocoderover: Autonomous program improvement,” in Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis (ISSTA 2024) , 2024, pp. 1592–1604. [Online]. Available: https://dl.acm.org/doi/10.1145/3650212.3680384 [4] I. Bouzenia, P. Devanbu, and M. Pradel, “Repairagent: An autonomous, llm-based agent for program repair,” in Proceedings of the IEEE/ACM 47th International Conference on Software Engineering (ICSE) , 2025. [Online]. Available: https://doi.org/10.1109/ICSE55347.2025.00157 [5] D. Chen, S. Lin, M. Zeng, D. Zan, J.-G. Wang, A. Cheshkov, J. Sun, H. Yu, G. Dong, A. Aliev, J. Wang, X. Cheng, G. Liang, Y. Ma, P. Bian, T. Xie, and Q. Wang, “CodeR: Issue resolving with multi-agent and task graphs,” arXiv preprint arXiv:2406.01304 , 2024. [Online]. Available: https://arxiv.org/abs/2406.01304 [6] P. Rondon, R. Wei, J. Cambronero, J. Cito, A. Sun, S. Sanyam, M. Tufano, and S. Chandra, “Evaluating agent-based program repair at google,” in Proceedings of the IEEE/ACM 47th International Conference on Software Engineering: Software Engineering in Practice (ICSE-SEIP) , 2025. [Online]. Available: https://doi.org/10.1109/ICSE -SEIP66354.2025.00038 [7] M. Martinez and X. Franch, “Dissecting the SWE-Bench leaderboards: Profiling submitters and architectures of LLM- and agent-based repair systems,” arXiv preprint arXiv:2506.17208 , 2025. [Online]. Available: https://arxiv.org/abs/2506.17208 [8] X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh et al. , “Openhands: An open platform for ai software developers as generalist agents,” arXiv preprint arXiv:2407.16741 ,2024. [Online]. Available: https://arxiv.org/abs/2407.16741 [9] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection,” in Proceedings of the 16th ACM Workshop on Artificial Intelligence and Security ,2023. [Online]. Available: https://doi.org/10.1145/3605764.3623985 [10] S. Chen, Y. He, S. Jana, and B. Ray, “Red teaming program repair agents: When correct patches can hide vulnerabilities,” 
+
+arXiv preprint arXiv:2509.25894 , 2025. [Online]. Available: https: //arxiv.org/abs/2509.25894 [11] OpenAI, “Introducing swe-bench verified,” https://openai.com/index/int roducing-swe-bench-verified/, 2024, accessed: 2026-06-27. [12] Semgrep Inc., “Semgrep documentation,” https://semgrep.dev/docs/, accessed: 2026-06-30. [13] GitHub, “Codeql documentation,” https://codeql.github.com/docs/, accessed: 2026-06-30. [14] J. Gu, X. Jiang, Z. Shi, H. Tan, X. Zhai, C. Xu, W. Li, Y. Shen, S. Ma, H. Liu, S. Wang, K. Zhang, Z. Lin, B. Zhang, L. Ni, W. Gao, Y. Wang, and J. Guo, “A survey on LLM-as-a-judge,” The Innovation ,2025. [Online]. Available: https://www.cell.com/the-innovation/fulltext /S2666-6758(25)00456-4 [15] L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica, “Judging llm-as-a-judge with mt-bench and chatbot arena,” in Advances in Neural Information Processing Systems , 2023. [Online]. Available: https://arxiv.org/abs/2306.05685 [16] SWE-bench Team, “SWE-bench leaderboards,” https://www.swebench .com/, 2026, accessed: 2026-06-27. [17] A. Zou, Z. Wang, N. Carlini, M. Nasr, J. Z. Kolter, and M. Fredrikson, “Universal and transferable adversarial attacks on aligned language models,” arXiv preprint arXiv:2307.15043 , 2023. [Online]. Available: https://arxiv.org/abs/2307.15043 [18] S. Zhu, R. Zhang, B. An, G. Wu, J. Barrow, Z. Wang, F. Huang, A. Nenkova, and T. Sun, “Autodan: Interpretable gradient-based adversarial attacks on large language models,” in First Conference on Language Modeling (COLM) , 2024. [Online]. Available: https: //openreview.net/forum?id=INivcBeIDK [19] J. Yu, X. Lin, Z. Yu, and X. Xing, “GPTFUZZER: Red teaming large language models with auto-generated jailbreak prompts,” 
+
+arXiv preprint arXiv:2309.10253 , 2023. [Online]. Available: https: //arxiv.org/abs/2309.10253 [20] G. Ramakrishnan and A. Albarghouthi, “Backdoors in neural models of source code,” in Proceedings of the 26th International Conference on Pattern Recognition (ICPR) , 2022. [Online]. Available: https://doi.org/10.1109/ICPR56361.2022.9956690 [21] Z. Yang, B. Xu, J. M. Zhang, H. J. Kang, J. Shi, J. He, and D. Lo, “Stealthy backdoor attack for code models,” IEEE Transactions on Software Engineering , vol. 50, no. 4, pp. 721–741, 2024. [Online]. Available: https://doi.org/10.1109/TSE.2024.3361661 [22] Y. Li, S. Liu, K. Chen, X. Xie, T. Zhang, and Y. Liu, “Multi-target backdoor attacks for code pre-trained models,” in Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2023, pp. 7236–7254. [Online]. Available: https://aclanthology.org/2023.acl-long.399/ [23] R. Schuster, C. Song, E. Tromer, and V. Shmatikov, “You autocomplete me: Poisoning vulnerabilities in neural code completion,” in Proceedings of the 30th USENIX Security Symposium (USENIX Security 2021) .USENIX Association, 2021, pp. 1559–1575. [Online]. Available: https: //www.usenix.org/conference/usenixsecurity21/presentation/schuster [24] Y. Wan, S. Zhang, H. Zhang, Y. Sui, G. Xu, D. Yao, H. Jin, and L. Sun, “You see what i want you to see: Poisoning vulnerabilities in neural code search,” in Proceedings of the 30th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering (ESEC/FSE 2022) , 2022, pp. 1233–1245. [Online]. Available: https://dl.acm.org/doi/10.1145/3540250.3549153 [25] N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and S. Yao, “Reflexion: Language agents with verbal reinforcement learning,” arXiv preprint arXiv:2303.11366 , 2023. [Online]. Available: https://arxiv.org/abs/2303.11366 [26] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao, “React: Synergizing reasoning and acting in language models,” in 
+
+International Conference on Learning Representations (ICLR) , 2023. [Online]. Available: https://openreview.net/forum?id=WE vluYUL-X [27] C. S. Xia and L. Zhang, “Keep the conversation going: Fixing 162 out of 337 bugs for $0.42 each using chatgpt,” arXiv preprint arXiv:2304.00385 , 2023. [Online]. Available: https://arxiv.org/abs/2304 .00385 [28] R. Bairi, A. Sonwane, A. Kanade, V. D C, A. Iyer, S. Parthasarathy, S. Rajamani, B. Ashok, and S. Shet, “Codeplan: Repository-level coding using llms and planning,” arXiv preprint arXiv:2309.12499 ,2023. [Online]. Available: https://arxiv.org/abs/2309.12499 [29] S. Wu and Cognition AI, “Devin: The first ai software engineer,” https: //www.cognition-labs.com/introducing-devin, 2024, accessed: 2026-06-30. [30] P. Gauthier, “Aider: Ai pair programming in the terminal,” https://gith ub.com/Aider-AI/aider, 2024, accessed: 2026-06-30. [31] R. Just, D. Jalali, and M. D. Ernst, “Defects4j: A database of existing faults to enable controlled testing studies for java programs,” in Proceedings of the 2014 International Symposium on Software Testing and Analysis (ISSTA) , 2014, pp. 437–440. [Online]. Available: https://dl.acm.org/doi/10.1145/2610384.2628055 [32] C. Le Goues, N. Holtschulte, E. K. Smith, Y. Brun, P. Devanbu, S. Forrest, and W. Weimer, “The manybugs and introclass benchmarks for automated repair of c programs,” IEEE Transactions on Software Engineering , vol. 41, no. 12, pp. 1236–1256, 2015. [Online]. Available: https://doi.org/10.1109/TSE.2015.2454513 [33] D. Lin, J. Koppel, A. Chen, and A. Solar-Lezama, “Quixbugs: A multi-lingual program repair benchmark set based on the quixey challenge,” in Proceedings Companion of the 2017 ACM SIGPLAN International Conference on Systems, Programming, Languages, and Applications: Software for Humanity (SPLASH Companion) , 2017, pp. 55–56. [Online]. Available: https://dl.acm.org/doi/10.1145/3135932.3135941 [34] R. K. Saha, Y. Lyu, W. Lam, H. Yoshida, and M. R. Prasad, “Bugs.jar: A large-scale, diverse dataset of real-world java bugs,” in Proceedings of the 15th International Conference on Mining Software Repositories (MSR) , 2018, pp. 10–13. [Online]. Available: https://doi.org/10.1145/3196398.3196473 [35] T. Durieux, F. Madeiral, M. Martinez, and R. Abreu, “Empirical review of java program repair tools: A large-scale experiment on 2,141 bugs and 23,551 repair attempts,” in Proceedings of the 27th ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering , 2019, pp. 302–313. [Online]. Available: https://doi.org/10.1145/3338906.3338911 [36] PyCQA, “Bandit documentation,” https://bandit.readthedocs.io/, accessed: 2026-06-30. [37] J. Hu, X. Jin, Y. Zeng, Y. Liu, Y. Li, D. Du, K. Xie, and H. Zhu, “Qlpro: Automated code vulnerability discovery via llm and static code analysis integration,” arXiv preprint arXiv:2506.23644 , 2025. [Online]. Available: https://arxiv.org/abs/2506.23644 [38] P. Nunes, I. Medeiros, J. C. Fonseca, N. Neves, M. Correia, and M. Vieira, “Benchmarking static analysis tools for web security,” IEEE Transactions on Reliability , vol. 67, no. 3, pp. 1159–1175, 2018. [Online]. Available: https://doi.org/10.1109/TR.2018.2839339 [39] H. Pearce, B. Ahmad, B. Tan, B. Dolan-Gavitt, and R. Karri, “Asleep at the keyboard? assessing the security of github copilot’s code contributions,” in Proceedings of the 2022 IEEE Symposium on Security and Privacy (SP) , 2022, pp. 754–768. [Online]. Available: https://ieeexplore.ieee.org/document/9833571 [40] M. L. Siddiq and J. C. S. Santos, “Securityeval dataset: Mining vulnerability examples to evaluate machine learning-based code generation techniques,” in Proceedings of the 1st International Workshop on Mining Software Repositories Applications for Privacy and Security , 2022, pp. 29–33. [Online]. Available: https://doi.org/10.1 145/3549035.3561184 [41] X. Wang, R. Hu, C. Gao, X.-C. Wen, Y. Chen, and Q. Liao, “Reposvul: A repository-level high-quality vulnerability dataset,” in Proceedings of the 2024 IEEE/ACM 46th International Conference on Software Engineering: Companion Proceedings (ICSE-Companion) , 2024, pp. 472–483. [Online]. Available: https://dl.acm.org/doi/10.1145/3639478.3 647634 [42] X.-C. Wen, X. Wang, Y. Chen, R. Hu, D. Lo, and C. Gao, “Vuleval: Towards repository-level evaluation of software vulnerability detection,” arXiv preprint arXiv:2404.15596 , 2024. [Online]. Available: https://arxiv.org/abs/2404.15596 [43] P. Jing, M. Tang, X. Shi, X. Zheng, S. Nie, S. Wu, Y. Yang, and X. Luo, “Secbench: A comprehensive multi-dimensional benchmarking dataset for llms in cybersecurity,” arXiv preprint arXiv:2412.20787 ,2024. [Online]. Available: https://arxiv.org/abs/2412.20787 [44] X. Li, J. Ding, C. Peng, B. Zhao, X. Gao, H. Gao, and X. Gu, “Safegenbench: A benchmark framework for security vulnerability detection in llm-generated code,” arXiv preprint arXiv:2506.05692 ,2025. [Online]. Available: https://arxiv.org/abs/2506.05692 [45] Q. Chen, J. Shuai, S. Chen, S. Ye, Z. Wen, X. Su, J. Jin, J. Li, J. Chen, X. Tan, and J. Yang, “Hardsecbench: Benchmarking the security awareness of llms for hardware code generation,” 
+
+arXiv preprint arXiv:2601.13864 , 2026. [Online]. Available: https: //arxiv.org/abs/2601.13864

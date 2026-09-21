@@ -1,0 +1,1533 @@
+Title: Towards TEE-Certified DP: Verifiable Differentially Private Training on Legacy GPUs
+
+URL Source: https://arxiv.org/pdf/2609.20532v1
+
+Published Time: Fri, 18 Sep 2026 01:28:15 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# Towards TEE-Certified DP: Verifiable Differentially Private Training on Legacy GPUs 
+
+## Li Ge 1,* , Wenjie Qu 2,* , Weitao Feng 1, Yi Zeng 1, Jiaheng Zhang 2, Xiaofeng Wang 1, Wei Dong 11Nanyang Technological University 2National University of Singapore 
+
+> *
+
+## Equal contribution. 
+
+## Abstract 
+
+Wide adoption of machine learning has created growing policy and regulatory demand for protecting sensitive training data, with differential privacy (DP) emerging as a key mecha-nism. Yet a less-studied problem is how to certify the faithful execution of DP during training: an external verifier should be able to check that a released model was trained with proper DP protection, without accessing the private training data. Existing cryptographic approaches, such as zero-knowledge proofs, provide strong guarantees but often incur prohibitive overhead, in some cases by orders of magnitude. Trusted Execution Environments (TEEs) offer a more efficient alter-native, but the multi-GPU TEE support needed for training and fine-tuning large language models remains limited to recent platforms and is absent or inefficient on legacy GPUs. To address this, we propose a practical framework for ver-ifiable DP training using CPU-side TEEs together with un-trusted GPUs. Our design addresses a fundamental efficiency-security tension: training entirely inside a CPU TEE is too slow, while unrestricted GPU offloading can allow malicious deviations from DP. We therefore offload expensive gradi-ent computation to GPUs, while using the CPU TEE to ef-ficiently verify the correct enforcement of DP on gradients through probabilistic checking. Our framework detects fre-quent full deviations from DP with high probability; for the utility-oriented forged-gradient attacks evaluated in this work, sparse deviations provide limited utility benefit and show no measurable additional membership leakage. Experiments fur-ther show that our approach nearly achieves a “free lunch”: it incurs only modest overhead compared with standard GPU-based DP training, while effectively constraining malicious deviations from the claimed DP execution. 
+
+## 1 Introduction 
+
+As sensitive data such as electronic health records and tax records are increasingly used in machine learning (ML) train-ing, privacy risks, including reidentification, membership in-ference, and attribute exposure, have become a serious con-cern [9, 15]. The dominant mitigation is Differential Privacy 
+
+(DP) [13], which ensures that any single record has only a limited effect on an algorithm’s output. In ML training, DP is commonly implemented through DP-SGD [1], which adds calibrated noise to per-example gradients before aggregation, so the final model satisfies DP. DP and DP-SGD have thus been increasingly recommended by privacy laws, regulations, and best-practice guidelines for model protection [3, 29, 35]. 
+
+Verifiable DP training . However, assuring that DP-SGD is faithfully enforced during model training remains challenging. The key issue is verifying the integrity of the training process: whether the declared DP mechanism has been executed cor-rectly throughout training without deviation. This is critical because the noise injected at each iteration inevitably degrades model utility, creating incentives for model owners to deviate from the protocol while still claiming privacy protection. For example, a company subject to regulatory requirements or public commitments may reduce or even omit DP noise to obtain a higher-performing model. Importantly, this concern is not merely hypothetical. Several real-world deployments of DP have attracted scrutiny regarding whether their implemen-tations provide the same guarantees as claimed [39]. A recent work reports that one building block in Apple’s DP framework in real-time is configured with DP disabled, thus uploading data without any DP protection [10]. Although extensive re-search has focused on designing DP mechanisms [14, 24] and analyzing or auditing their privacy guarantees [19], little attention has been paid to verifying that DP-SGD is actually executed as claimed, despite the importance of such assurance for privacy protection and regulatory compliance. Addressing this concern requires verifiable DP [8, 26], which aims to provide publicly checkable evidence that a claimed DP mechanism has been executed as specified. Given such evidence, together with the declared protocol and the resulting model, an independent verifier should be able to determine that the model was produced under the attested verification protocol and its declared probabilistic security bounds. Importantly, this verification itself must preserve pri-1arXiv:2609.20532v1 [cs.CR] 17 Sep 2026 vacy and should not require access to sensitive training data. In the example above, after a company trains a model with a claimed DP guarantee, a regulator or external auditor may require evidence showing that the declared DP mechanism was actually enforced during training. Verifiable privacy mechanisms have been studied for tasks such as k-means clustering [26], DP counting, and histogram release [8,26]. Extending such guarantees to deep model train-ing, however, remains challenging. Existing state-of-the-art approaches [34] rely on zero-knowledge proofs (ZKPs) to cer-tify the correctness of the training procedure. While providing strong guarantees, ZKPs incur substantial computational and communication costs that grow with model size and the num-ber of training iterations. Even for relatively small models with only 0 .01B parameters, the overhead can exceed 1000 ×,making these approaches impractical for realistic deep learn-ing workloads. 
+
+TEE-based alternative . Beyond heavyweight ZKP-based so-lutions, a natural alternative is to use hardware-based trusted execution environments (TEEs). A TEE provides an isolated execution environment whose code identity and execution state can be remotely attested. This suggests a simple design: run the entire training procedure inside a TEE and use the hardware root of trust to certify, through an open-source mon-itor, that the DP protocol was correctly executed. An external verifier can then check both that the declared DP protocol was faithfully enforced and that the released model is bound to the attested execution. However, this “train-inside-a-TEE” design faces a practical obstacle: training reasonably sized models requires GPUs. Full confidential-computing support across both CPU and GPU TEEs is available only on the most recent platforms, such as NVIDIA Blackwell B200 [28]. Older GPUs, includ-ing H100 and H200 based on the Hopper architecture, rely on secure I/O through encrypted bounce buffers, which intro-duces substantial training overhead [5, 49]. Earlier-generation GPUs, such as V100, A100, and RTX 4090, provide no TEE support at all. Since GPU infrastructure is costly and replaced slowly, it is unrealistic to assume that GPU-TEEs will be widely available in the near future [44]. 
+
+Our approach . We therefore propose a new approach: com-bining widely deployed CPU-TEEs with untrusted GPUs. CPU-TEEs, such as AMD SEV [33] and Intel TDX [4], are already available on commodity servers, but are too slow to run full training by themselves (Section 8). Our key idea is instead to use the CPU-TEE to monitor DP-SGD executed on untrusted GPUs and generate verifiable evidence of pro-tocol compliance. This design preserves the efficiency of GPU-based training while providing verifiable DP guarantees with only modest overhead over conventional, non-verifiable DP-SGD. More specifically, we design and implement a CPU-TEE-based framework for verifiable DP training that incurs only modest overhead compared with standard GPU-based DP-SGD. In the absence of GPU TEE support and efficient secure I/O, our framework achieves high performance by offload-ing expensive gradient computation to untrusted local GPUs while keeping trusted randomness, optimizer and model-state maintenance, and verification inside the CPU TEE; the GPU performs per-example gradient computation, clipping, and ag-gregation, subject to probabilistic trusted recomputation. This architecture, however, introduces a challenge: an untrusted trainer may tamper with GPU-computed gradients before they enter the TEE, causing the resulting model to deviate from the claimed DP protocol (Section 4). To address this challenge, we classify malicious deviations according to their frequency, distinguishing between dense 
+
+and sparse deviations. To understand how much utility a trainer can obtain from infrequent manipulation, we study several utility-oriented forged-gradient attacks that steer the DP trajectory toward non-private checkpoints. Across the attack family and workloads evaluated in this paper, small attack budgets provide limited utility gain and no measurable additional membership leakage, leaving a rational trainer with limited incentive to employ them; we use these experiments to select an empirical sparse–dense operating threshold rather than to claim that every possible sparse attack is ineffective. Motivated by this observation, we design an efficient CPU-TEE-based protocol that probabilistically detects repeated full deviations while explicitly accounting for the cumula-tive manipulation admitted through its numerical-tolerance region. The GPU performs per-example gradient computation, clipping, and aggregation, whereas the CPU-TEE holds the trusted randomness and training state, generates the DP noise, and probabilistically verifies the GPU-side computation. As a result, frequent deviations are detected with high probability, while the impact of infrequent deviations remains bounded by DP-SGD clipping, enabling efficient verifiable DP training under realistic hardware assumptions. 
+
+Contributions . Our contributions are listed below: 
+
+• System Design: We propose a CPU-TEE-based solution for verifiable DP training that is compatible with legacy GPU infrastructure. We identify an inherent efficiency–security tension in this setting. To address this tension, we design a framework that achieves a practical trade-off between secu-rity and efficiency. Our framework offloads gradient compu-tation, per-example clipping, and aggregation to untrusted GPUs, while keeping trusted randomness, model and opti-mizer state, DP-noise generation, and probabilistic verifica-tion inside the CPU-side TEE. The protocol probabilistically detects repeated full deviations while explicitly accounting for the cumulative manipulation admitted through its numerical-tolerance region, and avoids the cost of fully verifying every training step. 
+
+• Adversarial Analysis: We study three utility-oriented checkpoint-steering attacks—Current, Nearest, and Final— under adversarially selected attack schedules. Across the eval-2uated workloads, attack budgets below M = 50 malicious iterations (0 .33%–0 .89% of the training steps on the LLM workloads, 1% on CIFAR-10) provide limited or no utility im-provement, and our membership-inference evaluation shows no measurable additional leakage over the honest DP base-lines. These findings motivate M = 50 as an empirical operat-ing threshold for the attack family considered here; they do not claim to exhaust all possible utility- or privacy-oriented attacks. 
+
+• Numerical Discrepancy as an Attack Surface: We identify that the numerical discrepancy between honest GPU and TEE executions is itself an attack surface: any tolerance the verifier must grant for honest disagreement can be exploited by a dishonest GPU to hide bounded manipulations that no single check would flag. Independently of the attack strategy, our two-stage verification protocol classifies every committed submission into a body, ambiguity, or hard-rejection region, meters tolerated discrepancies observed on checked steps with bounded ledgers, and yields an analytic high-probability security budget for the cumulative normalized deviation that can pass through the first two regions, alongside a Bernoulli detection guarantee for the third. 
+
+• Experimental Results: We conduct a comprehensive em-pirical evaluation across multiple models, datasets, and train-ing configurations. Our experiments show that verifiable DP training is nearly a “free lunch” on LLM oriented tasks: our framework incurs only 4 .4%–14 .9% overhead compared with standard GPU-based DP training across a range of tasks and datasets. In contrast, executing the full training procedure inside a CPU-side TEE incurs 8 .0×–9 .2× overhead. 
+
+## 2 Preliminaries 2.1 Differential Privacy 
+
+Differential Privacy (DP) [13] is a rigorous framework for quantifying the privacy protection provided by a randomized algorithm. Intuitively, DP requires that the output of an algo-rithm be only minimally affected by the presence or absence of any individual data record, thereby limiting the information that can be inferred about a particular participant. In this work, we adopt the add/remove-one notion of neigh-boring datasets. Two datasets D and D′ are said to be neigh-boring, denoted by D ∼ D′, if they differ by the addition or removal of a single record. Given privacy parameters ε, δ ≥ 0, a randomized algorithm M is said to satisfy (ε, δ)-DP if for any pair of neighboring datasets D ∼ D′ and any measurable set of outputs S,Pr [M (D) ∈ S] ≤ eε Pr [M (D′) ∈ S] + δ.
+
+Therefore, DP requires the output distributions of M on neigh-boring datasets to be close, thereby limiting privacy leakage. In the context of private model training, M (D) can be viewed as the model produced by the randomized training algorithm on dataset D.
+
+## 2.2 DP-SGD 
+
+Differentially Private Stochastic Gradient Descent (DP-SGD) [1] enforces differential privacy during training by bounding the influence of each individual example through 
+
+per-example gradient clipping and injecting Gaussian noise 
+
+into the aggregated gradient. Clipping prevents any single record from dominating the update, while the added noise masks the contribution of individual examples and provides a formal privacy guarantee. Let D = {xi}Ni=1 be the training dataset, θ the model pa-rameters, and ℓ(θ; x) the loss for an example x. At training iteration t, given clipping norm C, noise multiplier σ, and learning rate ηt , the per-example gradient on xi is 
+
+gt (xi) = ∇θℓ(θt ; xi).
+
+Each gradient is clipped to have ℓ2 norm at most C:¯gt (xi) = gt (xi) · min 
+
+
+
+1, C
+
+∥gt (xi)∥2
+
+
+
+.
+
+DP-SGD then aggregates the clipped gradients in the training batch Bt and adds Gaussian noise: 
+
+egt = 1
+
+|Bt | ∑
+
+> xi∈Bt
+
+¯gt (xi) + zt
+
+!
+
+, zt ∼ N  0, σ2C2I .
+
+Finally, the model parameters are updated as 
+
+θt+1 = θt − ηtegt .
+
+## 2.3 Trusted Execution Environment 
+
+A Trusted Execution Environment (TEE) is a hardware-backed isolated execution context that provides confidentiality 
+
+and integrity for code and data during execution, even if the host operating system or hypervisor is compromised. Typi-cal TEEs (e.g., Intel SGX, AMD SEV-style enclaves) offer attestation mechanisms: a remote party can verify that a spe-cific program (identified by a measurement such as a hash) is running inside a genuine TEE before trusting its outputs. In our setting, attestation enables an auditor to trust that the DP-enforcing logic (noise generation, model updates, and the recomputation that checks GPU-side clipping and aggrega-tion) is executed as specified. However, due to legacy deployment constraints discussed in the introduction, most widely available TEEs today are CPU-side TEEs, which impose practical limitations. Enclave transitions can be expensive, and full-scale training entirely within a TEE is often impractical—especially for large models that rely on high-throughput GPU computation. Therefore, we 3treat the TEE as a trusted core that holds the trusted random-ness, the optimizer and model state, and the verification logic, and records verifiable evidence, while outsourcing heavy gra-dient computation to an untrusted but fast GPU worker whose results are checked by probabilistic trusted recomputation. Unless otherwise specified, all TEEs are referred to as CPU-TEEs throughout this document. 
+
+## 3 Problem Definition and Security Model 
+
+In this work, we consider a three-party setting that captures the practical deployment of verifiable DP training. 
+
+User (data provider). The user contributes data records, such as samples and labels, to form the training dataset. Users care about privacy: they require a formal DP guarantee that bounds each participant’s privacy leakage and limits what can be inferred about their individual records from the released model. 
+
+Company (trainer). The trainer (e.g., a company operating the training pipeline and GPU workers) controls the model architecture, training pipeline, and computational resources. The trainer aims to obtain a high-utility model efficiently. However, because differential privacy typically reduces model utility, a profit-driven or malicious trainer may have incentives to deviate from the prescribed DP-SGD protocol while still claiming compliance to users or regulators. In particular, the trainer may attempt to improve model utility by modifying key components of DP-SGD. Typical deviations include: (i) skipping or weakening gradient clip-ping, thereby increasing sensitivity; (ii) reducing the noise scale σ or replacing Gaussian noise with a weaker distribu-tion; (iii) reusing noise across steps or employing predictable randomness; (iv) altering the sampling procedure, for exam-ple by using larger effective batch sizes than declared; and (v) selectively applying DP mechanisms only to a subset of training steps. 
+
+Government (regulator/auditor). The government (or reg-ulator) is an external party that enforces compliance with privacy requirements. The regulator does not necessarily par-ticipate in training, but it demands verifiability : the company should provide convincing evidence that DP-SGD was exe-cuted correctly with the claimed hyperparameters (e.g., sam-pling rate, clipping norm, and noise multiplier). 
+
+Interaction among the three parties. The interaction pro-ceeds as follows. Users provide data to the company, ex-pecting that the model will be trained under the advertised DP guarantee. The company then trains the model using its own infrastructure, which may include both untrusted high-performance components, such as GPUs, and trusted compo-nents, such as a CPU-based TEE. During training, the com-pany is expected to follow the declared DP-SGD protocol and produce evidence that the regulator can later use to assess compliance. The regulator does not need to observe every low-level operation. Instead, it requires that privacy-critical parts of the protocol be either protected by trusted hardware or auditable afterward. In this sense, the TEE serves as a bridge between the company and the regulator: it protects key DP operations and helps generate verifiable evidence that the claimed proto-col was enforced. Users therefore rely on the regulator’s com-pliance framework rather than directly observing the training process. Our goal is to achieve verifiable DP training, where the training procedure generates a post-training certificate that can be released to users or used for future attestation. Such a design constrains the company from deviating from the pre-scribed protocol. As a result, the company is expected to faith-fully follow the DP-SGD procedure, users obtain meaningful privacy protection, and regulators or users receive verifiable evidence rather than relying on unaudited privacy claims. 
+
+## 4 Challenges of Verifiable DP Training 
+
+In this section, we identify the challenges of realizing verifi-able DP training under realistic hardware assumptions. We be-gin by considering two natural approaches and show that each is limited by either efficiency or security concerns. Together, these limitations reveal a fundamental efficiency-security tradeoff that motivates our design. 
+
+TEE-only training. A straightforward way to achieve ver-ifiable DP training is to execute the entire training process inside a TEE. Under this design, model parameters, gradient computation, clipping, noise generation, and parameter up-dates are all performed within the trusted boundary. Through remote attestation, a verifier can therefore obtain strong assur-ance that the declared DP-SGD protocol has been faithfully executed. 
+
+Efficiency limitation. Although conceptually simple, this approach is impractical for modern learning workloads. Large-scale training, such as training a large language model, re-lies heavily on GPU acceleration, whereas CPU-based TEEs provide substantially lower computational throughput. As a result, repeatedly performing forward and backward propa-gation inside a CPU-TEE incurs prohibitive overhead. As shown in Section 8, this design slows training by approxi-mately 8 .0×–9 .2× on the evaluated LLM workloads and by about 20 × on CIFAR-10 compared with standard GPU-based DP training. Consequently, fully executing DP-SGD inside a CPU-TEE is too expensive for realistic deployments. 
+
+GPU-TEE split training. To improve efficiency, a natural alternative is to offload computationally intensive operations from the trusted environment to untrusted local hardware. In this design, the GPU performs the expensive forward and backward passes, while the TEE maintains the trusted model state and executes the privacy-preserving update. Concretely, at each iteration, the GPU computes the gradients for the 4current mini-batch and sends them to the TEE. The TEE then performs the DP-SGD update, including clipping and noise addition, updates the trusted model parameters, and then returns the updated state information to the local GPU for the next iteration. 
+
+Security limitation. While substantially more efficient, this design introduces a critical security gap. The TEE only ob-serves the gradients received from the GPU and cannot di-rectly verify whether they were produced by honest forward and backward propagation on the intended model and train-ing batch. Consequently, a malicious trainer may manipu-late GPU-side computation while continuing to interact with the TEE in a seemingly legitimate manner. More concretely, the GPU may return gradients that do not correspond to the claimed training process. By carefully crafting such gradi-ents, the trainer can steer optimization toward a higher-utility model while violating the integrity of the declared DP-SGD execution. For example, the trainer may maintain two models in parallel: a DP-compliant model that remains consistent with the TEE’s view and a non-private model trained outside the trusted environment. During training, manipulated gra-dients can gradually reduce the discrepancy between these two models, allowing the final model to benefit from non-private training while still appearing to follow the declared DP protocol. 
+
+Security–efficiency tradeoff. The above discussion reveals an efficiency-security tradeoff in verifiable DP training. Ex-ecuting the entire training procedure inside a TEE provides strong integrity of DP guarantees but incurs prohibitive com-putational overhead. In contrast, offloading computation to untrusted GPUs achieves practical efficiency but creates op-portunities for malicious deviations that undermine the in-tegrity of the claimed DP execution. This raises a central chal-lenge: how can we retain the efficiency of GPU-accelerated training while still providing strong, verifiable guarantee that the declared DP-SGD procedure has been faithfully executed? 
+
+## 5 Security–Efficiency Balance 
+
+In this section, we present our solution for verifiable DP train-ing, which aims to achieve both practical efficiency and strong security. Our high-level idea is to tolerate sparse malicious deviations, which for the utility-oriented attacks we evalu-ate provide little utility benefit and no measurable additional membership leakage, while efficiently detecting dense ma-licious deviations that could meaningfully compromise the declared DP training execution. The section proceeds as fol-lows. First, we introduce a frequency-based classification of malicious deviations and distinguish between dense and sparse attack regimes (Section 5.1). We then analyze the im-pact of sparse deviations on model utility and privacy leakage (Section 5.2): for the utility-oriented attack family evaluated in this work, sufficiently small attack budgets provide lim-ited utility benefit and no measurable additional membership leakage. 
+
+## 5.1 Sparse and Dense Deviations 
+
+As discussed in the previous section, verifiable DP training exhibits an inherent tension between security and efficiency. The two straightforward solutions represent opposite ends of this tradeoff. Executing the entire training procedure inside a TEE can, in principle, eliminate adversarial behavior, but incurs substantial computational overhead. In contrast, of-floading computationally intensive operations to an untrusted GPU greatly improves efficiency, but sacrifices the ability to verify computations performed outside the trusted boundary. Therefore, a natural direction is to seek an intermediate de-sign that balances security and efficiency. Instead of requiring the protocol to rule out all possible adversarial behaviors, we tolerate certain adversarial behaviors under a controlled relax-ation of the security guarantee. Such tolerance must satisfy three properties: • Negligible benefit from tolerated adversarial behaviors. 
+
+Since a malicious trainer is primarily motivated by improv-ing model utility, tolerated deviations should provide little or no utility advantage over honest execution. If deviating from the prescribed protocol yields negligible benefit, then the trainer’s incentive to cheat is substantially reduced. • No significant harm to privacy protection. Tolerated attacks should not introduce significant additional privacy leakage. • Significant efficiency improvement. The relaxation should enable substantial efficiency gains relative to fully trusted training, making verifiable DP training practical in realistic deployments. The first two properties bound the incentive and potential harm of tolerated deviations, while the third ensures that the relaxation yields meaningful efficiency gains. Together, these conditions suggest that a favorable balance between secu-rity and efficiency can be achieved by tolerating certain low-impact adversarial behaviors. To identify such behaviors, we perform a finer-grained analysis of malicious deviations. Intuitively, some deviations can significantly alter the training trajectory, providing sub-stantial utility gains to the trainer and potentially increasing privacy leakage. Other deviations affect only a small number of training steps. For the utility-oriented attacks evaluated in this work, we observe that such sparse deviations have only limited influence on final model utility and no measurable additional membership leakage. A natural way to distinguish between these two cases is by the number of malicious iterations during training. Let M be the total number of iterations on which the trainer deviates from the prescribed protocol, and let M be the maximum 5number of malicious iterations that the protocol is willing to tolerate. We classify malicious deviations below: • Dense malicious activities. If M ≥ M, we refer to the malicious deviations as dense. • Sparse malicious activities. If M < M, we refer to the malicious deviations as sparse. This distinction captures an important asymmetry between impact and detectability. Dense deviations can substantially influence the optimization trajectory and therefore may pro-vide meaningful utility gains to the trainer. However, because they occur on many iterations, they are also easier to detect through probabilistic verification. In contrast, sparse devia-tions are more difficult to detect because they occur on only a small number of iterations and would require substantially more verification effort to catch reliably. As we show later for the utility-oriented attacks we evaluate, sparse deviations offer only limited utility improvement and no measurable additional membership leakage. These observations motivate using deviations below the empirical threshold M as the tolerated operating regime in our system evaluation. However, two challenges remain. First, how should M be chosen to distinguish sparse attacks from dense ones in practice? Second, what are the concrete utility benefits and privacy harms introduced by deviations below this threshold? Later, we answer these questions through a comprehensive analysis of how the number of malicious iter-ations in DP training affects utility gain and privacy loss. 
+
+## 5.2 Analysis of Sparse Malicious Deviations 
+
+Now, we further analyze the effect of M on model utility enhancement and privacy leakage through both theoretical analysis and empirical evaluation. 
+
+5.2.1 Malicious Deviation Strategies 
+
+We first characterize the malicious deviation strategies consid-ered in our analysis. As discussed earlier, a malicious trainer can steer the final DP model toward the corresponding non-private model by manipulating gradients during a subset of training iterations. Fundamentally, this attack aims to deviate the DP training trajectory toward a non-DP trajectory. Since a training trajectory can be viewed as a sequence of check-points, the adversary may locally maintain checkpoints from non-private training. Then, at each malicious iteration of DP training, the adversary selects a target non-DP checkpoint and manipulates the submitted gradient to move the TEE-held model toward that checkpoint. Below, we study three natural and straightforward strategies for selecting this target checkpoint. • Current-checkpoint attack. The most straightforward strategy is to select the checkpoint corresponding to the current training step. Specifically, at the t-th training it-eration, the adversary selects the look-ahead checkpoint along the non-private trajectory as the target. • Nearest-checkpoint attack. The adversary selects the non-private checkpoint closest to the TEE-held model. • Final-checkpoint attack. Throughout the training process, the adversary can always fix the target checkpoint to the final checkpoint of the non-private model. Under any of the above strategies the adversary also chooses which M iterations to deviate on, and we grant it the strongest choice rather than a random one. Both schedules concentrate on u⋆, the fraction of training at which one unit of deviation buys the most displacement at the end ( u⋆ = 0.20 for RoBERTa, 0 .10 for GPT-2): the final-checkpoint attack takes the M consecutive steps centred on u⋆T , while the current- and nearest-checkpoint attacks take one step from each window of width T /M, at the point of that window nearest u⋆T . We did not run a uniform-random control, so these numbers should be read as the attacker’s best placement rather than as an av-erage over placements. Given a selected target checkpoint, the details of how the adversary constructs the manipulated gradient to move the current model toward the checkpoint are provided in Appendix A; the per-setting constants and the remaining configuration are listed in Appendix B.1 and Table 4. 
+
+5.2.2 Utility Analysis 
+
+After characterizing the malicious deviation strategies, we now examine how the number of malicious iterations, M,affects the utility gain achievable by an adversary. We use this attack procedure to evaluate the utility benefit obtainable under different numbers of malicious iterations, focusing on 
+
+M ∈ { 40 , 50 , 60 } in this section. Additional experiments with a broader range of M values are reported in Section 8. We conduct experiments on both conventional learning tasks and LLM-oriented fine-tuning tasks. For conventional learning, we consider a 5-layer MLP on Purchase and WideResNet on CIFAR-10. For LLM-oriented fine-tuning, we fine-tune GPT-2-medium on E2E and WebNLG and RoBERTa-large on QQP and MNLI. 1 We evaluate malicious DP training and honest DP training under privacy budgets ε = 2.0, along with non-private training, whose checkpoints serve as the attacker’s reference trajectory. Figure 1 summarizes the utility impact of sparse malicious deviations under ε = 2.0. For each task and each value of M,we report the best performance achieved among the three at-tack strategies, thereby representing the strongest utility gain obtainable by the adversary in our evaluation. The results show that deviations with at most 50 malicious iterations lead to only minor utility improvements over honest DP training in the experimental setting, especially when compared with 
+
+> 1We use LoRA for fine-tuning, a common parameter-efficient approach for reducing the overhead of DP training.
+
+672 78 84 90        
+
+> Accuracy (%)
+> 71.91 73.36 74.23 74.32 90.30
+> Purchase (MLP)
+> 60 75 90
+> 53.48 53.68 53.24 53.27 92.38
+> CIFAR-10 (WRN)
+> 86 88 90 92
+> 85.18 85.35 85.39 85.56 90.79
+> QQP (RoBERTa)
+> 86 88 90
+> 85.61 85.87 85.79 85.89 90.39
+> MNLI (RoBERTa)
+> 39 42 45 48 51
+> BLEU (%)
+> 38.53 39.20 39.33 39.51 49.39
+> WebNLG (GPT-2)
+> 62 64 66
+> 61.44 62.30 62.21 62.22 66.77
+> E2E (GPT-2)
+> DP M= 40 M= 50 M= 60 Non-private
+
+Figure 1: Utility comparison under sparse malicious deviations for ε = 2.0. The two RoBERTa panels use RoBERTa-large and the two GPT-2 panels GPT-2-medium. For each task, M = 40 , 50 , 60 report the best result among Current, Nearest, and Final attacks. Purchase, CIFAR-10, and QQP use accuracy, MNLI uses averaged matched/mismatched accuracy, E2E and WebNLG use BLEU, with the decoding configuration selected per bar on the validation split, so the bars within a panel do not share one configuration. The remaining metrics the two scorers emit are reported in Appendix C. the much larger utility gap between honest DP training and non-DP training. More precisely, when M = 50, all tasks ex-cept Purchase improve by less than one point over the DP baseline; even on Purchase, where the improvement is the most noticeable, the gain is only about 2 .3 points. For CIFAR-10 the deviations produce no consistent direction at all: the three budgets move accuracy by +0.20, −0.24 and −0.21 points, less than a quarter of a point either way. We therefore set M = 50 as the sparse–dense deviation threshold; this cor-responds to 0 .33%–0 .89% of the training steps on the LLM workloads and 1% on CIFAR-10 (Table 4). 2 Among the strate-gies evaluated here, none substantially closes the utility gap between honest DP and non-private training in this regime. We do not claim that the Current, Nearest, and Final strategies exhaust all possible utility-improving attacks: M = 50 is an empirical operating point supported by the strongest attacks in the evaluated family, and the protocol-level analyses of Sections 6 and 7.1 are stated independently of this family. 
+
+Connection to bounded adversarial gradient perturba-tions. This assumption is consistent with a broader principle in optimization: when adversarial gradient perturbations are bounded in magnitude or frequency, their effect on the final model is also bounded. Recent theoretical work [32] shows that, for convex and smooth objectives, well-bounded gradi-ent perturbations do not cause the learning process to deviate significantly; we discuss this connection in Appendix D. 
+
+Theorem 5.1 (Privacy of DP Training with Incomplete Verifi-cation) . Consider a T -iteration DP training procedure over a dataset of size N. Suppose the trainer deviates from the pre-
+
+> 2
+
+The attack budget M counts manipulated iterations; the full-deviation count Mfull of Section 7.1 counts iterations that a check would reject. For this construction the two coincide unless the honest aggregate nearly equals the forged one: the forged aggregate lies on the clipping-ball boundary, so an attacked iteration falls inside the tolerance region only if ∥gh∥2 ≥ (1 −
+
+ρamb )C ≈ 0.99 C, whereas the largest honest clipped average we measured was 0 .65 C on the GPT-2 tasks and 0 .38 C on the RoBERTa tasks. We treat the attacked iterations as full deviations on this basis, without re-verifying each one against the trusted reference. 
+
+scribed protocol on M iterations and, in the worst case, each deviating iteration may submit an arbitrary data-dependent vector of norm at most C, while the TEE still applies the prescribed Gaussian noise. If the original training proce-dure is (ε, δ)-DP under the add/remove-one neighboring rela-tion, then, under the standard small-sampling-rate Gaussian-accounting approximation, the resulting procedure is approx-imately (ε′, δ)-DP, where 
+
+ε′
+
+ε ≈
+
+r
+
+1 + MT (4N2 − 1). (1) 
+
+Does this theorem really imply a significant privacy loss? 
+
+Theorem 5.1 implies a worst-case amplification of the privacy loss by a factor of approximately 2 NpM/T when the mali-cious term dominates, which can indeed reach hundreds in practical settings. However, this seemingly large factor arises from an extremely pessimistic attack that is quite different from the utility-oriented deviations considered in our threat model. Specifically, the 4 N2 term allows the submitted vector on neighboring datasets to move between opposite points of the clipping ball, giving sensitivity up to 2 C, and allows this worst-case dependence to concentrate repeatedly on the same target user. Repeating such highly targeted updates may maxi-mize the privacy leakage of one particular user, but it provides little reason to expect a corresponding improvement in the overall utility of the trained model. As a result, a rational utility-oriented adversary has little incentive to conduct such attacks. In contrast, utility-oriented deviations such as the com-mon ones discussed in Section 5.2.1 rely on broader, globally useful training signals rather than repeatedly concentrating the updates on a single user’s information. For illustration, suppose a manipulated gradient averages κ clipped user con-tributions in such a way that its per-user sensitivity is at most 2C/κ. Under the same approximation, 
+
+ε′
+
+ε ≈
+
+s
+
+1 + MT
+
+ 4N2
+
+κ2 − 1
+
+
+
+. (2) 7Thus, when κ is on the same order as N and M/T is small, the resulting privacy inflation can be close to one. This cal-culation is illustrative: dependence on many users alone does not imply the 1 /κ sensitivity reduction; the latter requires the manipulated signal to average their contributions with correspondingly bounded per-user influence. To empirically validate this theoretical intuition, we next evaluate member-ship inference attacks and find that, for the utility-oriented sparse deviations evaluated ( M ≤ 60), there is no measurable additional membership leakage beyond the variation of the honest DP baselines. 
+
+Empirical study. To quantify the actual privacy leakage intro-duced by sparse malicious deviations, we evaluate two mem-bership inference attacks: IMIA [12] and SHAPOOL [7], fol-lowing the primary metric used in each attack’s original evalu-ation protocol. The detailed attack configurations are provided in Appendix G. As shown in Table 1, across both datasets Purchase and CIFAR-10, sparse deviations with M = 40-60 yield MIA performance very close to the corresponding hon-est DP baselines and substantially below that of non-private training. For SHAPOOL, the results are particularly stable: sparse malicious deviations achieve AUC values identical to, or within 0 .01 of, those of the corresponding honest DP baselines, indicating no measurable additional membership leakage. For IMIA, the results exhibit greater variance. Nev-ertheless, the score values for both honest DP training and training with sparse deviations remain far below those of the corresponding non-private models. Interestingly, increasing either ε or M does not consistently increase the measured leak-age. This non-monotonic behavior suggests that the stochastic variation inherent in DP training and MIA evaluation can be comparable to, or even larger than, the additional effect intro-duced by sparse malicious deviations. These results do not rule out sparse attacks designed to maximize privacy leak-age: Theorem 5.1 characterizes a substantially worse case in which malicious iterations repeatedly expose one target user, whereas the attacks evaluated here use broad training signals. Overall, for the utility-oriented sparse attacks studied here, we observe limited utility improvement and no measurable additional membership leakage. These findings motivate toler-ating a small number of deviations from an incentive perspec-tive; they are not a universal guarantee for arbitrary sparse strategies, and the protocol analysis that follows classifies arbitrary submitted gradients by their trusted verification out-come rather than relying on these attack constructions. The remaining task is therefore to design an efficient protocol that probabilistically detects repeated full deviations and accounts for the deviations admitted through numerical tolerance. Table 1: MIA performances on Purchase and CIFAR-10. DP stands for the DP-trained model, and M = 40 , 50 , 60 stands for the malicious deviated models. IMIA and SHAPOOL are two MIA methods, and TPR and AUC are corresponding metrics.                                                                                                                                       
+
+> εSetting IMIA: TPR@0.1% FPR SHAPOOL: AUC
+> Current Nearest Final Current Nearest Final
+> Purchase
+> Non-Private –0.43 0.62 2.0DP 0.12 0.12 0.12 0.52 0.52 0.52
+> M=40 0.08 0.10 0.10 0.52 0.52 0.52
+> M=50 0.09 0.07 0.08 0.52 0.52 0.52
+> M=60 0.14 0.10 0.12 0.52 0.52 0.52 4.0DP 0.08 0.08 0.08 0.52 0.52 0.52
+> M=40 0.10 0.09 0.08 0.52 0.52 0.52
+> M=50 0.09 0.08 0.10 0.52 0.52 0.52
+> M=60 0.10 0.15 0.11 0.52 0.52 0.52
+> CIFAR-10
+> Non-Private –1.14 0.62 2.0DP 0.09 0.09 0.09 0.51 0.51 0.51
+> M=40 0.13 0.12 0.10 0.51 0.51 0.51
+> M=50 0.13 0.12 0.08 0.51 0.51 0.51
+> M=60 0.13 0.14 0.13 0.51 0.51 0.51 4.0DP 0.08 0.08 0.08 0.50 0.50 0.50
+> M=40 0.07 0.10 0.08 0.50 0.50 0.50
+> M=50 0.09 0.07 0.09 0.50 0.50 0.51
+> M=60 0.11 0.09 0.14 0.50 0.50 0.50
+
+## 6 Handling GPU–TEE Discrepancy 6.1 Honest Discrepancy and the Resulting At-tack Surface 
+
+Even when the GPU follows the protocol exactly, the clipped aggregate gradient it submits differs from the TEE’s own re-computation on the same batch and the same trusted state. The two sides execute different kernels (vendor GPU libraries versus CPU BLAS), reduce sums in different orders, fuse op-erations differently, and round at different points; per-example clipping can then amplify a rounding-level difference in a sin-gle example’s norm into a visible change of its clip factor. The discrepancy is therefore an intrinsic property of heteroge-neous execution rather than a symptom of misbehavior, and a verifier that demanded bit-exact agreement would abort every honest run. Two empirical properties of this discrepancy shape our design. Let z32  
+
+> t
+
+= ∥ ¯gGPU  
+
+> t
+
+− ¯g32  
+
+> t
+
+∥2/C denote the normalized distance between the GPU submission and the TEE’s FP32 recomputation. First, on the overwhelming majority of steps 
+
+z32  
+
+> t
+
+is tiny. Second, the distribution can have a heavy tail: rare, ill-conditioned steps—typically those containing exam-ples whose per-example norm sits at the clipping boundary— produce discrepancies an order of magnitude larger than the body of the distribution. A single fixed tolerance is caught between two failure modes. Set near the body, it aborts honest runs on the tail steps; set near the tail, it hands a dishonest GPU a large per-step allowance on every step. Whatever tolerance the verifier grants for honest discrep-8ancy is available to a dishonest GPU: a submission ˜ gt with 
+
+∥ ˜gt − ¯g32  
+
+> t
+
+∥2/C ≤ τ is indistinguishable from an honest one on that step. Probabilistic checking already accounts for the fact that unchecked steps are not examined at all—this is the source of the 1 − (1 − p)Mfull detection guarantee of Sec-tion 7.1. Numerical tolerance adds a second, subtler channel: even a checked step admits a deviation of up to τ, and such de-viations, being individually below the tolerance, would never be flagged. Left unmetered, they accumulate without bound over a long run, so the adversary could steer the model through many small, undetectable pushes rather than a few large ones. Our design principle is therefore that no accepted deviation is free : every tolerated deviation observed on a checked step is charged to a bounded ledger, and hidden Bernoulli checking converts these sampled ledger charges into a high-probability bound on the cumulative deviation that can pass through the numerical-tolerance channels over the full run. 
+
+## 6.2 Two-Stage Verification 
+
+Rather than a single tolerance, the verifier uses an adaptive trusted reference : TEE FP32 recomputation is the reference by default, and steps whose FP32 discrepancy is unusually large are escalated to a TEE FP64 recomputation. Every sub-mission, checked or not, first passes a structural invariant: the honest average of clipped per-example gradients satisfies 
+
+∥ ¯gGPU  
+
+> t
+
+∥2 ≤ C by the triangle inequality, so the TEE rejects any submission with ∥ ¯gGPU  
+
+> t
+
+∥2 > C(1+10 −4), where the slack covers only FP32 norm-computation rounding. This check costs O(d), is applied on every step, and caps the gross devi-ation any single submission can carry. A checked step then follows one of three paths. 
+
+Body path. If z32  
+
+> t
+
+≤ τabs , FP32 serves as the trusted reference. The verifier does not simply accept: it charges the observed discrepancy to a cumulative ledger, Zsub ← Zsub + z32  
+
+> t
+
+, and aborts once Zsub > Ksub . Thus τabs is a routing threshold rather than a free tolerance: an adversary that repeatedly hides just below τabs on checked steps exhausts Ksub after a bounded number of such steps, while honest runs, whose body discrep-ancies are far smaller than τabs , consume only a small fraction of the budget. 
+
+Ambiguity path. If z32  
+
+> t
+
+> τabs , the TEE recomputes the pre-scribed aggregate gradient in FP64, denoted ¯ g64  
+
+> t
+
+, and evalu-ates z64  
+
+> t
+
+= ∥ ¯gGPU  
+
+> t
+
+− ¯g64  
+
+> t
+
+∥2/C, equivalently nt = ( B/2) z64  
+
+> t
+
+in the accountant’s units. The step is accepted only if nt ≤ τnum ,i.e. z64  
+
+> t
+
+≤ ρamb := 2τnum /B. The FP64 reference resolves the honest ill-conditioned cases, whose FP32 discrepancy was large only because FP32 rounding was amplified; but pass-ing the FP64 check certifies plausibility, not honesty—an adversary may deliberately trigger escalation and hide within 
+
+ρamb . We therefore treat every accepted fallback as residual numerical ambiguity and meter it separately with a counter: 
+
+Samb ← Samb + 1, aborting once Samb > Kamb . No assumption 
+
+Algorithm 1: TEE Verification                                                                           
+
+> Input :GPU submission ¯ gGPU
+> t; verification probability p;thresholds τabs ,τnum ; limits Ksub ,Kamb ; clipping norm C; denominator B.GPU commits ¯ gGPU
+> t;
+> if ∥¯gGPU
+> t∥2>C(1+10 −4)then return ABORT ;TEE secretly samples Vt∼Bernoulli (p);
+> if Vt=0then return ACCEPT ;TEE recomputes ¯ g32
+> tand sets z32
+> t← ∥ ¯gGPU
+> t−¯g32
+> t∥2/C;
+> if z32
+> t≤τabs then
+> Zsub ←Zsub +z32
+> t;
+> if Zsub >Ksub then return ABORT ;
+> else return ACCEPT ;TEE recomputes ¯ g64
+> tand sets nt←B
+> 2C∥¯gGPU
+> t−¯g64
+> t∥2;
+> if nt>τnum then return ABORT ;
+> Samb ←Samb +1;
+> if Samb >Kamb then return ABORT ;
+> else return ACCEPT ;
+
+is made about why a step escalated or how many examples contributed to the discrepancy. 
+
+Hard rejection. If z64  
+
+> t
+
+> ρamb , the submission is inconsistent with the prescribed computation under either reference and the verifier aborts. Algorithm 1 summarizes the procedure. Two remarks are in order. First, deviation is always measured relative to the trusted reference the TEE actually produces, so the GPU’s own numerical error never translates into attacker-controlled radius beyond what τabs and ρamb explicitly grant; conversely, the honest spectrum is a property of the specific GPU–TEE software and hardware pair, and the parameters are frozen per calibrated pair. Second, for CIFAR-10 the honest FP32 spectrum has no heavy tail, so the FP64 layer is unnecessary: escalated steps are instead accepted only under the same-metric hard cap z32  
+
+> t
+
+≤ ρill = 2τabs and counted by the same 
+
+Kamb counter (Table 7). 
+
+## 6.3 Calibration and False Abort 
+
+The four parameters play distinct roles: τabs controls rout-ing, ρamb controls FP64 acceptance, Ksub meters cumulative body discrepancy, and Kamb meters accepted fallback events. The verifier parameters are obtained through a staged cali-bration process. We first use a broad numerical-discrepancy 9campaign to characterize the body/tail structure of hetero-geneous GPU–TEE execution and establish the two-stage calibration procedure. Before certified deployment, we ap-ply this procedure to honest pilot trajectories on the target GPU–TEE pair, consolidate the resulting parameters at the model-family level, and freeze the complete verifier config-uration for training. The verifier is calibrated for a concrete GPU–TEE numerical environment. Changes to the GPU fam-ily or trusted reference stack require recalibration; changes to the GPU-side training stack require revalidation and trig-ger recalibration if the resulting honest discrepancy spectrum falls outside the calibrated envelope. The verifier architecture, security accounting, and calibration procedure remain generic. The calibration trajectories are not identical in setup to the other experiments of this paper: they differ from the steering-attack experiments of Section 5.2 and the overhead runs of Section 8 in the weight-decay grouping (uniform versus the standard optimizer grouping; notes on Table 7, Appendix A), from the overhead runs additionally in the GPU-side software stack and the run length (Section 8), and from the deployed protocol in the audit law under which the numerical data were recorded; Appendix E documents each difference and its ef-fect. The honest false-abort probability qFA is the probability, over the verifier’s coins alone, that an honest execution of a given trajectory is aborted; it is a property of that trajec-tory, not a prediction for future runs. It is evaluated under the deployed Bernoulli verification law as a tail bound on the sampled body charge, a binomial term for escalations, and 
+
+(1 − p)Hr for hard rejections (Appendix E, Equation (8)). For a fully observed honest trajectory it is evaluated condition-ally on the realized numerical sequence and requires no sta-tionarity assumption; for trajectories observed only through a systematic every-tenth-step trace, the required trajectory statistics are estimated under an explicit representativeness as-sumption. Because Ksub and Kamb are absolute budgets while the honest audited charge grows with the number of steps, the reported values apply to runs of the calibrated length (Table 4; 5,000 steps for CIFAR-10); longer runs require rescaling Ksub 
+
+and Kamb , with the corresponding change in Gextra . The de-sign target is qFA ≤ 10 −3 for every family. The family-level values in Table 7 are evaluated on the deployment-pair cali-bration trajectories themselves; they are therefore in-sample calibration checks, not estimates of the false-abort probabil-ity of any run. A false-abort estimate proper is available for one deployment trajectory only: after parameter freezing we preregistered a qqp-large trajectory with a fresh seed and re-played it with a full numerical census, obtaining an upper bound of 4 × 10 −100 ; no held-out trajectory exists for the GPT-2 and CIFAR-10 families, so no false-abort estimate is reported for them. A hypothetical 20% inflation of the cali-brated trajectory statistics keeps every family at or near this target, the thinnest margin being the GPT-2 body charge (Ap-pendix E, which also gives the evidence tier of each reported quantity). The frozen verifier parameters, analytic security budgets, in-sample calibration checks, and the single held-out false-abort estimate are listed in Table 7. 
+
+## 6.4 Security Budget of Numerical Tolerance 
+
+Numerical tolerance introduces a residual attack surface even on steps that would pass verification. Our ledgers meter such deviations whenever the corresponding step is checked, while hidden Bernoulli sampling allows us to bound the total devia-tion that can pass through these tolerance channels over the entire run. Let Gtol denote the cumulative normalized deviation routed through the body and ambiguity channels. We derive a high-probability security budget 
+
+Gextra = Gsub + Gamb , (3) such that Pr [Gtol > Gextra and still accepts ] ≤ βextra := βsub + βamb .
+
+(4) For the normal FP32 path, Gsub follows from a Freedman– Bernstein bound for a predictable adversary that must commit before the current hidden Bernoulli coin is drawn. For the ambiguity path, Gamb follows from the exact binomial sam-pling law and the Kamb counter. Detailed derivations are given in Appendix E.2. At the primary operating point p = 0.1, the resulting numerical-tolerance security pairs (Gextra , βextra )
+
+are (5.48 , 0.05 ) for RoBERTa, (9.50 , 0.05 ) for GPT-2, and 
+
+(2.51 , 0.05 ) for CIFAR-10 (Table 7), where the first coordi-nate is the cumulative normalized-deviation budget and the second the corresponding security failure probability. Importantly, Equation (4) is an analytic statement con-ditional on the frozen protocol parameters and the stated hidden-coin assumptions. Calibration determines the parame-ter values and hence the size of Gextra ; once they are frozen, the bound follows from the protocol and hidden Bernoulli sampling alone and does not assume that the adversarial dis-crepancy sequence follows the calibrated honest distribution. Appendix E.3 further gives an empirical same-state steering-scale interpretation of this normalized budget; it is used only to interpret the effect of numerical tolerance on the full-step detection term (Section 7.1), and the formal guarantee remains Equation (4). 
+
+## 7 Protocol Design 
+
+In this section, we design a verifiable training protocol that probabilistically detects repeated full deviations while ac-counting separately for deviations admitted through numer-ical tolerance. The core idea of our design is probabilistic verification . Instead of checking every training iteration, the TEE recomputes, or partially recomputes, gradients only on 10 a small randomly selected subset of iterations. Since gradi-ent recomputation inside the TEE is much slower than GPU execution, such checks must remain infrequent in order to keep the system efficient. However, the checking schedule is hidden from the GPU worker, so the adversary does not know in advance which iterations will be audited. Consequently, an adversary that deviates frequently faces a correspondingly high probability of being detected. We now describe the basic protocol. 
+
+Initialization. Before training begins, the TEE initializes and stores the trusted training state, including the model pa-rameters, optimizer state, privacy parameters, and other global metadata. The GPU stores the training dataset and a local copy of the trainable parameters for efficient computation. Both parties share the public training specification, including the model architecture, loss function, optimizer, trainable param-eter set, batch-selection procedure, and update rule. 
+
+Training. At the t-th iteration, the TEE sends the GPU the current trainable model state and the information needed to identify the current batch. The GPU fetches the batch, performs the forward and backward passes, and returns the gradients of the trainable parameters to the TEE. The TEE then uses hidden randomness to decide whether this iteration should be spot-checked. 3 If selected, the TEE recomputes, or partially recomputes, the expected gradient behavior on the same batch under the trusted state and compares it with the GPU output within an appropriate tolerance. If the dis-crepancy exceeds the tolerance, the TEE reports a deviation and terminates training. In addition, when persistent sealed storage and rollback protection are available, the TEE records a failure flag in its sealed state, so that subsequent attestations from the same TEE instance should not be certified. If the check passes, the TEE continues with the trusted DP-SGD op-erations, including DP-noise generation, privacy/accounting-state maintenance, optimizer-state evolution, and parameter update. In the optimized implementation of Section 7.2, per-example clipping and aggregation are performed on the GPU and probabilistically verified by trusted recomputation. The updated trainable state is then sent back to the GPU for the next iteration. 
+
+Output. After training completes and every queued veri-fication job has finished, the TEE releases the final model and attaches a TEE-generated certificate indicating that all audited iterations were consistent with the declared training protocol and that the numerical ledgers remained within their limits. The overall protocols are summarized in Algorithm 2 and 3. Overall, our design separates efficiency-critical computa-tion from trust-critical computation. The GPU performs the       
+
+> 3The coin for step tis drawn from TEE-internal entropy after the step-
+> tsubmission has been received. The measurement harness used for the experiments of Section 8 instead audited a hidden uniformly random subset of ⌈pT ⌉steps per run, fixing each run’s verification workload; Appendix E states what this affects.
+
+Algorithm 2: GPU-side Gradient Computation and Local Update    
+
+> Input :Training dataset
+
+D; model f (·; θ) and loss ℓ;trainable parameters T ; clipping norm C;optimizer rule OptStep ; batch seed sbatch ; initial weights θ(0)       
+
+> T; initial optimizer state ω(0); number of iterations T; aggregation denominator B.
+> GPU: store
+
+D and receive (θ(0)                          
+
+> T,ω(0),sbatch )from the TEE;
+> GPU: set bθ(0)
+> T←θ(0)
+> Tand bω(0)←ω(0);
+> for t←0to T−1do
+> It←BatchIdx (sbatch ,t);
+> GPU: load Bt←
+
+D[It ];                                          
+
+> foreach (xi,yi)∈Btdo
+> gt,i←∇θTℓ(f(xi;bθ(t)),yi);¯gt,i←gt,imin {1,C/∥gt,i∥2};¯gt←1
+> B∑(xi,yi)∈Bt¯gt,i;
+> GPU →TEE: commit and send (t,It,¯gt);
+> GPU: wait for the TEE to release snoise ,t;
+> egt←¯gt+1
+> BNoise (snoise ,t;σC);
+> (bθ(t+1)
+> T,bω(t+1))←OptStep
+> bθ(t)
+> T,bω(t),egt
+> 
+> ;
+
+expensive training-side operations, while the TEE retains con-trol over verification and privacy enforcement. In this way, the protocol substantially reduces the TEE-side burden com-pared with fully trusted training, while making repeated full deviations risky and explicitly accounting for manipulation admitted through numerical tolerance. In the following sec-tions, we analyze the security guarantees of the protocol and introduce several optimizations that further reduce verification overhead without compromising security. Algorithm 3 is the blocking reference execution. The deployed hungry-updating implementation keeps the same certificate-time accept/reject semantics but reorders the run-time: once the submission is committed and the coin is sam-pled, a selected check is enqueued for background recompu-tation while the TEE proceeds with the provisional trusted update and seed release; the state remains provisional until every deferred job has completed successfully (Section 7.2). 
+
+## 7.1 Security Analysis & Incentive Engineering 
+
+Accounting for numerical tolerance. An adversary may combine full deviations with deviations that remain inside the numerical-tolerance region; we account for the two com-ponents separately, each established on its own terms. First, deviations that a check would reject—submissions outside the tolerated region on their step—are full deviations . For a fixed set F of them, 
+
+Pdet (F ) = 1 − ∏
+
+> t∈F
+
+(1 − pt ). (5) 11 Untrusted GPU                          
+
+> GPU 2Forward / Backward
+> compute gton batch Bt
+> training data D
+> batch Bt
+> 1model state θt
+> + batch info
+> 3gradient gt
+> CPU TEE (trusted) next iteration
+> 4Hidden coin
+> ct~ Bern( p)
+> audit,
+> w.p. p
+> Recompute gton Bt
+> compare within tolerance
+> mismatch → abort
+> & report deviation
+> pass
+> skip
+> 1− p
+> 5DP-SGD update
+> Clip
+> ‖g‖ ≤ C
+> Add DP
+> noise
+> Update model
+> θt→θt+1
+> after T
+> iterations
+> Final model θT
+> + TEE certificate
+> Iterations
+> 1T
+> hidden from GPU
+> audit, w.p. p
+> Verification
+
+Figure 2: Overview of our basic verifiable DP training protocol. The untrusted GPU performs the expensive forward and backward computation (steps 1–3), while the TEE uses a hidden coin Vt ∼ Bernoulli (p) to decide whether to audit the returned gradient by recomputation (step 4), and then executes the privacy-critical DP-SGD update (step 5). After T iterations, the TEE releases the final model with an attestation certificate. The figure shows the logical baseline; in the deployed implementation (Section 7.2, Algorithms 2–3) clipping and aggregation run on the GPU and are recomputed by the TEE only on audited steps. Since each iteration is audited independently with probability p and the schedule is hidden from the GPU, repeated full deviations are detected with increasing probability while the GPU retains its efficiency advantage. Under the uniform policy pt = p used throughout this work, the same argument applies to the first Mfull predictable full-deviation opportunities generated by a history-adaptive adver-sary: each opportunity is determined before its hidden verifica-tion coin is drawn, 4 so all Mfull opportunities are missed with probability (1 − p)Mfull and Pdet = 1 − (1 − p)Mfull . Second, deviations within the tolerated region are never individually flagged, but Section 6.4 bounds their total: the cumulative normalized deviation accepted through the tolerance chan-nels over an entire run exceeds Gextra without the run being aborted with probability at most βextra = βsub + βamb . The full-deviation bound and the pair (Gextra , βextra ) together consti-tute the formal security guarantee. They are stated in different units, require no empirical conversion between them, and both forms of deviation may coexist in the same execution. The uniform-p result and the pair hold for history-adaptive strate-gies satisfying the commit-before-current-coin condition; the nonuniform value-aware extension of Appendix E.4 is stated for a fixed set of full deviations. 
+
+Scope of the guarantee. Every committed submission that passes the structural check falls, according to the verdict a check would return, into exactly one of three classes: full  
+
+> 4The coin is drawn only after the submission arrives, so no current-step decision exists at commitment time. What the GPU can observe is whether the
+> previous step triggered extra TEE work (a timing channel); under independent coins this reveals nothing about later steps. Our analysis abstracts away timing and other side channels that could expose the current decision before commitment; a deployment can harden this by padding the latency-critical response path or by deferring verification dispatch to an asynchronous queue after commitment.
+
+(rejected-class), sub-threshold body, or ambiguity-path devia-tion. The uniform-p full-deviation bound and (Gextra , βextra )
+
+therefore account for arbitrary submitted gradients in the veri-fier’s normalized-deviation metric, including strategies that adapt their direction, magnitude, or timing to the previous protocol history, subject to the commit-before-current-coin condition. What the formal accounting does not determine is how a given normalized deviation translates into optimization progress or model utility. Such an effect may depend strongly on the optimizer state, attack direction, and training phase. Appendix E.3 provides only an empirical calibration of this conversion over the tested attack states and radii. Attacks through channels other than the submitted aggregate gradient remain outside the present analysis. The formal quantities above do not depend on the attack experiments. The empirical operating point M = 50 (Sec-tion 5.2) and the steering-scale conversion of Appendix E.3 are measured on the attack-experiment trajectories, whose setup differs from that of the calibration trajectories (Sec-tion 6). Interpreting these empirical findings together with the security budgets instantiated for the deployment pair there-fore assumes that their qualitative conclusions transfer across these trajectory families. We treat this as an empirical trans-fer assumption, not as part of the formal security guarantee. More generally, whenever an empirical quantity measured on one trajectory family is used elsewhere in the paper to interpret results instantiated on another trajectory family, the same transfer assumption should be understood unless stated otherwise. 12 Algorithm 3: TEE-side Verification, Noise Release, and Update 
+
+Input : Training dataset D; model f (·; θ) and loss ℓ;trainable parameters T ; DP parameters (C, σ);optimizer rule OptStep ; verification probability p;number of iterations T ; aggregation denominator 
+
+B.
+
+Output : Final trusted weights θ(T ) 
+
+> T
+
+.
+
+TEE: initialize trusted weights θ(0) 
+
+> T
+
+and optimizer state ω(0);
+
+TEE: choose master seeds sbatch and snoise ;
+
+TEE → GPU: send (θ(0) 
+
+> T
+
+, ω(0), sbatch );
+
+for t ← 0 to T − 1 do TEE: receive committed (t, It , ¯gGPU  
+
+> t
+
+) from the GPU; 
+
+TEE: check It = BatchIdx (sbatch ,t);draw Vt ∼ Bernoulli (p) secretly; 
+
+if Vt = 1 then TEE: load Bt ← D[It ];
+
+foreach (xi, yi) ∈ Bt do 
+
+gTEE  
+
+> t,i
+
+← ∇θT ℓ( f (xi; θ(t)), yi);¯gTEE  
+
+> t,i
+
+← gTEE  
+
+> t,i
+
+min {1,C/∥gTEE  
+
+> t,i
+
+∥2};¯gTEE  
+
+> t
+
+← 1 
+
+> B
+
+∑(xi,yi)∈Bt ¯gTEE  
+
+> t,i
+
+;
+
+TEE: perform numerical verification using ¯ gTEE  
+
+> t
+
+;
+
+if verification aborts then return ABORT ;
+
+snoise ,t ← Derive (snoise ,t);
+
+TEE → GPU: release snoise ,t ;
+
+ξt ← 1 
+
+> B
+
+Noise (snoise ,t ; σC);
+
+egt ← ¯gGPU  
+
+> t
+
++ ξt ;
+
+(θ(t+1) 
+
+> T
+
+, ω(t+1)) ← OptStep 
+
+
+
+θ(t) 
+
+> T
+
+, ω(t),egt
+
+
+
+;
+
+return θ(T ) 
+
+> T
+
+;
+
+Empirical step-equivalent interpretation. Appendix E.3 calibrates one normalized deviation unit against one full-power steering update and finds a ratio close to one over the tested regime. Measure each accepted deviation by its norm in units of the clipping bound: a step on which the hon-est aggregate is replaced by a full-power forgery contributes one unit, and a tolerated deviation of normalized radius r
+
+contributes r units, which is what the calibration above estab-lishes. Writing Asteer for the sum of these contributions over a run — an attack’s full-power-equivalent steering magnitude, real-valued and distinct from the step count Mfull , though an attack that forges at full power on Mfull steps and nowhere else has Asteer = Mfull — the tolerance channels contribute at most about Gextra units, leaving (Asteer − Gextra )+ units outside the budget: 
+
+Pinterp det (Asteer ) ≈ 1 − (1 − p)(Asteer −Gextra )+ . (6) Equation (6) is an interpretation: it rests on the empirical cali-bration and on treating tolerated and full deviations additively, it does not include βextra , which is reported separately, and it interprets the cost of numerical tolerance only for attacks whose steering behaviour is represented by the calibration of Appendix E.3, not as a worst-case guarantee over arbitrary at-tack objectives. With Gextra = 0 and Asteer = Mfull it reduces to 1 − (1 − p)Mfull . For illustration, with Asteer = 40, p = 0.1, and the conservative Gextra = 10, the term decreases from 98 .52% to 95 .76%; under our calibrated budgets ( Gextra ≤ 9.5) the change is smaller. Attack value may vary across training steps, but this timing information is also available to the verifier, which can allocate more of the same expected checking budget to the more sensi-tive phases so that higher-value attack steps also carry higher detection risk (Appendix E.4). All budgets and experiments in this paper use the uniform setting pt = p.
+
+## 7.2 Efficiency Optimizations 
+
+To make the split TEE-GPU design practical, we optimize both the communication path and the execution pipeline, which can substantially reduce the end-to-end overhead of verifiable DP training. 
+
+Communication-efficient split execution. A straightforward implementation of the basic protocol would send all per-example gradients to the TEE and perform clipping inside the trusted environment. For a batch of size B and model dimen-sion d, this requires O(Bd ) GPU-to-TEE communication per iteration, which can dominate the runtime for modern models. We instead perform clipping on the GPU. The GPU com-putes the per-example gradients, clips each gradient, averages and submits only the resulting clipped-and-averaged gradi-ent ¯ gGPU  
+
+> t
+
+to the TEE. The TEE retains responsibility for the privacy-critical randomness and optimizer state, while prob-abilistic verification checks whether the GPU-submitted ag-gregate is consistent with the prescribed computation. This reduces the GPU-to-TEE communication from O(Bd ) to O(d)
+
+per iteration. We also avoid sending the updated model and optimizer state back to the GPU after every step. After the GPU commits ¯gGPU  
+
+> t
+
+, the TEE releases the random seed used to generate the trusted DP noise for that step. The GPU reconstructs the same noise locally and applies the same optimizer update, thereby maintaining a synchronized copy of the model and optimizer state. The TEE-to-GPU communication is therefore reduced from O(d) to the size of a random seed. Releasing the seed only after the gradient commitment is essential: the GPU cannot adapt its submitted gradient to the realized DP noise. Thus, the common training path exchanges only one ag-gregate gradient in the GPU-to-TEE direction and a short random seed in the reverse direction. The more expensive per-example recomputation is incurred only on the subset of iterations selected for verification. 
+
+Hungry updating with deferred verification. Gradient ver-ification is substantially more expensive than the ordinary 13 trusted update. In particular, a checked iteration requires the TEE to recompute the prescribed aggregate gradient in FP32, and a step exhibiting a large FP32 discrepancy may addition-ally require FP64 adjudication. Performing these computa-tions synchronously would stall the GPU whenever a verifi-cation is triggered and would largely eliminate the benefit of probabilistic checking. We therefore decouple model updating from gradient verifi-cation using hungry updating . Once the GPU commits the ag-gregate gradient, the TEE executes the latency-critical DP up-date without waiting for the corresponding gradient-honesty check to finish. If the iteration is selected for verification, the TEE records the state needed to reproduce that iteration and places a verification job into a background queue. Train-ing can then continue while background workers indepen-dently recompute the checked iterations. Because verification is deferred, a checked submission may enter the provisional training state before its job completes; such progress is not certified. A run is accepted —the meaning of the term through-out the security analysis—only when every verification job generated during the run has completed successfully and the certificate is issued; any failed deferred check aborts the run. Each queued job executes the verification procedure de-scribed in Section 6. Multiple verification workers can serve the queue in parallel, allowing training to run ahead of verifi-cation when sufficient CPU resources are available. Figure 3 illustrates the resulting pipeline. With these opti-mizations, the normal training path incurs only lightweight communication and trusted updating, while expensive recom-putation is parallelized over probabilistically selected veri-fication steps. In particular, when the aggregate verification capacity keeps pace with the arrival of checking tasks, i.e., 
+
+n ≥ pT iter-veri  
+
+> Titer
+
+, most of the verification overhead can be hidden behind the main training pipeline, leaving only a small queue-draining cost at the end of training. Otherwise, verification becomes the throughput bottleneck. We provide a detailed workload and efficiency analysis in Appendix F. 
+
+## 8 Experiments 
+
+We conduct experiments on multiple datasets and models to evaluate our system. The evaluated models and datasets follow Section 5.2 and the details are provided in Appendix B. 
+
+## 8.1 Experimental setup 
+
+Hardware. We instantiate the untrusted trainer with a single NVIDIA RTX PRO 6000 GPU. The TEE-side verifier runs in an AMD SEV-SNP-protected VM configured with 64 CPUs and 512GB of memory. The GPU and the TEE communicate over a vsock channel [31]. 
+
+Verification workflow. Checks are dispatched asyn-chronously so that verification overlaps GPU training. The judge parameters are frozen per model family — one con-figuration for all GPT-2 tasks, one for all RoBERTa tasks, (a) Blocking verification                 
+
+> GPU
+> TEE verify
+> 123GPU idle 45GPU idle 6
+> audited
+> verify g3
+> (recompute)
+> verify g5
+> (recompute)
+> time
+> (b) Hungry updating (deferred verification)
+> GPU
+> worker 1
+> worker 2
+> 123456
+> enqueue
+> verification queue
+> verify g3
+> (recompute)
+> verify g5
+> (recompute)
+> training runs ahead
+> of verification
+> time time saved
+
+Figure 3: Hungry updating with deferred verification. (a) Blocking verification stalls training whenever a checked itera-tion is recomputed by the TEE. (b) Hungry updating places checked iterations into a background queue served by paral-lel verification workers, allowing training to proceed while verification executes asynchronously. and one for CIFAR-10 (Table 7). The resulting adversarial budgets at the primary operating point p=0.1 are Gextra ≤
+
+5.48 (RoBERTa), 9 .50 (GPT-2), and 2 .51 (CIFAR-10), each with βextra = 0.05. The false-abort probability is estimated on one held-out deployment trajectory only, the preregis-tered qqp-large full-census replay run after the parameters were frozen, which gives an upper bound of 4 × 10 −100 
+
+against the design target 10 −3. The family-level tail values on the deployment-pair calibration trajectories, 2 .8 × 10 −9
+
+(RoBERTa), 8 .7 × 10 −6 (GPT-2), and 1 .1 × 10 −4 (CIFAR-10) under their respective evidence models (Appendix E), con-firm that the frozen parameters meet the target on seven of the eight calibration trajectories (the qqp-large calibration trace is excluded, see Appendix E); they are in-sample calibration checks, not false-abort estimates. Generalization to future trajectories remains empirical. The overhead runs reported here differ from the deployment-pair calibration trajectories in three respects: the GPU-side software stack (the deployed PyTorch and PEFT versions, whereas the RoBERTa-base and GPT-2 calibration trajectories were produced under an earlier build), the optimizer grouping (the standard HF grouping that exempts biases and LayerNorm weights from weight decay, whereas the calibration trajectories apply it uniformly; notes on Table 7), and the run length (one epoch under the ten-epoch schedule rather than full trajectories). Appendix E details the software-stack difference and revalidates the frozen configu-ration against the honest discrepancy spectrum of these runs. The additional verification rates in Table 2 characterize the efficiency–rate tradeoff only; the budgets are not transferred to other rates without recomputation (with the same coun-ters, the CIFAR-10 pair becomes (5.05 , 0.05 ) at p=0.05 and 
+
+(12 .66 , 0.05 ) at p=0.02). 14 Table 2: End-to-end overhead and runtime diagnostics at two verification rates, excluding initialization and prewarming. TIn-GPU 
+
+is the one-epoch unverified in-GPU DP training time. TVDP is the one-epoch training time of our protocol. TIn-TEE represents the estimated one-epoch training time of the full in-TEE solution. CIFAR-10 rows use a 200-step window for TVDP against a 500-step In-GPU baseline (its checks are ∼20 × costlier, hence the lower rates p ∈ { 0.02 , 0.05 }); the VDP overhead is therefore computed per warm step, excluding the first compiled step on both sides (per warm step: In-GPU 2 .515 s versus VDP 2 .843 s at 
+
+p=0.02 and 3 .284 s at p=0.05; the CIFAR-10 In-TEE ratio is also taken per warm step, and the raw totals in the CIFAR-10 row are not directly comparable across columns). For the LLM operating rates p=0.10 and p=0.15 shown here, Mfull = 50 full deviations are detected with probability 1 − 0.950 = 99 .5% and 1 − 0.85 50 = 99 .97%, respectively (Eq. (5)); the CIFAR-10 rows use the lower rates p ∈ { 0.02 , 0.05 } and are to be read with Eq. (5) at those rates; in addition, for the LLM cells the cumulative deviation admitted through the numerical-tolerance channels is bounded by (Gextra , βextra ) = ( 9.5, 0.05 ) or better (Section 7.1; the budgets of Table 7 are computed at the primary operating point p=0.1 and are conservative at p=0.15).                                                                                                                                             
+
+> Model Task pTIn-GPU (s) TVDP (s) TIn-TEE (s) Sync (s) Drain (s) Backpr. (s) VDP Overhead In-TEE WRN16-4 CIFAR-10 0.02 1306.04 743.29 25160.00 203.98 0.00 0.00 +13 .0% 20 .0×
+> 0.05 801.80 234.23 5.47 509.44 +30 .6% GPT-2 Small WebNLG 0.10 109.12 115.24 1001.03 5.11 0.00 0.40 +5.6% 9.2×
+> 0.15 122.01 12.04 2.28 7.08 +11 .8% E2E 0.10 119.08 127.29 1095.97 6.32 3.13 0.93 +6.9% 9.2×
+> 0.15 140.20 15.32 4.01 10.23 +17 .7% GPT-2 Medium WebNLG 0.10 277.84 290.53 2298.14 8.21 0.00 0.71 +4.6% 8.3×
+> 0.15 310.39 27.26 5.75 20.80 +11 .7% E2E 0.10 301.79 315.11 2548.66 10.52 5.85 1.50 +4.4% 8.4×
+> 0.15 344.75 31.48 10.14 22.52 +14 .2% RoBERTa Base QQP 0.10 582.96 667.27 5003.06 47.09 0.36 7.97 +14 .5% 8.6×
+> 0.15 723.43 93.34 0.74 48.00 +24 .1% MNLI 0.10 631.72 726.14 5022.67 53.34 0.84 20.56 +14 .9% 8.0×
+> 0.15 797.76 117.26 1.47 86.86 +26 .3% RoBERTa Large QQP 0.10 1724.31 1911.31 15590.00 109.57 0.97 61.53 +10 .8% 9.0×
+> 0.15 2176.47 361.03 8.97 344.72 +26 .2% MNLI 0.10 1873.26 2125.79 15863.42 173.04 4.28 136.99 +13 .5% 8.5×
+> 0.15 2439.39 477.86 10.58 481.74 +30 .2%
+
+Benchmarks and baselines. We measure system overhead on both traditional learning tasks (CIFAR-10) and LLM-oriented tasks (E2E, WebNLG, MNLI, QQP), using the same family of models as in Section 5.2. We omit Purchase because its training schedule is too short to yield meaningful epoch-level timing. Our floor-level baseline is unverified DP training on a single GPU, which incurs no communication or checking cost. We also report a TEE-only baseline that runs the entire DP training procedure inside the CPU-TEE, representing the naive alternative. It is implemented as a single-machine CPU DP-SGD trainer inside the same SEV-SNP guest, reusing the exact DP recipe of the verified runs (per-example clipping, seeded noise, optimizer, and schedule) with the batch sharded across the guest’s vCPUs at the measured optimal shape (32 workers × 2 threads). Because a full in-TEE epoch takes hours to days, we time five optimizer steps after a warm-up step and extrapolate linearly to one epoch. For CIFAR-10 the in-TEE time is derived from the measured in-guest cost of the verifier’s full-batch recomputation (the same computation as one training step) on all 64 vCPUs. The measurement harness audits exactly ⌈pT ⌉ steps per run, i.e., the protocol’s mean checking workload; the reported times therefore exclude the run-to-run variation that the Bernoulli check count (relative standard deviation p(1 − p)/(pT ), 6–13% on the LLM cells and 31–49% on the CIFAR-10 windows) and the placement of checked steps would add. 
+
+Metrics. We report wall-clock timing for a single train-ing epoch, excluding initialization and worker prewarming. 
+
+TIn-GPU denotes the runtime of unverified in-GPU DP training on the same GPU, while TVDP denotes the end-to-end runtime of our protocol, including the final completion of all verifica-tion jobs generated during the epoch. We report the following diagnostics: • Sync , the cumulative GPU-side waiting time after submit-ting an update and before receiving the corresponding noise seed from the TEE. It includes gradient serial-ization, GPU–TEE communication, deserialization, and TEE response latency, and is therefore an upper bound on pure communication cost. 15 p = 0.10 p = 0.15 p = 0.20 050 100 150 200 250     
+
+> exposed time (s)
+> 47 93 178 013848 137
+> +14.5% +24.1% +40.5%
+> Sync (GPU wait) Drain Backpressure
+
+(a) QQP / RoBERTa-base p = 0.10 p = 0.15 p = 0.20 0200 400 600 800 1000     
+
+> exposed time (s)
+> 110 361 888 1917 62 345 933
+> +10.8% +26.2% +57.5%
+
+(b) QQP / RoBERTa-large 
+
+Figure 4: Exposed cost components vs. verification rate p on QQP. Bold annotations give the end-to-end overhead. • Drain , the time required to complete verification jobs that remain pending after GPU training finishes. This captures the verification work that cannot be hidden be-hind training. • Backpr. , the time training is blocked because the number of in-flight verification jobs reaches the protocol limit. A nonzero value indicates that verification throughput becomes a bottleneck. Since Backpr. is measured on the TEE side while Sync is measured on the GPU side, the two may overlap and should not be added directly. • End-to-End Overhead , the end-to-end slowdown relative to unverified in-GPU training. Table 3: Model accuracy of WideResNet on CIFAR-10 under different privacy budgets with M = 120 malicious iterations. 
+
+ε Setting Current Nearest Final 
+
+∞ Non-Private 92.38% 2.0 DP 53.48% 53.48% 53.48% 
+
+M = 120 54.20% 52.81% 53.83% 4.0 DP 65.80% 65.80% 65.80% 
+
+M = 120 65.09% 64.83% 65.81% 8.0 DP 72.23% 72.23% 72.23% 
+
+M = 120 83.21% 72.99% 85.38% K = 1      
+
+> S= 62
+> K= 2
+> S= 31
+> K= 4
+> S= 15 0.9 1.0 1.1 1.2 1.3
+> cost relative to  K = 1
+> +29% +18%
+> +3%
+> per-check compute (idle bench) per-check latency (deployed, p50) end-to-end wall clock
+
+Figure 5: Verifier shape scan on the deployment pair (QQP / RoBERTa-large, p=0.20; identical audited-step set across configurations; pool size fixed at K ·S ≈ 62). All costs are relative to K=1. 
+
+## 8.2 Efficiency Evaluation 
+
+We first evaluate the efficiency of our verification protocol. The main questions are: (i) how much overhead our protocol adds over ordinary single-GPU DP training, (ii) how much cost is avoided compared with the naive TEE-only design, and (iii) where the remaining cost comes from. 
+
+End-to-End Overhead. We report the results in Table 2. Run-ning the entire training loop inside the TEE is prohibitively slow, incurring 8 .0×–9 .2× overhead on the LLM tasks and 20 × on CIFAR-10, whereas our protocol stays below 15% on every LLM task at the protocol operating point p=0.10, and below 31% even at the elevated rate p=0.15. At p=0.10 the drain column is at most a few seconds on all eight tasks, indi-cating that almost all verification work completes by the time GPU training ends. Verification cost can nevertheless be ex-posed during training through synchronization and backpres-sure, particularly on the larger RoBERTa workloads; on the re-maining tasks the residual overhead is almost entirely per-step synchronization. For example, on QQP with RoBERTa-base the end-to-end overhead is 14 .5%, of which 47 .09 s out of the 84 .31 s of added wall-clock time is Sync; the RoBERTa tasks pay a visibly larger synchronization share than the GPT-2 tasks. Raising the rate to p=0.15 moves the large models to-ward the TEE-paced regime: on MNLI with RoBERTa-large, Sync (477 .86 s) and backpressure (481 .74 s) grow together — the two overlap, as the training loop increasingly waits on check throughput rather than on transport — and the overhead reaches 30 .2%. The verification rate p thus acts as a direct dial between auditing intensity and exposed cost, with the entire measured range remaining substantially cheaper than in-TEE training (6 .3×–8 .7× across the LLM cells). 
+
+Overhead regimes. Figure 4 dissects the exposed cost as the verification rate grows, for the same task at two model sizes. Two regimes are visible. For RoBERTa-base (Fig. 4a), per-step synchronization dominates at every rate: checks are cheap enough (166 core-seconds each) that the verifier pool 16 keeps pace with training, backpressure stays below Sync even at p=0.20, and the overhead is essentially the price of the per-step seed round-trip. For RoBERTa-large (Fig. 4b), whose checks cost 3 .4× more, the system crosses into a throughput-bound regime: backpressure grows from about half of Sync at p=0.10 (62 s vs. 110 s) to overtaking it at p=0.20 (933 s vs. 888 s), and much of the Sync growth in this regime is itself backpressure propagating to the GPU-side seed wait — the training loop increasingly waits on check throughput rather than on transport. Drain stays within a few seconds in every cell: backpressure throttles training in place of letting unfinished checks spill past the epoch boundary, so verifica-tion adds at most a small tail after training completes. Larger models therefore reach the throughput-bound regime at lower verification rates, which is precisely the regime where enlarg-ing the verifier’s worker pool (rather than reducing p) recovers the overhead. 
+
+Choosing the verifier shape. The verifier uses K concurrent checks, each split into S shards, with K·S fixed by the avail-able vCPUs. Figure 5 shows that increasing K provides little throughput benefit but increases per-check latency: at K=4, each check receives fewer workers, increasing its p50 latency by 29% and the end-to-end runtime by 18%. A larger K also keeps more verification states in flight, increasing memory pressure and queueing overhead. We therefore use small K
+
+(K ≤ 2) and choose S per task. This result also shows that ver-ifier shape should be selected from end-to-end measurements. 
+
+Additional experiments on CIFAR-10. We further examine how many malicious steps are required for an effective attack on CIFAR-10. From Table 3, we can see even 120 malicious steps offer little gain at ε = 2 or 4, and become effective only at ε = 8. In contrast, RoBERTa on MNLI already shows small but consistent gains with only 40–60 malicious steps at ε =
+
+2. Hence, effective attacks on CNNs require a substantially larger M, which directly benefits verification efficiency. 
+
+## 9 Related Work 
+
+Verifiable differential privacy. Verifiable differential privacy certifies the correct execution of claimed differentially private computations. Narayan et al. [26] first introduced this concept and showed how verifiable computation can certify differ-entially private data analysis. Biswas et al. [8] applied zero-knowledge proofs to DP counting queries, and Noisette [30] certifies DP noise sampling for discrete and continuous mechanisms. More recently, Confidential-DPProof [34] and VeriDP [2] use customized zero-knowledge proofs to verify differentially private model training. These approaches pro-vide strong cryptographic assurance without trusted hardware, but incur substantial proof-generation overhead for realistic training workloads. In contrast, we explore a TEE-based de-sign that trades complete verification for efficient probabilistic auditing. 
+
+TEE-assisted verifiable machine learning. TEEs provide hardware-backed isolation and remote attestation, making them useful for protecting or verifying ML computation on untrusted accelerators. Slalom [40] combines a CPU-side TEE with an untrusted GPU to verify outsourced computa-tion. Later systems use partitioning or obfuscation to protect sensitive model components while outsourcing most com-putation to the GPU [17, 22, 25, 38, 44, 48]. For training integrity, TrustFL [47] and GINN [6] use TEE-based sam-pled verification of untrusted GPU computation, with GINN further combining gradient clipping and asynchronous veri-fication. TrustFL+ [23] addresses GPU–TEE floating-point non-determinism, while AFTUNE [20] uses TEE-based spot checking for outsourced fine-tuning. In contrast, we focus on DP training under incomplete TEE verification and explic-itly quantify the residual adversarial freedom introduced by unchecked steps and numerical tolerance. 
+
+GPU TEEs and confidential GPU computing. Another line of work explores ML integrity through GPU TEEs [18, 37, 41, 43]. However, GPU-TEE support remains limited in de-ployed infrastructures [44], and many training clusters still rely on legacy GPUs. Our work is complementary: instead of requiring trusted GPUs, we target existing CPU-TEE and legacy-GPU environments. 
+
+## 10 Conclusion 
+
+In this paper, we presented a CPU-TEE-based framework for verifiable DP training on untrusted GPUs. The protocol pro-vides analytic accounting for arbitrary submitted aggregate gradients through probabilistic detection of full deviations and a high-probability numerical-tolerance budget. Separately, for the utility-oriented forged-gradient attacks evaluated in our experiments, sparse attack budgets provide limited utility im-provement and show no measurable additional membership leakage; these empirical findings motivate the operating point used by our system rather than constituting a worst-case guar-antee over all possible sparse attacks. Our evaluation shows that the design adds modest overhead over standard GPU-based DP training while avoiding the substantially higher cost of running the full training procedure inside a CPU-side TEE. 
+
+## References 
+
+[1] Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar, and Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , pages 308–318, 2016. [2] Behzad Abdolmaleki, Amir R Asadi, Vahid R Asadi, Stefan Köpsell, Bhavish Mohee, Nahid Roustaeifar, and Maryam Zarezadeh. Veridp: Verifiable differentially private training. Proceedings on Privacy Enhancing Technologies , 2026. 17 [3] John M Abowd. The us census bureau adopts differen-tial privacy. In Proceedings of the 24th ACM SIGKDD international conference on knowledge discovery & data mining , pages 2867–2867, 2018. [4] Erdem Aktas, Cfir Cohen, Josh Eads, James Forshaw, and Felix Wilhelm. Intel trust domain extensions (tdx) security review. Google security review , 2023. [5] Emily Apsey, Phil Rogers, Michael O’Connor, and Rob Nertney. Confidential computing on nvidia h100 gpus for secure and trustworthy ai, august 2023. 
+
+URL https://developer. nvidia. com/blog/confidential-computing-on-h100-gpus-for-secure-and-trustworthy-ai/. Accessed , pages 7–17, 2024. [6] Aref Asvadishirehjini, Murat Kantarcioglu, and Bradley Malin. Ginn: fast gpu-tee based integrity for neural network training. In Proceedings of the Twelfth ACM Conference on Data and Application Security and Pri-vacy , pages 4–15, 2022. [7] Li Bai, Qingqing Ye, Xinwei Zhang, Sen Zhang, Zi Liang, Jianliang Xu, and Haibo Hu. Toward efficient inference attacks: Shadow model sharing via mixture-of-experts. Advances in Neural Information Processing Systems , 38:138757–138785, 2026. [8] Ari Biswas and Graham Cormode. Verifiable differential privacy. arXiv preprint arXiv:2208.09011 , 2022. [9] Nicholas Carlini, Steve Chien, Milad Nasr, Shuang Song, Andreas Terzis, and Florian Tramer. Membership infer-ence attacks from first principles. In 2022 IEEE sym-posium on security and privacy (SP) , pages 1897–1914. IEEE, 2022. [10] Rishav Chourasia, Ergute Bao, Uzair Javaid, and Xi-aokui Xiao. Auditing apple’s differentialprivacy. frame-work: Implementation bugs, misconfigurations, and practical risks. arXiv preprint arXiv:2605.21378 , 2026. [11] Lynn Chua, Badih Ghazi, Pritish Kamath, Ravi Kumar, Pasin Manurangsi, Amer Sinha, and Chiyuan Zhang. Scalable DP-SGD: Shuffling vs. Poisson subsampling. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. [12] Yuntao Du, Yuetian Chen, Hanshen Xiao, Bruno Ribeiro, and Ninghui Li. Imitative membership inference attack. 
+
+arXiv preprint arXiv:2509.06796 , 2025. [13] Cynthia Dwork, Frank McSherry, Kobbi Nissim, and Adam Smith. Calibrating noise to sensitivity in private data analysis. In Theory of cryptography conference ,pages 265–284. Springer, 2006. [14] Cynthia Dwork and Aaron Roth. The algorithmic foun-dations of differential privacy. Foundations and trends® in theoretical computer science , 9(3-4):211–487, 2014. [15] Matt Fredrikson, Somesh Jha, and Thomas Ristenpart. Model inversion attacks that exploit confidence infor-mation and basic countermeasures. In Proceedings of the 22nd ACM SIGSAC conference on computer and communications security , pages 1322–1333, 2015. [16] Claire Gardent, Anastasia Shimorina, Shashi Narayan, and Laura Perez-Beltrachini. The webnlg challenge: Generating text from rdf data. In Proceedings of the 10th international conference on natural language gen-eration , pages 124–133, 2017. [17] Jiahui Hou, Huiqi Liu, Yunxin Liu, Yu Wang, Peng-Jun Wan, and Xiang-Yang Li. Model protection: Real-time privacy-preserving inference service for model privacy at the edge. IEEE Trans. Dependable Secur. Comput. ,19(6):4270–4284, 2021. [18] Weizhe Hua, Muhammad Umar, Zhiru Zhang, and G. Edward Suh. Guardnn: Secure DNN acceler-ator for privacy-preserving deep learning. CoRR ,abs/2008.11632, 2020. [19] Matthew Jagielski, Jonathan Ullman, and Alina Oprea. Auditing differentially private machine learning: How private is private sgd? Advances in Neural Information Processing Systems , 33:22205–22216, 2020. [20] Heng Jin, Chaoyu Zhang, Hexuan Yu, Shanghao Shi, Ning Zhang, Y Thomas Hou, and Wenjing Lou. Trusting what you cannot see: Auditable fine-tuning and inference for proprietary ai. arXiv preprint arXiv:2603.07466 , 2026. [21] Alex Krizhevsky, Geoffrey Hinton, et al. Learning mul-tiple layers of features from tiny images. 2009. [22] Ding Li, Ziqi Zhang, Mengyu Yao, Yifeng Cai, Yao Guo, and Xiangqun Chen. Teeslice: Protecting sensi-tive neural network models in trusted execution environ-ments when attackers have pre-trained models. ACM Transactions on Software Engineering and Methodol-ogy , 34(6):1–49, 2025. [23] Cheng Lyu, Xiaoli Zhang, Jiaqing Cheng, Wenmao Liu, Xiaohu Ye, Ke Xu, Qi Li, and Xu-Cheng Yin. To-wards efficient and reliable training assurance of un-trusted federated learning participants under hardware non-determinism. IEEE Transactions on Dependable and Secure Computing , 2026. [24] Ilya Mironov. Rényi differential privacy. In 2017 IEEE 30th computer security foundations symposium (CSF) ,pages 263–275. IEEE, 2017. 18 [25] Fan Mo, Ali Shahin Shamsabadi, Kleomenis Katevas, Soteris Demetriou, Ilias Leontiadis, Andrea Cavallaro, and Hamed Haddadi. Darknetz: towards model privacy at the edge using trusted execution environments. In Eyal de Lara, Iqbal Mohomed, Jason Nieh, and Eliza-beth M. Belding, editors, MobiSys ’20: The 18th Annual International Conference on Mobile Systems, Applica-tions, and Services, Toronto, Ontario, Canada, June 15-19, 2020 , pages 161–174, 2020. [26] Arjun Narayan, Ariel Feldman, Antonis Papadimitriou, and Andreas Haeberlen. Verifiable differential privacy. In Proceedings of the Tenth European Conference on Computer Systems , pages 1–14, 2015. [27] Jekaterina Novikova, Ondˇ rej Dušek, and Verena Rieser. The e2e dataset: New challenges for end-to-end genera-tion. In Proceedings of the 18th annual SIGdial meeting on discourse and dialogue , pages 201–206, 2017. [28] Santa Clara NVIDIA. Nvidia blackwell architecture technical brief, 2024. [29] OECD. Emerging privacy enhancing technologies: Cur-rent regulatory and policy approaches. Technical report, Organisation for Economic Co-operation and Develop-ment, 2023. [30] Qi Pang, Radhika Garg, Ziling Liu, Hanshen Xiao, Vir-ginia Smith, Wenting Zheng, and Xiao Wang. Noisette: Certifying differential privacy mechanisms efficiently. 
+
+Cryptology ePrint Archive , 2026. [31] Rusty Russell. virtio: towards a de-facto standard for virtual I/O devices. ACM SIGOPS Operating Systems Review , 2008. [32] Nawapon Sangsiri and Yufei Tao. Distributed Learning with Adversarial Gradient Perturbations. https://www. cse.cuhk.edu.hk/~taoyf/paper/ijcai26.pdf ,2026. Accessed 2026-06-07. [33] AMD Sev-Snp. Strengthening vm isolation with in-tegrity protection and more. White Paper, January ,53(2020):1450–1465, 2020. [34] Ali Shahin Shamsabadi, Gefei Tan, Tudor Cebere, Au-rélien Bellet, Hamed Haddadi, Nicolas Papernot, Xiao Wang, and Adrian Weller. Confidential-dpproof: Con-fidential proof of differentially private training. In In-ternational Conference on Learning Representations ,volume 2024, pages 4029–4044, 2024. [35] Ali Shahin Shamsabadi and Nicolas Papernot. How to deploy machine learning with differential pri-vacy, 2023. URL: https://www.nist.gov/blogs/ cybersecurity-insights/how-deploy-machine-learning-differential-privacy .[36] Reza Shokri, Marco Stronati, Congzheng Song, and Vi-taly Shmatikov. Membership inference attacks against machine learning models. In 2017 IEEE Symposium on Security and Privacy (SP) , pages 3–18, 2017. doi: 10.1109/SP.2017.41 .[37] Supraja Sridhara, Andrin Bertschi, Benedict Schlüter, Mark Kuhne, Fabio Aliberti, and Shweta Shinde. ACAI: protecting accelerator execution with arm confiden-tial computing architecture. In Davide Balzarotti and Wenyuan Xu, editors, 33rd USENIX Security Sympo-sium, USENIX Security 2024, Philadelphia, PA, USA, August 14-16, 2024 . USENIX Association, 2024. [38] Zhichuang Sun, Ruimin Sun, Changming Liu, Am-rita Roy Chowdhury, Long Lu, and Somesh Jha. Shad-owNet: A Secure and Efficient On-device Model Infer-ence System for Convolutional Neural Networks . In 
+
+IEEE Symposium on Security and Privacy (SP) , pages 1596–1612. IEEE Computer Society, 2023. [39] Jun Tang, Aleksandra Korolova, Xiaolong Bai, Xue-qiang Wang, and Xiaofeng Wang. Privacy loss in apple’s implementation of differential privacy on macos 10.12. 
+
+arXiv preprint arXiv:1709.02753 , 2017. [40] Florian Tramer and Dan Boneh. Slalom: Fast, verifi-able and private execution of neural networks in trusted hardware. In International Conference on Learning Representations , 2019. URL: https://openreview. net/forum?id=rJVorjCcKQ .[41] Stavros Volos, Kapil Vaswani, and Rodrigo Bruno. Graviton: Trusted execution environments on gpus. In Andrea C. Arpaci-Dusseau and Geoff Voelker, editors, 
+
+13th USENIX Symposium on Operating Systems Design and Implementation, OSDI 2018, Carlsbad, CA, USA, October 8-10, 2018 , pages 681–696. USENIX Associa-tion, 2018. [42] Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel Bowman. Glue: A multi-task benchmark and analysis platform for natural lan-guage understanding. In Proceedings of the 2018 EMNLP workshop BlackboxNLP: Analyzing and inter-preting neural networks for NLP , pages 353–355, 2018. [43] Chenxu Wang, Yunjie Deng, Zhenyu Ning, Kevin Leach, Jin Li, Shoumeng Yan, Zhengyu He, Jiannong Cao, and Fengwei Zhang. Building a lightweight trusted execu-tion environment for arm gpus. IEEE Transactions on Dependable and Secure Computing , 2023. [44] Pengli Wang, Bingyou Dong, Yifeng Cai, Zheng Zhang, Junlin Liu, Huanran Xue, Ye Wu, Yao Zhang, and Ziqi Zhang. Game of arrows: On the (in-)security of weight 19 obfuscation for on-device tee-shielded llm partition algo-rithms. In 34th USENIX Security Symposium (USENIX Security 25) , pages 279–298, 2025. [45] Adina Williams, Nikita Nangia, and Samuel Bowman. A broad-coverage challenge corpus for sentence under-standing through inference. In Proceedings of the 2018 Conference of the North American Chapter of the As-sociation for Computational Linguistics: Human Lan-guage Technologies, Volume 1 (Long Papers) , pages 1112–1122, 2018. [46] Lukas Wutschitz, Huseyin A. Inan, and Andre Manoel. dp-transformers: Training transformer models with dif-ferential privacy. https://www.microsoft.com/en-us/research/project/dp-transformers , August 2022. Code: https://github.com/microsoft/dp-transformers .[47] Xiaoli Zhang, Fengting Li, Zeyu Zhang, Qi Li, Cong Wang, and Jianping Wu. Enabling execution assurance of federated learning at untrusted participants. In IEEE INFOCOM 2020-IEEE Conference on Computer Com-munications , pages 1877–1886. IEEE, 2020. [48] Zheng Zhang, Na Wang, Ziqi Zhang, Yao Zhang, Tianyi Zhang, Jianwei Liu, and Ye Wu. Groupcover: A se-cure, efficient and scalable inference framework for on-device model protection based on tees. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 . Open-Review.net, 2024. URL: https://openreview.net/ forum?id=4mU6LNMaIu .[49] Jianwei Zhu, Hang Yin, Peng Deng, Aline Almeida, and Shunfan Zhou. Confidential computing on nvidia hopper gpus: a performance benchmark study. arXiv preprint arXiv:2409.03992 , 2024. 
+
+## A Optimizer-Aware Forged-Gradient Attack 
+
+Setup and threat model. Let θt ∈ Rd denote the train-able parameters at step t. The optimizer is AdamW with first- and second-moment states (mt−1, vt−1), hyperparame-ters β1, β2 ∈ [0, 1), learning rate ηt , numerical constant ε, and decoupled weight decay λ (applied per parameter group as configured by the trainer; in the attack experiments the stan-dard HF grouping is used, i.e. λ = 0 for biases and LayerNorm weights). The adversary may forge the aggregated gradient g
+
+consumed by the optimizer, subject to the clipping constraint 
+
+g ∈ BC := {x : ∥x∥2 ≤ C}.
+
+The realized DP noise is not observed when g is selected. 
+
+One-step AdamW map. Given a candidate forged gradient 
+
+g, define the noise-free one-step AdamW map Φt : Rd → Rd
+
+by 
+
+m(g) = β1mt−1 + ( 1 − β1)g,
+
+v(g) = β2vt−1 + ( 1 − β2)g ⊙ g,
+
+bm(g) = m(g)
+
+1 − βt
+
+> 1
+
+, bv(g) = v(g)
+
+1 − βt
+
+> 2
+
+,
+
+Φt (g) = θt − ηt
+
+bm(g)
+
+pbv(g) + ε + λθ t
+
+!
+
+.
+
+The current model parameters and optimizer states are fixed throughout the inner optimization. 
+
+Noise-free surrogate objective. The attacker minimizes the one-step surrogate 
+
+ft (g) = D(Φt (g)) ,
+
+subject to g ∈ BC.Since our experiments fine-tune LoRA parameters and, for classification tasks, an additional classification head, we define the steering distance as 
+
+D(θ) = ∑ 
+
+> LoRA pairs j
+
+s jB jA j − s jB⋆ 
+
+> j
+
+A⋆ 
+
+> j
+> 2
+> F
+
++ ∑ 
+
+> unpaired i
+
+∥θi − θ⋆ 
+
+> i
+
+∥22 ,
+
+where s j = α j/r j is the LoRA scaling. For LoRA parameters, the distance is measured on the merged update ∆Wj = s jB jA j rather than directly on the fac-tors (A j, B j). This removes the ambiguity caused by the non-unique LoRA factorization: for any invertible G ∈ Rr j ×r j ,the reparameterization (A⋆ 
+
+> j
+
+, B⋆ 
+
+> j
+
+) 7 → (GA ⋆ 
+
+> j
+
+, B⋆ 
+
+> j
+
+G−1) leaves the merged update unchanged, 
+
+(B⋆ 
+
+> j
+
+G−1)( GA ⋆ 
+
+> j
+
+) = B⋆ 
+
+> j
+
+A⋆ 
+
+> j
+
+,
+
+so a distance taken on the factors would charge for the choice of G while a distance taken on the product does not. Con-sequently, the attack objective depends only on the target merged update rather than on a particular choice of target factors. 
+
+## A.1 Solving the Inner Problem 
+
+Linearized initialization. We initialize the attack using the constrained minimizer of the first-order expansion of ft
+
+around g = 0. Let 
+
+wt := ∇g ft (g) g=0. (7) Then the minimizer of the linearized objective over BC is 
+
+g(0) = −C wt
+
+∥wt ∥2
+
+.
+
+20 The gradient in (7) is obtained by automatic differentiation through the complete surrogate D(Φt (g)) . Equivalently, 
+
+wt = J⊤ 
+
+> 0
+
+∇θD(Φt (0)) , J0 = ∂Φ t
+
+∂g g=0,
+
+where J0 is diagonal, so the product above is elementwise. In particular, the steering gradient is evaluated at Φt (0), rather than at θt , since the existing AdamW first moment and weight decay can move the parameters even when the newly submit-ted gradient is zero. Because (7) differentiates the same merged-space objective used by the attack, the initialization is independent of the particular factorization used to represent the target LoRA adapters. 
+
+Projected gradient refinement. Starting from g(0), we re-fine the forged gradient using projected gradient descent on the exact surrogate: 
+
+g(k+1) = ΠBC g(k) − γkC ∇g ft (g(k))
+
+∥∇g ft (g(k))∥2
+
+!
+
+,
+
+where 
+
+ΠBC (x) = x min 
+
+
+
+1, C
+
+∥x∥2
+
+
+
+.
+
+We use backtracking line search: a candidate is accepted only if it is finite and decreases ft ; otherwise the step size is halved and retried. On acceptance the step size is doubled for the next iteration, capped at γ, so the search can recover a large step after a locally difficult region. The optimization terminates after at most K iterations, when no backtracking step decreases the objective, or when the change in g falls below tolerance τ.
+
+Noisy execution. Let g⋆ denote the forged gradient returned by the inner optimization. The actual optimizer consumes 
+
+eg = g⋆ min 
+
+
+
+1, C
+
+∥g⋆∥2
+
+
+
++ 1
+
+B ξ, ξ ∼ N  0, σ2C2I .
+
+Thus the attack is optimized using the noise-free surrogate, while the realized AdamW update and optimizer states are formed from the noisy gradient eg.
+
+ηt is taken from the live parameter group before the sched-uler has written the current step’s value, so the surrogate sees ηt−1. It cancels from the solution almost entirely: ηt
+
+multiplies the whole Jacobian and so leaves any normalised direction unchanged, surviving only through the point Φt (0)
+
+at which ∇D is read. Nor does that residue grow late in train-ing — under a linear decay ηt − ηt−1 = η0/T is constant while Φt (0) → θt . Rebuilding the seed at both rates, each with ∇D re-evaluated at its own Φt (0), turns its direction by 1 − cos = 1.2 × 10 −14 (QQP/roberta-base) and 5 .7 × 10 −14 
+
+(E2E/gpt-2), both at t = 0.6 T and for the seed alone — seven orders below the fp32 precision the deployed solver runs at. It is recorded because “read from the live optimizer state” would otherwise be read as exact. 
+
+## B Description of Used Datasets 
+
+We evaluate our method on datasets covering tabular classifi-cation, image classification, natural language understanding (NLU), and natural language generation (NLG) tasks. 
+
+Purchase [36]. Purchase is a tabular classification dataset widely used in privacy and membership-inference studies. Each record represents a user’s purchase behavior, and the goal is to predict the corresponding purchase category. We use this dataset to evaluate DP training on multilayer per-ceptrons (MLPs), which serve as representative models for conventional tabular learning tasks. 
+
+CIFAR-10 [21]. CIFAR-10 is a standard image classifica-tion benchmark consisting of natural images from ten object categories. We use CIFAR-10 to evaluate DP training on convolutional neural networks (CNNs), where the model is trained to classify each image into one of the ten classes. The model is a WideResNet-16-4 trained on 40 ,000 target training images, with 15 ,000 images reserved as shadow data for the membership-inference experiments and 5 ,000 as the test set; the honest DP-SGD runs and the attacked runs share the same recipe: ε = 2 (Table 3 additionally reports ε = 4and 8), δ = 10 −5, 5 ,000 training steps, batch size 2 ,048 with microbatches of 512, learning rate 2 .0, and clipping norm 
+
+C = 1. 
+
+MNLI [45]. The Multi-Genre Natural Language Inference (MNLI) dataset is a natural language understanding bench-mark. Given a premise and a hypothesis, the task is to predict whether the hypothesis is entailed by, contradicts, or is neutral with respect to the premise. We use MNLI to evaluate DP fine-tuning for sentence-pair understanding tasks. 
+
+QQP [42]. The Quora Question Pairs (QQP) dataset is another natural language understanding benchmark. Given a pair of questions, the task is to determine whether the two questions are semantically equivalent. We use QQP to evaluate DP fine-tuning on semantic matching and paraphrase detection tasks. 
+
+E2E [27]. The E2E dataset is a natural language genera-tion benchmark for data-to-text generation. Given a struc-tured meaning representation, the task is to generate a fluent natural-language utterance that accurately describes the in-put attributes. We use E2E to evaluate DP fine-tuning for controlled text generation. 
+
+WebNLG [16]. WebNLG is a data-to-text natural language generation dataset built from structured RDF triples. Given a set of subject–predicate–object triples describing entities and relations, the model must generate a coherent natural-language description that preserves the input facts. Compared 21 with slot-based datasets such as E2E, WebNLG covers more diverse domains and relational structures, making it useful for evaluating DP fine-tuning on structured generation tasks. 
+
+## B.1 Attack Configuration 
+
+Table 4 lists the per-setting constants. 5 The remaining choices are shared across all eight settings and are stated here. 
+
+Budgets and strategies. The deviation budget is M ∈{40 , 50 , 60 } and each budget is run under all three target strate-gies (final, nearest, current), giving 3 × 3 × 8 = 72 attacked runs alongside the eight honest DP baselines and the eight non-private references. 
+
+Which steps are deviated on. The adversary chooses the step set rather than drawing it at random, so the reported numbers are its best placement. Both schedules concentrate on u⋆, the fraction of training at which one unit of deviation buys the most displacement at the end. The final-checkpoint attack, whose target is fixed, injects on the M consecutive 
+
+steps centred on u⋆T . The nearest- and current-checkpoint attacks instead take one step from each window of width 
+
+T /M, at the point of that window closest to u⋆T . We did not run a uniform-random control. 
+
+Inner loop. The forged gradient is refined by projected gra-dient descent from the linearised seed: step size γ = 1 as a fraction of the clipping norm C, at most K = 100 iterations, up to ten halvings of the trial step per iteration, and a stopping tolerance of 10 −6 on ∥g(k+1) −g(k)∥2. A candidate is accepted only if it is finite and decreases the surrogate. 
+
+Non-private reference. For the classification tasks the target is the final non-private checkpoint. For E2E and WebNLG 6 it is the non-private checkpoint with the best validation score, which is not the last one in three of the four settings; the column in Table 4 names the checkpoint used in each case. 
+
+## C Generation Metrics Beyond BLEU 
+
+Figure 1 reports BLEU for E2E and WebNLG. Both scorers emit further metrics, and since a single metric can move for reasons unrelated to output quality we report all of them here. Table 5 gives, for each setting and each metric, the DP base-line, the most favourable of the nine attacked runs for that metric , and the non-private reference. Taking the best cell per metric rather than per run is deliberate: it asks whether any attacked run moves the metric at all, which is the more demanding question.    
+
+> 5We use the dp-transformers trainer [46]: fixed-size batches drawn from a per-epoch reshuffle with the last partial batch dropped, and RDP/PRV accounting at sampling rate B/N. Such means has been acknowledged as a common practice [11].
+> 6On the generation tasks the per-example loss is the token mean over that example’s own unmasked positions and the backward scalar is the mean over examples, so each per-example gradient is the gradient of one record’s loss rather than of a batch-wide token mean.
+
+No metric shows a substantial absolute gain. On E2E/gpt2-medium, where the attacked runs do move every metric in the same direction as BLEU, the largest changes are +0.014 ME-TEOR, +0.113 NIST, +0.081 CIDEr and +0.005 ROUGE-L — 0 .7 to 4 .1 percent of the metric’s own value, against non-private references that remain 0 .04 to 0 .33 away. On E2E/gpt2 the metrics do not even agree in sign: NIST and METEOR rise while BLEU, ROUGE-L and CIDEr fall, which is what one expects when the effect is smaller than the noise of se-lecting a decoding configuration on a 547-example validation split, and we therefore draw no conclusion from that setting. On both WebNLG settings every non-BLEU change other than TER is zero or a single unit in the last printed digit, and TER improves by 0 .02 and 0 .04; the evaluator prints those metrics to two decimals, so they cannot resolve an effect of this size in either direction. The reading consistent with all four settings is that sparse deviations do not produce a clear gain on any generation metric. Where the metrics are precise enough to resolve the effect at all, the absolute movement is small; where they are not, they are silent rather than supportive. 
+
+## D Analogy to Learning with Bounded Adver-sarial Gradient Perturbations 
+
+We further discuss a related theoretical perspective from dis-tributed learning with bounded adversarial gradient perturba-tions. This line of work considers a setting where a learner queries gradients from clients, but each returned gradient may be adversarially perturbed subject to a bounded-distance constraint. More concretely, for a client loss function ℓi, the returned vector u need not equal the true gradient ∇ℓi(w); it only needs to satisfy 
+
+∥u − ∇ℓi(w)∥2 ≤ ε.
+
+Under convex and L-smooth objectives, the study shows that such adversarial perturbations do not make learning arbitrary. Instead, when an upper bound ∥w⋆∥2 ≤ R on the optimal solu-tion is known, the achievable optimization error is controlled by the perturbation radius and problem parameters: the mini-mum unavoidable sub-optimality is on the order of εR, and an algorithm can guarantee a sub-optimality gap of order εR
+
+with finite query complexity. Although our setting is different, this result provides a useful analogy for understanding why sparse malicious de-viations in our protocol provide limited utility benefit. In the deployed protocol, per-example clipping and aggrega-tion are executed on the untrusted GPU, but every submit-ted aggregate is subject to the always-on norm invariant 
+
+∥ ¯gGPU  
+
+> t
+
+∥2 ≤ C(1 + 10 −4), while the prescribed honest clipped aggregate ¯ gref  
+
+> t
+
+has norm at most C. By the triangle inequality, 
+
+∥ ¯gGPU  
+
+> t
+
+− ¯gref  
+
+> t
+
+∥2 ≤ ∥ ¯gGPU  
+
+> t
+
+∥2 + ∥ ¯gref  
+
+> t
+
+∥2 ≤ (2 + 10 −4)C.
+
+22 Table 4: Parameters of the forged-gradient experiments. All eight settings share ε = 2, clipping norm C = 1, learning rate 4 e − 4with a linear schedule and no warm-up, weight decay 10 −2, AdamW (β1, β2) = ( 0.9, 0.999 ), εAdam = 10 −8, 10 epochs, seed 1, and LoRA dropout 0 with every other dropout module zeroed. T is the number of optimizer steps (the sampler drops the last partial batch, so T = ⌊N/B⌋× epochs). σ is the noise multiplier the accountant returns at that (ε, δ, B/N, T ); the per-coordinate noise actually added is σC/B. u⋆ is the centre of the injection window as a fraction of training. The target is the non-private checkpoint the adversary steers towards under the final strategy.                                                                                                             
+
+> task model NBTseq rαδσσC/Bu⋆/ target QQP roberta-base 363,846 256 14,210 128 8810 −60.6462 0.00252 0.20 / checkpoint-14220
+> QQP roberta-large 363,846 256 14,210 128 8810 −60.6462 0.00252 0.20 / checkpoint-14220
+> MNLI roberta-base 392,702 256 15,330 128 8810 −60.6407 0.00250 0.20 / checkpoint-15340
+> MNLI roberta-large 392,702 256 15,330 128 8810 −60.6407 0.00250 0.20 / checkpoint-15340
+> E2E gpt2 42,061 64 6,570 128 4810 −50.6679 0.01044 0.10 / checkpoint-3290
+> E2E gpt2-medium 42,061 64 6,570 128 4810 −50.6679 0.01044 0.10 / checkpoint-5922
+> WebNLG gpt2 18,025 32 5,630 256 4810 −50.6827 0.02133 0.10 / checkpoint-5076
+> WebNLG gpt2-medium 18,025 32 5,630 256 4810 −50.6827 0.02133 0.10 / checkpoint-5640
+
+Hence every accepted submission lies within (2 + 10 −4)C of the trusted aggregate. This provides a bounded-perturbation analogy, analogous to the bounded adversarial-gradient model above, where each adversarial reply may deviate from the true gradient only within a finite radius; it should not be interpreted as the formal security theorem of our non-convex stochastic training setting. This analogy supports the intuition that the norm invariant limits the adversary’s per-step influence. The adversary may still bias the optimization trajectory, but it cannot inject an unbounded update through a single gradient reply. 
+
+Why the related result is more general in adversarial strength? The bounded-perturbation setting considered in the prior theoretical study is more general than our tolerated sparse-deviation regime in several important ways. First, it allows every gradient query to be adversarially perturbed, as long as the returned vector remains within the prescribed per-turbation radius. In contrast, our relaxed security goal only tolerates sparse deviations: the adversary may deviate on a small fraction of iterations, while repeated full deviations are detected with high probability by our probabilistic check-ing mechanism. Second, the adversarial perturbation in that model is worst-case and can be chosen adaptively at each query, whereas in our protocol the submitted aggregate is subject to the always-on aggregate-norm invariant and to the trusted DP-SGD update rule, while GPU-side clipping and aggregation are probabilistically checked by trusted recompu-tation. Third, our training process additionally includes DP noise injected inside the TEE, which is not controlled by the trainer and further limits the trainer’s ability to precisely steer the final model. Therefore, the prior result should not be interpreted as a direct proof for our non-convex, stochastic DP training set-ting. Nevertheless, it gives a useful conceptual justification: even in a stronger setting where the adversary can perturb every gradient within a bounded radius, the resulting opti-mization error remains controlled rather than arbitrary. Since our tolerated adversary is further restricted to sparse devia-tions, the cumulative benefit in our setting is intuitively even more limited. The related result therefore provides a useful bounded-perturbation analogy rather than a formal guarantee for our non-convex stochastic setting. In our protocol, clip-ping and the aggregate-norm invariant constrain the magni-tude of each submitted update, while the limited utility impact of sparse deviations is established empirically for the attack family evaluated in Section 5.2. 
+
+## E Calibration and Security Cost of Numerical Tolerance 
+
+This appendix complements Section 6 with the precise defini-tions, the calibration rules, and the formal accounting behind the numerical-tolerance budget. For a checked step, define 
+
+z32  
+
+> t
+
+= ∥ ¯gGPU  
+
+> t
+
+− ¯g32  
+
+> t
+
+∥2
+
+C , z64  
+
+> t
+
+= ∥ ¯gGPU  
+
+> t
+
+− ¯g64  
+
+> t
+
+∥2
+
+C .
+
+The threshold τabs routes a step to FP64 adjudication. An escalated step is accepted only if 
+
+z64  
+
+> t
+
+≤ ρamb , ρamb = 2τnum 
+
+B .
+
+Thus, ρamb is the security-relevant aggregate acceptance ra-dius; τnum is only its implementation-specific normalization. 
+
+## E.1 Honest Calibration and False Abort 
+
+For a fixed honest trajectory r, partition the steps into 
+
+Ur = {t : z32  
+
+> t,r
+
+≤ τabs },
+
+Ar = {t : z32  
+
+> t,r
+
+> τabs , z64  
+
+> t,r
+
+≤ ρamb },
+
+Hr = {t : z32  
+
+> t,r
+
+> τabs , z64  
+
+> t,r
+
+> ρamb }.
+
+23 Table 5: Every metric the official scorers emit, on the test split at ε = 2. “best attack” is the most favourable of the nine attacked runs for that metric , so different rows may be won by different (M, strategy ) cells; ∆ is its absolute change from the DP baseline, in the metric’s own units. TER is lower-is-better, so a negative ∆ is an improvement there. The WebNLG evaluator prints every metric but BLEU to two decimals, which is the granularity of the changes observed on that task. At that granularity the best value is usually reached by several cells at once, and the last column then reports how many rather than naming one.                                                                                                               
+
+> setting metric DP best attack ∆non-private best cell E2E / gpt2 BLEU 0.6044 0.5999 -0.0045 0.6495 M=40, current NIST 7.8193 7.9538 +0.1345 8.2836 M=40, current METEOR 0.3833 0.3906 +0.0073 0.4219 M=60, final ROUGE_L 0.6211 0.6156 -0.0055 0.6726 M=60, nearest CIDEr 1.8375 1.8128 -0.0247 2.1242 M=60, current E2E / gpt2-medium BLEU 0.6144 0.6230 +0.0086 0.6677 M=40, nearest NIST 8.0637 8.1765 +0.1128 8.5079 M=40, final METEOR 0.4087 0.4224 +0.0137 0.4608 M=50, final ROUGE_L 0.6563 0.6609 +0.0046 0.7015 M=50, nearest CIDEr 1.9659 2.0464 +0.0805 2.3245 M=50, final WebNLG / gpt2 BLEU 34.55 35.26 +0.71 46.82 M=50, final BLEU_NLTK 0.3300 0.3400 +0.0100 0.4600 9 of 9 cells tied METEOR 0.3100 0.3200 +0.0100 0.3800 9 of 9 cells tied chrF++ 0.5300 0.5400 +0.0100 0.6400 4 of 9 cells tied TER 0.6100 0.5900 -0.0200 0.5000 4 of 9 cells tied WebNLG / gpt2-medium BLEU 38.53 39.51 +0.98 49.39 M=60, final BLEU_NLTK 0.3800 0.3800 +0.0000 0.5000 9 of 9 cells tied METEOR 0.3500 0.3500 +0.0000 0.4000 3 of 9 cells tied chrF++ 0.5900 0.5900 +0.0000 0.6700 2 of 9 cells tied TER 0.5900 0.5500 -0.0400 0.4300 5 of 9 cells tied
+
+Let 
+
+Mr = |Ar|, Hr = |Hr|,
+
+and define the sampled body charge 
+
+Zr = ∑
+
+> t∈Ur
+
+Vt z32 
+
+> t,r
+
+, Vt ∼ Bernoulli (p).
+
+Writing 
+
+F(r) 
+
+> sub
+
+(x) = Pr [Zr ≤ x],
+
+and conditioned on the honest trajectory satisfying the always-on aggregate-norm invariant (observed on all cal-ibration trajectories and the held-out replay), the exact trajectory-conditional false-abort probability under indepen-dent Bernoulli checking is 
+
+qFA  
+
+> r
+
+= 1 − F(r) 
+
+> sub
+
+(Ksub )FBin (Kamb ; Mr, p)( 1 − p)Hr . (8) Equation (8) is conditional on the realized honest trajectory and makes no stationarity assumption on numerical errors. 
+
+Sampling laws in calibration and deployment. The de-ployed protocol uses independent hidden verification coins 
+
+Vt ∼ Bernoulli (p), and all security and false-abort probabili-ties reported in this paper are evaluated under this law. The numerical data used to select and validate the verifier parame-ters were collected through several measurement procedures: (i) the broad calibration campaign, 32 trajectories on a cali-bration GPU–TEE pair, carries z64 on every step and z32 on the harness’s uniformly random audits (rate 0 .1) plus probed tail steps. (ii) The deployment-pair systematic traces, eight honest pilot trajectories on the target pair, carry every-tenth-step z32 and full-step FP64 records; seven of them (all but qqp-large) are also the trajectories on which the family-level tail values of Table 7 are evaluated. (iii) The qqp-large replay, a trajectory preregistered with a fresh seed after parameter freezing and recorded on every step, is the only held-out trajectory and hence the only false-abort estimate; and (iv) the overhead harness fixes a hidden uniformly random au-dit subset of size ⌈pT ⌉ in order to stabilize the verification workload during timing measurements. Because honest veri-fication is passive (the audited recomputation does not alter the trajectory; replay fidelity was verified bitwise), the under-lying trajectory statistics (Sr, Qr, Mr, Hr) do not depend on the audit law; the observation procedure determines only how completely those statistics are measured. For the systematic traces of (ii) we treat the every-tenth-step sample as repre-sentative of the trajectory when forming the trajectory-level 24 upper estimates Sup  
+
+> r
+
+, Qup  
+
+> r
+
+, Mup  
+
+> r
+
+(no period-ten structure in the numerical discrepancy); the resulting values are model-based estimates under this representativeness assumption rather than distribution-free confidence bounds, and on the census tra-jectory the estimates obtained from each of the ten offsets cover the exact statistics. The hard-rejection count Hr is exact on every trajectory and does not rely on the assumption. For CIFAR-10 the statistics come from the harness’s audited steps, a uniformly random subset for which the binomial count in-version is conservative. Table 6 summarizes the data sources. 
+
+Staged calibration. The verifier parameters are obtained through the calibration procedure developed from the broad numerical-discrepancy campaign and subsequently instanti-ated on the target GPU–TEE pair. The broad campaign char-acterizes the body/tail structure, fallback behavior, and cross-run variation needed to establish the calibration rules; its four runs per configuration share the data order and differ only in a shifted noise stream, so the cross-run variation it exhibits understates that of independent replicates, and no reported quantity relies on it beyond the +20% sensitivity row. Before certified deployment, we apply these rules to honest pilot tra-jectories on the target pair, consolidate the resulting values at the model-family level, and freeze the complete verifier configuration. A change in GPU family or in the trusted refer-ence stack triggers recalibration; a change in the GPU-side training stack is revalidated against the calibrated discrepancy envelope and triggers recalibration if the observed honest spectrum falls outside it. 
+
+Environment differences between the calibration stages and the deployed pair. Not all calibration trajectories were produced under the deployed GPU software stack. For the RoBERTa-large configurations the GPU side of both calibra-tion stages ran under the deployed stack; for RoBERTa-base and the four GPT-2 configurations it ran under an earlier PyTorch build and a PEFT version whose LoRA initialisa-tion differs, so those calibration trajectories belong to a dif-ferent honest-trajectory family than the deployed runs. The TEE-side reference is unaffected, because every reference recomputation copies the trainable state from the GPU-side record. The fallback radius and the escalation-count inputs, which the procedure takes from the broad campaign, were checked on the deployed pair: the full-step FP64 census of the eight deployment-pair traces and of the held-out replay stays below ρamb (largest 7 .81 × 10 −3 against 1 .185 × 10 −2
+
+for RoBERTa, 6 .58 × 10 −4 against 4 .891 × 10 −3 for GPT-2, so Hr = 0 exactly), and the escalation counts observed on the deployed pair (at most two on any every-tenth-step trace, 22 on the full-census replay) stay below the campaign-derived opportunity bounds and far below Kamb . The deployment runs of Section 8 likewise use a GPU-side software stack that differs from the deployment-pair calibration trajectories, so we revalidate the frozen configuration against their honest discrepancy spectrum: over the 3770 checks judged in those runs, the ratio of the observed body-discrepancy means to those of the calibration traces lies in 0 .81–1 .23 for six of the eight tasks and below 0 .81 for the remaining two (the con-servative direction), with a single escalation, accepted by the FP64 check ( nt = 0.91 ≤ τnum ), and no norm violation; this lies inside the margins of Table 7 and within the +20% sensi-tivity row of the evaluation paragraph, so we retain the frozen parameters for these runs. The equivalence of the TEE refer-ence itself was tested once rather than assumed: recomputing recorded calibration steps of both families on the host refer-ence environment and inside the SEV-SNP guest gave bitwise-identical discrepancies, and recomputing one recorded step with the verifier’s shard grouping (micro-batches of 256, 8, and 4 examples; 16 and 1 threads) reproduced the recorded value bitwise, so the host-side calibration passes are taken as the deployed TEE computation. The FP64 references of the calibration stages were computed on a GPU, whereas the deployed verifier computes them on the TEE CPU; recom-puting four recorded steps on the TEE CPU (two from the campaign and two from the deployment-pair traces, includ-ing the two largest FP64 discrepancies observed, nt ≈ 1.0) reproduced the GPU values to within 3 × 10 −9 relative, an ab-solute difference in z64 below 10 −12 , ten orders of magnitude below ρamb , which we treat as negligible. For CIFAR-10 the calibration and deployment runs share one GPU environment and one TEE environment; in a small-scale test on a single audited step, host and guest recomputations agreed bitwise, and recomputing that step with chunk sizes of 2048, 256, 33 (the verifier’s shard width), and 8 examples changed z by at most 10 −7 relative (fp32 summation order; not bitwise), three orders of magnitude below τabs ; on this small-scale evidence we treat the effect as negligible. 
+
+In-sample calibration checks and the held-out estimate. 
+
+The family-level values of Table 7 are evaluated on seven of the eight honest trajectories used during deployment-pair calibration (all but qqp-large; see the evaluation paragraph), the same trajectories on which the calibration procedure was instantiated. They confirm that the frozen parameters meet the design target on those trajectories, under the corresponding ev-idence model, and are therefore in-sample calibration checks. A false-abort estimate is available for exactly one deployment trajectory: after the parameters were frozen we preregistered a new qqp-large trajectory with a fresh seed, ran it on the target pair under the deployed software stack, and replayed it with full-step numerical recording; this held-out replay passed the verifier with a trajectory-conditional false-abort upper bound of 4 .1 × 10 −100 and retuned no parameter. 
+
+Evaluating Equation (8) . For a trajectory with a full cen-sus, Mr and Hr are read directly, and for the fully observed body sequence {z32 
+
+> t,r
+
+}t∈Ur the independence of the Bernoulli 25 Table 6: Provenance of the honest numerical data.               
+
+> data source observation pattern role broad calibration cam-paign (32 traj., calibra-tion pair)
+> z64 every step; z32 on ran-dom audits +probes reference charac-terization deployment-pair traces (8 traj., target pair) every-tenth-step z32 ;full-step FP64 deployment-pair calibration; in-sample check qqp-large preregistered replay (target pair) every step held-out evalua-tion CIFAR-10 traces (4 traj., target pair)
+> zon harness audits (random subset) deployment-pair calibration; in-sample check
+
+checking coins gives the Chernoff bound 1 − F(r) 
+
+> sub
+
+(Ksub ) ≤ inf  
+
+> λ>0
+
+exp (−λKsub ) ∏
+
+> t∈Ur
+
+
+
+1 − p + p e λz32 
+
+> t,r
+
+
+
+.
+
+(9) When the body was recorded on a systematic sample (every tenth step), the realized moments are replaced by trajectory-level upper estimates computed as nominal simultaneous 95% confidence bounds for a uniform random sample of the same size; these are model-based estimates under the assumption that the systematic sample is representative of the trajectory (see the sampling-laws paragraph above), not distribution-free confidence bounds. For CIFAR-10, where discrepancies are recorded only on the harness’s randomly audited steps, the honest escalation rate is instead bounded by the rule of three on the calibration audits, FBin (Kamb ; Mr, p) is replaced by the corresponding binomial bound over the ≈500 checked steps of the 5 ,000-step run at p=0.1, and the hard-cap term 
+
+(1 − p)Hr is supported empirically only (no honest audited step exceeded ρill during calibration). Within the correspond-ing evidence model, each family-level value in Table 7 is at least the largest evaluated per-trajectory upper value within that family. The qqp-large calibration trace is excluded from the RoBERTa entry: under the systematic-sample evidence model the range term of its body estimate leaves the bound at about 0 .2, far above the target, which is why that configu-ration was re-examined by the full-census replay. As a sen-sitivity check rather than a bound, inflating every calibrated trajectory statistic ( Sup  
+
+> r
+
+, Qup  
+
+> r
+
+, Mup  
+
+> r
+
+, and the CIFAR-10 esca-lation rate) by 20% gives worst-case conditional values of 1.3 × 10 −6 (RoBERTa), 4 × 10 −4 to 1 × 10 −3 (GPT-2, de-pending on whether the second-moment estimate is inflated linearly or quadratically), and 2 .9 × 10 −4 (CIFAR-10); a 30% inflation exceeds the 10 −3 target for GPT-2. The thinnest mar-gin is the GPT-2 body charge, pS up  
+
+> r
+
+/Ksub = 0.73 on the worst trajectory (E2E, GPT-2-medium), against at most 0 .43 for RoBERTa. 
+
+## E.2 Security Accounting 
+
+Exhaustive classification of GPU submissions. For ev-ery committed GPU submission that satisfies the always-on structural checks, the trusted recomputation defines a coun-terfactual verification outcome independently of whether that step is actually sampled. The submission therefore belongs to exactly one of three disjoint classes: the FP32 body B, the ac-cepted FP64 ambiguity region A, or the hard-rejection region 
+
+H . The first two classes constitute the numerical-tolerance channels and are accounted for by (Gextra , βextra ) below. Ev-ery step in H is rejected whenever sampled and is therefore covered by the Bernoulli full-step detection guarantee: if at least Mfull predictable hard opportunities occur, the first Mfull 
+
+of them are all missed with probability (1 − p)Mfull , again for any history-adaptive strategy, and violations of the always-on structural invariants are rejected deterministically. This classification does not depend on how the GPU constructs its submitted gradient; a more elaborate forging strategy may change which class a step falls into, but not the classification itself. Throughout, “accepted” means that the run reaches certificate issuance after every deferred verification job has completed. 
+
+Normal FP32 path. Let at denote the adversarial normal-ized deviation from the TEE FP32 reference on a body-path step, with 0 ≤ at ≤ τabs .
+
+The adversary may choose at adaptively from the previous protocol history, but must commit before the hidden current-step verification coin Vt is revealed. Define 
+
+GT = ∑
+
+> t
+
+at , ZT = ∑
+
+> t
+
+Vt at .
+
+The cumulative check accepts only while ZT ≤ Ksub .Using the martingale difference 
+
+Xt = ( p −Vt )at
+
+and stopping when the cumulative deviation first reaches G, a Freedman–Bernstein bound gives Pr [GT ≥ G, ZT ≤ Ksub ] ≤
+
+exp − (pG − Ksub )2
+
+2p(1 − p)τabs (G + τabs ) + 23 τabs (pG − Ksub )
+
+!
+
+.
+
+(10) We define Gsub by numerically inverting Equation (10) at fail-ure probability βsub . Hence, cumulative body-path deviation exceeding Gsub evades this counter with probability at most 
+
+βsub .26 FP64 ambiguity path. Every accepted fallback use satisfies 
+
+a64  
+
+> t
+
+= ∥ ¯gGPU  
+
+> t
+
+− ¯g64  
+
+> t
+
+∥2
+
+C ≤ ρamb .
+
+Consider the first M ambiguity opportunities generated by any predictable adversarial strategy, where whether the cur-rent submission constitutes such an opportunity is determined before the current verification coin is drawn. Because the verification coins are independent across steps and hidden until commitment, the audit indicators on these first M oppor-tunities are i.i.d. Bernoulli (p), so the number of audited ones satisfies 
+
+XM ∼ Binomial (M, p).
+
+Define 
+
+Mβamb = max {M : FBin (Kamb ; M, p) > βamb } .
+
+Surviving beyond Mβamb opportunities requires the accepted-escalation counter to stay at or below Kamb on the first Mβamb +
+
+1 of them, hence Pr at least Mβamb + 1 ambiguity opportunities occur and the counter stays ≤ Kamb 
+
+ ≤ βamb ,
+
+for every history-adaptive strategy. The corresponding cumu-lative allowance is 
+
+Gamb = ρamb Mβamb .
+
+CIFAR-10 specialization. For CIFAR-10, which does not use FP64 adjudication, the same accounting applies with the ambiguity region defined directly in the FP32 metric: 
+
+B = {t : z32  
+
+> t
+
+≤ τabs },
+
+A = {t : τabs < z32  
+
+> t
+
+≤ ρill },
+
+H = {t : z32  
+
+> t
+
+> ρill }.
+
+Each accepted ambiguity opportunity contributes at most ρill ,so Gamb = ρill Mβamb with the same Bernoulli-counter argu-ment. Combining the two channels, 
+
+Gextra = Gsub + Gamb . (11) If the cumulative normalized deviation Gtol routed through the body and ambiguity channels exceeds this total, then at least one of the two component allowances is exceeded. Hence, Pr [Gtol > Gextra and the run is accepted ]
+
+≤ βsub + βamb =: βextra .
+
+A submission with z64  
+
+> t
+
+> ρamb does not belong to Gextra 
+
+and is rejected whenever sampled; the choice of reference on escalated steps is discussed under Status of the Guarantee below. The parameter table is given below. Table 7: Frozen verifier parameters per model family at the primary security operating point p = 0.1; the numerical-tolerance guarantee is the pair (Gextra , βextra ) with βextra =
+
+βsub + βamb = 0.05 in every family. z-thresholds are in clipping-norm units ( C=1); τnum is stated in the accoun-tant’s amplified units ( ×B/2C) and scales with the batch size (0 .1565 at B=64, 0 .0783 at B=32). CIFAR-10 replaces the fp64 layer with the same-metric hard cap ρill = 2τabs . For the two false-abort rows see the notes below the table.                                                                       
+
+> RoBERTa GPT-2 CIFAR-10 audit rate p0.1 0.1 0.1
+> τabs 1.60 ×10 −31.74 ×10 −37.30 ×10 −4
+> ρamb /ρill 1.185 ×10 −24.891 ×10 −31.459 ×10 −3
+> τnum 1.5169 0.1565 / 0.0783 —
+> Ksub 0.088 0.72 0.20
+> Kamb 25 17 5
+> (βsub ,βamb )(.005 , . 045 )(.025 , . 025 )(.025 , . 025 )
+> aggregate-norm slack 10 −410 −410 −4
+> worker pool (K,S)(1,64 )/
+> (2,32 )(2,32 )(62 ×1)
+> Gextra 5.478 9.496 2.511 in-sample check (target 10 −3)
+> ≤2.8×10 −9
+> (3 traj.) ≤8.7×10 −6≤1.1×10 −4
+> held-out qFA estimate
+> ≤4×10 −100
+> (qqp-large replay) ——
+
+Notes on Table 7. The two false-abort rows are evaluated under the Bernoulli protocol from the statistics observed as described in the sampling-laws paragraph. The held-out row is a trajectory-conditional upper bound from the exact statis-tics of the full-census replay and is the only false-abort es-timate in this paper. The in-sample row is evaluated on the deployment-pair calibration trajectories: the RoBERTa entry covers three of the four RoBERTa trajectories (the qqp-large calibration trace being excluded as explained in the evaluation paragraph), the RoBERTa and GPT-2 entries are model-based upper values under the representativeness assumption for the systematic every-tenth-step sample, and the CIFAR-10 entry uses the rate model over the ≈500 checked steps of the 5 ,000-step run; they certify only that the frozen parameters meet the target on the calibration data. Weight-decay convention for the LLM families (CIFAR-10 uses no weight decay): the re-leased verifier and GPU trainer apply weight decay uniformly to every trainable parameter on both sides, matching the broad calibration campaign and the deployment-pair calibration tra-jectories (single-group AdamW). The overhead runs reported here were executed with the standard HF optimizer grouping on both sides, which exempts biases and LayerNorm weights from decay; the grouping changes the training trajectory but not the verifier implementation or worker configuration. The steering-attack experiments of Section 5.2 and Appendix A also use the standard HF grouping. 27 E.3 Empirical Steering-Scale Calibration 
+
+This subsection is empirical. The formal guarantee is stated in the deviation metric— Gextra bounds the cumulative normal-ized deviation accepted through the tolerance channels (Equa-tion (11))—and does not depend on anything below. What follows supplies the unit conversion behind the interpreted detection rate of Equation (6): we measure, on sampled steps, how much steering progress one normalized unit of tolerated deviation buys relative to one full-power steering update. The comparison is a same-state one: both replacements are eval-uated from the same pre-step optimizer state, the tolerated set being a ball centered at the honest aggregate and the full-power set the clipping ball. It is not a post-center construction in which a full-power update is applied after the trusted step. For a tested step, let gh denote the honest clipped aggre-gate the verifier recomputes for that step. We compare two 
+
+replacements of gh inside the same training step, differing only in the set the forged gradient is drawn from: tolerated: ∥g − gh∥2 ≤ rC , full-power: ∥g∥2 ≤ C.
+
+The tolerated feasible set used here omits the always-on aggregate-norm constraint ∥g∥2 ≤ C(1 + 10 −4) of the de-ployed protocol and is therefore a relaxation of the deployed attacker’s feasible set; the comparison is consequently con-servative in favour of the attacker. At the tested states, even after adding the largest calibrated tolerance radius, the result-ing norm remains far below the deployed cap, so the omitted constraint is inactive on these points; no general claim be-yond the tested states is made. Both are solved by the same steering optimizer from the same parameters and optimizer state, and both are scored against the same realized DP noise, so the comparison is a matched pair rather than two separate executions; neither is an additional deployed step. Writing 
+
+Ptol  
+
+> t
+
+(r) and Pfull  
+
+> t
+
+for the progress each makes on the steering distance relative to the honest step, define 
+
+Rt (r) = Ptol  
+
+> t
+
+(r)
+
+rP full 
+
+> t
+
+, bκeq = max 
+
+> (t,r)∈Ttest
+
+Rt (r).
+
+Over nine RoBERTa checkpoints spanning t/T = 0.1 to 0 .9, three GPT-2 states on E2E at t/T = 0.20, 0 .50 and 0 .90, and nine radii from 10 −5C to C, every measured Rt (r) exceeds one by less than 10 −3, which is why the maximum rather than the mean is the quantity reported: it is the direction that favours the adversary. We obtain bκRoBERTa eq = 1.00064 and bκLM eq = 1.00038. Thus, over the tested states and radii, a tolerated normalized radius r has approximately r times the steering effect of the corresponding same-state full-power comparator; this same-state ratio is the conversion used in Sections 6.4 and 7.1. The measurement covers the sampled steps, radii, and model families of Ttest , and the conversion in Equation (6) further treats tolerated and full-power deviations as additive and reads the same-state ratio as a step count; we therefore report the interpreted full-step detection term as approximate, while the deviation bound of Equation (11) holds irrespective of this calibration. Two limits bound what this measures. The sub-threshold and ambiguity branches are not independent evidence: they share one linearisation and their Rt agree to five decimals, so their agreement is arithmetic rather than corroboration. And the matched noise draw is what makes the ratio tight — it is the correct comparison for a single step, since the noise is common to both branches and cancels along the first-moment path, but under independent draws the same quantity varies by a factor of two to three across seeds. 
+
+Transfer to the deployment trajectory family. The conver-sion above is measured on the attack-evaluation trajectories, whose setup differs from the deployment trajectory family (Section 6). We use bκeq only as an empirical scale when inter-preting the deployed Gextra budget and do not claim it invari-ant across trajectory families; establishing that would require repeating this calibration on the deployment trajectories. 
+
+## E.4 Value-Aware Checking 
+
+The uniform protocol uses pt = p for every iteration. More generally, let pt ∈ [0, 1] be a hidden checking probability selected before training from a public schedule satisfying the expected-work constraint ∑Tt=1 pt = pT . For a fixed set F of full malicious deviations, 
+
+Pdet (F ) = 1 − ∏
+
+> t∈F
+
+(1 − pt ),
+
+so if certain training phases are known to provide larger at-tack value, the verifier can assign larger pt to those phases while preserving the same expected number of checks, and an adversary that concentrates its full deviations on those phases faces a correspondingly higher detection probability. This extension concerns the full-deviation detection channel only. All numerical budgets Gsub , Gamb , and Gextra reported in Table 7, and all experiments in this paper, use the uniform setting pt = p; extending the numerical-tolerance accounting to nonuniform pt is outside the present evaluation. 
+
+## E.5 Status of the Guarantee 
+
+(Gextra , βextra ) is an analytic high-probability security guaran-tee on the cumulative normalized deviation routed through the numerical-tolerance channels, under the stated protocol assumptions; Gextra alone is not a deterministic cap. The guar-antee is stated relative to the adaptive trusted reference se-lected by the verifier on each step: it does not require the TEE FP32 and FP64 executions to define one canonical numerical trajectory, the difference between these two trusted references is not itself charged as adversarial deviation, and the bound concerns the GPU’s deviation from the reference the protocol 28 Table 8: Status of the numerical-tolerance quantities.                                      
+
+> Quantity Status Main dependency 1−(1−p)Mfull analytic Mfull full deviations under in-dependent hidden Bernoulli checking
+> (Gextra ,βextra )analytic high-probability bound Bernoulli protocol, frozen pa-rameters, hidden coins
+> qFA on the held-out census trajectory trajectory-conditional estimate exact trajectory, Bernoulli law; the only false-abort estimate in-sample check from systematic samples model-based cali-bration check representativeness assump-tion; same trajectories as the calibration future-run qFA empirical general-ization one held-out trajectory (qqp-large replay); otherwise untested
+> Gextra →full-power steps empirical interpre-tation same-state steering-scale calibration, additive step-equivalent reading; measured on attack-experiment tra-jectories, transfer to the deployed pair assumed Equation (6) empirical interpre-tation interpreted full-step detec-tion term; not a formal the-orem
+
+uses to adjudicate that submission. The chain is calibration data → frozen verifier parameters → (Gextra , βextra ): the first arrow is empirical parameter selection, the second is analytic security accounting, so a poor estimate of the honest discrep-ancy distribution may make the chosen parameters unsuitable for honest availability but does not invalidate the bound eval-uated at the parameters actually frozen. Table 8 summarizes the status of each quantity used in this appendix. 
+
+## F Efficiency Analysis 
+
+The running time of our protocol consists of four main com-ponents: (1) GPU-side training time, including forward and backward propagation and clipping 7; (2) communication time between the GPU and the TEE; (3) TEE-side DP operations, such as noise generation and model update; and (4) TEE-side verification work incurred by probabilistic checking. We use 
+
+Ttrain , Tcomm , TDP , and Tveri to denote the corresponding total costs. 
+
+Communication and the main training path. Under our communication-efficient split execution, the GPU sends only the clipped-and-averaged gradient to the TEE, rather than all per-example gradients. Let SG denote the size of this transmit-ted gradient. After the GPU-submitted gradient is committed, the TEE sends only a short random seed back to the GPU, 
+
+> 7While gradient clipping is a key component of DP-SGD, it is also com-monly used in non-DP training to mitigate exploding gradients and improve training stability.
+
+which allows the GPU to reconstruct the same DP noise and maintain a synchronized local model and optimizer state. Since the seed size is negligible compared with SG, the steady-state communication cost per iteration can be approxi-mated as 
+
+T iter comm ≈ SG
+
+Band + Tsync ,
+
+where Band is the effective bandwidth of the GPU–TEE communication path and Tsync captures fixed synchronization costs such as message notification, TEE-boundary crossing, and buffer management. Since the transmitted gradient is an aggregate over the trainable parameters, the communication cost scales with the number of trainable parameters rather than with the batch size or the number of per-example gradients. The GPU-side training, GPU–TEE communication, and TEE-side DP operations form the latency-critical execution path. Let 
+
+Titer = T iter train + T iter comm + T iter DP 
+
+denote the average wall-clock time of this path for one iter-ation. For a run of T iterations, the main training pipeline therefore requires approximately NT iter .
+
+Hungry updating with deferred verification. Under hun-gry updating, verification is removed from the latency-critical training path. Suppose each iteration is independently se-lected for checking with probability p, and let Titer-veri denote the average work required to complete the full verification procedure for one checked iteration. Assume that the TEE runs n verification workers in parallel, in addition to the thread serving the main training path. On average, one verification task is generated every 1 /p training iterations. Hence, the verification workers receive work at an average rate corresponding to 
+
+pT iter-veri 
+
+units of verification work per training iteration. With n work-ers, the verification system can process one check every 
+
+Titer-veri /n units of wall-clock time. Therefore, the verification pipeline can keep pace with training when 
+
+pT iter-veri 
+
+n ≤ Titer , (12) or equivalently, 
+
+n ≥ pT iter-veri 
+
+Titer 
+
+.
+
+When Equation (12) holds, verification work can be largely hidden behind the main training pipeline. Training may tem-porarily run ahead of verification, but a run is considered 29 complete only after all verification tasks generated during training have finished successfully. Hence, 
+
+Ttotal = T T iter + Tdrain ,
+
+where Tdrain denotes the time required to drain any remaining verification tasks after the final training iteration. In the stable regime, Tdrain is small, and therefore 
+
+Ttotal ≈ T T iter .
+
+On the other hand, if 
+
+pT iter-veri 
+
+n > Titer ,
+
+verification tasks are generated faster than the workers can process them, and a backlog accumulates. Under a steady-state approximation, the end-to-end running time becomes 
+
+Ttotal ≈ max 
+
+
+
+T T iter , pT T iter-veri 
+
+n
+
+
+
+.
+
+In the verification-bottleneck regime, this reduces to 
+
+Ttotal ≈ pT T iter-veri 
+
+n .
+
+Thus, hungry updating converts verification from a syn-chronous per-check latency into a background throughput requirement. When sufficient verification parallelism is avail-able, most verification work overlaps with the main training pipeline, resulting in only a small end-to-end overhead. 
+
+## G MIA parameters 
+
+The parameters of the MIA experiments are shown in Table 9. Table 9: Hyperparameters of the membership-inference ex-periments.                                 
+
+> IMIA SHAPOOL
+> Hyperparameter Setting Hyperparameter Setting Number of imitative models 10 Number of shadow models 10 Imitative-out total epochs 100 Shadow pre-training epochs 100 Warm-up epochs 80 Shadow pre-training batch size 128 Imitation epochs 20 Shadow pre-training learning rate 0.1 Pivot fine-tuning epochs 20 Fine-tuning epochs 3Shadow / imitation batch size 256 Fine-tuning batch size 64 Shadow / imitation learning rate 0.1 Fine-tuning learning rate 0.1 Shadow / imitation dropout 0Number of experts 5Pivot samples per class 100 MoE ratio 0.5 Dropout 0
+
+30
