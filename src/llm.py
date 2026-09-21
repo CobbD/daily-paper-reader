@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+import uuid
 from typing import List, Dict, Tuple, Any, Optional
 
 import requests
@@ -82,6 +83,7 @@ class LLMClient:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url
+        self.session_id = str(uuid.uuid4())
         self._base_urls = self._normalize_base_urls([base_url])
         # 实例级别的累计统计（无需显式 reset；通常每个实验构造一个 client）
         self._call_index = 0
@@ -498,6 +500,7 @@ class LLMClient:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "x-opencode-session": self.session_id,
         }
         model_name = self.model
         if 'qwen3' in model_name.lower():
