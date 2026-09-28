@@ -1,0 +1,1462 @@
+Title: Temporal Gradient Inversion for Private Trajectory Reconstruction in Embodied Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2609.30258v1
+
+Published Time: Fri, 25 Sep 2026 01:42:29 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Temporal Gradient Inversion for Private Trajectory Reconstruction in Embodied Reinforcement Learning 
+
+Sudip Bhujel † Shanghao Shi ‡ Ruiquan Huang † Ning Zhang ‡ Yang Xiao †
+
+> †
+
+Department of Computer Science, University of Kentucky 
+
+> ‡
+
+Department of Computer Science and Engineering, Washington University in St. Louis 
+
+{sudipbhujel,RuiquanHuang,xiaoy}@uky.edu {shanghao,zhang.ning}@wustl.edu 
+
+Abstract 
+
+Distributed learning in embodied reinforcement-learning agents offers a degree of privacy by retaining raw sensor data on-device and transmitting only policy gradi-ents to the server. Yet temporal structure can amplify this leakage beyond single-frame attacks. We introduce Temporal Reconstruction Attack on Consecutive 
+
+Encodings (TRACE), an amortized temporal gradient-inversion attack that autore-gressively reconstructs the sequence of private observation-action trajectories from per-step policy-learning gradients. The attack exploits two structural signals ig-nored by prior single-frame methods: (i) cross-time correlation between successive embodied gradients, which we formalize via a conditional mutual-information bound, and (ii) closed-form action recovery from policy-head gradient structure, which we prove exact when standard entropy regularization is sufficiently small. On held-out embodied scenes, TRACE reaches 18 .8 dB PSNR with near-perfect action recovery at 3–4.5 ms per reconstructed frame, dominating the learning-based baseline across all reconstruction metrics and exceeding optimization at-tacks while running orders of magnitude faster. Further evaluation demonstrates TRACE’s broader applicability across recurrent, residual, and compact transformer victim architectures, multi-modal inputs, and larger discrete action spaces. De-fense experiments suggest that protecting temporal gradient streams may require sequence-aware privacy mechanisms. 
+
+1 Introduction 
+
+Gradient inversion attacks have emerged as a fundamental privacy threat in modern machine learning. By leveraging gradients computed on private input, an adversary can reconstruct the original data with high fidelity [47, 12, 41]. Although initially studied in standard supervised learning settings, this privacy risk becomes particularly relevant wherever gradients are exposed. Notably, in distributed reinforcement learning (RL) scenarios such as robot fleets and shared navigation, the embodied RL agents share model/policy gradients to an external aggregating server while keeping raw environmen-tal observations on-device. In these settings, the privacy risk imposed by gradient inversion attacks becomes aggravated: a recovered embodied trajectory leaks the agent’s time-ordered camera view and actions, such as room layout, objects, and where the agent moved, looked, and lingered, enabling activity profiling, premise mapping, and persistent monitoring by a curious server. From the attacker’s perspective, existing gradient inversion techniques target single images or static mini-batches, treating them as i.i.d. samples optimized with simple supervised losses such as cross-entropy [47, 12, 41, 40]. By contrast, embodied policy-learning traces are ordered measurements of a physical process, not i.i.d. samples. Consecutive frames captured by the agent’s camera are coupled by transition dynamics: bounded translations, bounded rotations, and a largely persistent 3D                                           
+
+> Preprint. arXiv:2609.30258v1 [cs.LG] 24 Sep 2026 GT st
+> (first frame ( s1))
+> Prior work (Single-frame)
+> gtg1g2g3g4gT· · ·
+> ˆst
+> t=1 t=2 t=3 t=4 t=T
+> ×××
+> ˆatMoveAhead RotateLeft MoveAhead LookDown MoveAhead
+> TRACE (ours, trajectory-level)
+> gtg1g2g3g4gT· · ·
+> Causal Transformer (contextualizes gradient tokens with visual history)
+> ˆst
+> t=1 t=2 t=3 t=4 t=T
+> context context context context
+> ˆatMoveAhead RotateLeft MoveAhead LookDown MoveAhead t= 1 Sequence Length ( t)t=T
+> Pixel Error
+> Single-frame aack
+> temporal reconstruction gain
+> MSE PSNR
+> Reconstruction Fidelity
+
+Figure 1: Illustration of trajectory reconstruction from embodied RL gradients. (Left) Prior work inverts each gradient gt independently, ignoring temporal coherence; TRACE processes the full trajectory {g1, . . . , gT } with a causal transformer that sequentially decodes observations ( ˆst) and discrete actions ( ˆat), improving recovery accuracy. (Right) Qualitative illustration of pixel error (MSE) and reconstruction fidelity (PSNR) versus sequence length t: single-frame optimization attacks ( t=1 ) incur high error, while TRACE improves with longer context—realizing temporal reconstruction gain—until returns diminish as t → T (see Remark D.5). scene cause nearby observations to share layout, objects, lighting, and viewpoint-dependent geometry. In actor-critic methods such as PPO [30] and A2C [25, 19], the communicated gradients further combine policy, value, and entropy terms whose weights depend on rollout-derived advantages and returns. RL gradient leakage is therefore a trajectory-inversion problem rather than a collection of independent image inversions: the attacker must recover both private RGB observations and discrete actions from a noisy, loss-weighted gradient stream, while the same temporal coherence provides side information that can reduce per-step reconstruction ambiguity. Thus, a valid reconstruction should satisfy the environment’s transition dynamics, and those dynamics also provide the structure TRACE exploits. 
+
+This work. We introduce TRACE ( Temporal Reconstruction Attack on Consecutive Encodings), a temporal gradient inversion attack targeting embodied RL agents through near real-time inference .Our key insight is that, in distributed learning settings for embodied agents, consecutive observations leave correlated signatures in their corresponding policy gradients. Unlike prior attacks—whether per-gradient optimization or single-frame learning-based mappers—that invert each gradient inde-pendently, TRACE amortizes the attack across the trajectory through an autoregressive model with three components: a gradient encoder maps gradient updates to compact latents, a causal transformer that propagates trajectory context, and a decoder that jointly reconstructs observations and predicts actions. When the server observes per-step gradients from consecutive viewpoints, temporal context amplifies leakage. We substantiate this claim both theoretically, through closed-form discrete-action recovery and an information-theoretic characterization of temporal gain, and empirically. Because policy memory, visual backbones, and auxiliary observations change the gradient representation, we also test whether reconstruction leakage persists beyond the CNN victim. Our main contributions include: • We propose TRACE, an amortized trajectory-level inversion framework that uses gradi-ent encoding, causal temporal modeling, and autoregressive decoding to recover observa-tions/actions from gradient streams in milliseconds (Sec. 3). • We develop a theoretical foundation for actor-critic trajectory-gradient leakage, proving closed-form action recovery and characterizing temporal reconstruction gain (Sec. 4). • We evaluate TRACE against both optimization-based and learning-based baselines, as well as common gradient defenses, demonstrating high reconstruction fidelity and robust action recovery in realistic embodied-RL settings. The results show temporal gradient leakage transfers across unseen embodied environments, as TRACE achieves strong zero-shot reconstruction on held-out scenes and exhibits rapid improvement when adapted using only a small subset of target-domain trajectories (Sec. 5). To assess the broader applicability of TRACE, we also evaluate recurrent, residual, and transformer victims, multi-modal inputs, and larger discrete action spaces (App. F.3). 22 Problem Formulation 
+
+We adopt a standard assumption from gradient inversion research [47, 12, 44, 41, 17]: the model server is passive and honest-but-curious , faithfully aggregating while observing the client’s transmitted gradient updates. We consider the clients are tasked with policy learning via A2C [25] or PPO [30], two widely used actor-critic methods. At each communication round, the server broadcasts a policy model θ0 to the client. The client then interacts with its private environment using this model, computes per-step gradients from its local rollout, and sends the ordered gradients to the server. Given a contiguous trajectory of gradients G1: T = ( g1, . . . , gT ) from a victim client where T denotes the trajectory length, the curious server seeks to reconstruct the corresponding trajectory: observations 
+
+ˆs1: T and actions ˆa1: T , by minimizing expected reconstruction error and action prediction error. It is worth noting that cryptographic protections, such as secure aggregation [5], can prevent a server from seeing individual gradients. However, they rely on heavy cryptography methods and introduce extra system/security assumptions that do not apply to the ordered-gradient setting studied here. Under the standard white-box assumption for distributed learning, we assume the adversary (curious server) has full knowledge of model architecture, the current checkpoint θ0, the action space, and the learning rule, but not the underlying data [47]. The adversary has auxiliary trajectories from the same task family for offline training, after which inference relies solely on the observed ordered gradients. Formally, let S = [0 , 1] 3×HI ×WI denote the RGB observation space, with image height HI and width WI , and let A = {1, . . . , K } denote the discrete action space, where K = |A| . A summary of the key symbols used throughout is provided in App. B. For each rollout pair (st, a t), the client computes a generalized advantage estimate ˆAt and return target ˆRt, both derived from the client’s local trajectory and hidden from the attacker. We adopt a unified per-step actor-critic objective 
+
+Lac  
+
+> t
+
+(θ) = ℓpol  
+
+> t
+
+(θ) + cv
+
+ Vθ (st) − ˆRt
+
+2 − ce H(πθ (· | st)) , (1) 
+
+where the policy term ℓpol 
+
+t instantiates the underlying algorithm: 
+
+ℓpol  
+
+> t
+
+(θ) = 
+
+
+
+− ˆAt log πθ (at | st), A2C ,
+
+− min 
+
+
+
+rt(θ) ˆAt, clip( rt(θ), 1 − ϵ, 1 + ϵ) ˆAt
+
+
+
+, PPO , where rt(θ) = πθ (at | st)
+
+πθ0 (at | st) . (2) 
+
+The attacker observes the corresponding per-step communicated gradient 
+
+gt = ∇θ Lac 
+
+t (θ) θ=θ0 ∈ Rd, st ∈ S , a t ∈ A . (3) 
+
+Modeling assumption. We treat gt as the per-step gradient at the broadcast parameters θ0, consistent with per-step policy-gradient sharing in collaborative policy learning [20, 15]. Multi-step client policy updates, defined as ∆θ = θ0 − θclient , combine gradients computed along a changing optimization path and may reduce the temporal structure available to the attacker [15]. However, we focus on the per-step setting in this work. Here, πθ (· | st), Vθ (st), and H(πθ (· | st)) denote the policy, value, and entropy, so the three terms in Equation (1) carry advantage-weighted policy, return-regression, and entropy-regularization signals from both actor and critic branches. A2C [25] and PPO [30] share the same critic and entropy terms and differ only in ℓpol 
+
+t . Later in Proposition 4.1, we show their policy gradients coincide at θ0, so our attack applies to both without modification. 
+
+3 TRACE Design Environment            
+
+> Victim Agent
+> Victim Network CNN Encoder FC Layer Policy + value Heads RGB Observation
+> 𝐬 𝐭 3 × 𝑊 × 𝐻
+> action
+> 𝑎 "∈ {𝑎𝑐𝑡𝑖𝑜𝑛𝑠}
+> Gradient Encoder
+> Residual MLP
+> Temporal Transformer
+> Causal attention pattern
+> Residual Image Decoder
+> Transposed Convolutions + residual blocks
+> 𝐳 𝟏 , 𝐞 𝟎 , ⋯ , 𝐳 𝐓 , 𝐞 𝐓$𝟏
+> + positional embeddings
+> 𝐠 𝟏
+> 𝐠 𝟐
+> 𝐠 𝟑
+> ⋮𝐠 𝐓
+> 𝐠 𝟏 , 𝐠 𝟐 , ⋯ , 𝐠 𝐓
+> (full-dim each)
+> 𝐳 𝟏 , 𝐞 𝟎 , 𝐳 𝟐 , 𝐞 𝟏 ⋯ , 𝐳 𝐓 , 𝐞 𝐓$𝟏
+> (D-dim each)
+> 𝐳 && , 𝐳 '', ⋯ , 𝐳 ('
+> (contextualized)
+> Sequence T consecutive frames Reconstructed
+> 𝐬 𝐭 1 3×𝑊×𝐻
+> Predicted action 𝑎 "1
+> Image Encoder
+> CNN Encoder
+> 𝐬 𝟏
+> 𝐬 𝟐
+> 𝐬 𝟑
+> ⋮𝐬 𝐓 Shared Gradient
+> 𝐠 𝐭 ∈ 𝑅 &
+> ℒ'()
+> (pixel)
+> ℒ*+
+> (pixel)
+> ℒ,-./01
+> (cross-entropy)
+> ℒ234-
+> (perceptual)
+> 𝛼 +𝛼 5𝛼 6𝛼 7
+> ℒ.0.,8
+> …
+> Victim Attacker
+> t=1 t=T
+> ℒ408809.
+> (rollout)
+> 𝛼 :
+> 𝐬 𝟏 , 𝐬 𝟐 , ⋯ , 𝐬 𝐓
+> (observations)
+
+Figure 2: TRACE attack overview. The core intuition behind TRACE is twofold. First, gradient updates from pol-icy learning tend to reflect the agent’s current obser-vation: because the policy gradient ∇θ log πθ (at | st)
+
+passes through st via inter-mediate activations, the gra-dient vector retains informa-tion about the input observa-tion that may be exploited 3for reconstruction. Second, embodied RL trajectories exhibit strong temporal coherence—consecutive observations share scene geometry, lighting, and object layout—providing cross-step priors that single-frame inversion methods cannot exploit. As shown in Fig. 2, TRACE leverages both signals jointly: a gradient encoder and an image encoder extract a per-step latent from the gradient updates 
+
+g1: T ; a temporal (causal) transformer propagates scene context across the trajectory. Finally, a residual decoder reconstructs ˆst in the pixel space from the contextualized latent and predicts the action ˆat.
+
+3.1 Attacker Model 
+
+The attacker’s model has three components: i) a gradient encoder that compresses the million-dimensional update into a low-dimensional latent representation; ii) a temporal transformer that contextualizes each latent using causal gradient and image-context tokens; and iii) a decoder that reconstructs the image and predicts the corresponding action. 
+
+Encoder. The encoder component comprises a gradient encoder ϕenc : Rd → RD and an image encoder ϕimg : [0 , 1] 3×HI ×WI → RD, where D ≪ d is the shared latent dimension. The gradient encoder maps the high-dimensional raw gradients {g1, . . . , gT } to compact representations zt =
+
+ϕenc (gt) ∈ RD. The image encoder produces context embeddings. During the teacher-forced warmup: ground-truth observations provide et = ϕimg (st) for t ≥ 1 while a learned start token 
+
+e0 ∈ RD, initialized from N (0, σ 2init I), provides the initial context before any decoded frame is available. This warmup path forms the interleaved transformer input: 
+
+XTF = [ z1, e0, z2, e1, . . . , zT , eT −1] ∈ R2T ×D . (4) 
+
+Temporal Transformer. The causal transformer ϕtemp : R2T ×D → R2T ×D uses N -layer multi-head self-attention with a lower-triangular causal mask M ∈ { 0, 1}2T ×2T , Mij = 1[j ≤ i]. In the teacher-forced warmup sequence of Equation (4), the representation used to decode timestep t is taken from the gradient-token position zt. Because et−1 appears immediately after zt, this parallel warmup path uses lagged image context: et−1 is available only to later gradient tokens. The sequential scheduled-sampling, rollout, and inference protocol is described in Sec. 3.2: after decoding step t,the encoded ground-truth or predicted frame is appended as context for later steps. Thus, inference is amortized per step but sequential across T decoding steps. The model uses gated residual connections with learnable scalars α(n)attn and α(n)ffn , initialized so residual branches are initially down-weighted: 
+
+x(n+1) = x(n) + σ(α(n)attn ) · Attn (n)(x(n)) + σ(α(n)ffn ) · FFN (n)(x(n)). (5) 
+
+The contextualized gradient representations ˜zt are extracted from the output of the transformer. 
+
+Decoder. The decoder ϕdec : RD → [0 , 1] 3×HI ×WI × ∆K−1 comprises two heads sharing the contextualized latent ˜zt: an image head ϕimg ,dec that upsamples ˜zt to a reconstructed observation ˆst
+
+via transposed convolutions with a sigmoidal output, and an action head ϕact —a two-layer MLP—that produces a categorical distribution over actions: 
+
+ˆst = ϕimg ,dec (˜ zt), ˆpt = softmax  ϕact (˜ zt), ˆat = arg max 
+
+> k
+
+[ˆ pt]k . (6) 
+
+3.2 Autoregressive Training 𝐳 𝟏 𝐞 𝟏 #𝐳 𝟏 𝐞 " 𝐳 𝟐 𝐞 𝟐 #𝐞 "
+
+> 𝐞 $
+
+⋮  
+
+> 𝐳 𝟏 𝐞 "𝐳 𝐓
+
+⋯ 𝐞 𝐓 #𝐞 &-$       
+
+> 𝐳 𝟏 𝐞 "𝐳 𝟐 𝐞 𝟑 #𝐞 $𝐳 𝟑 𝐞 𝟐 #
+> with 𝛽 )
+> t=1 t=2 t=3 t=T
+
+(a) 𝐳 𝟏 𝐞 𝟏 #𝐳 𝟏 𝐞 " 𝐳 𝟐 𝐞 𝟐 #𝐞 "
+
+> 𝐞 𝟏 #
+
+⋮  
+
+> 𝐳 𝟏 𝐞 "𝐳 𝐓
+
+⋯ 𝐞 𝐓 #𝐞 %-𝟏 #𝐳 𝟏 𝐞 " 𝐳 𝟐 𝐞 𝟑 #𝐞 𝟏 # 𝐳 𝟑 𝐞 𝟐 # 
+
+> t=1 t=2 t=3 t=T
+
+(b) 
+
+Figure 3: Train–inference protocol of TRACE. (a) During train-ing, after warmup, the next image-context token is encoded from either the ground-truth observation or the model’s prediction with probability βn. (b) During inference, each decoded observation is encoded and appended as image context for subsequent timesteps. Fig. 3 illustrates the training and inference processes of TRACE. Unlike video-generation settings such as MAGI [46], which gen-erate future frames from prior vi-sual context alone, TRACE con-ditions on per-step gradients to invert private trajectories. Be-cause TRACE models trajecto-ries sequentially, generating the state at time t depends on the pre-vious predictions. During the ini-tial teacher-forced warmup, the 4model uses the ground-truth image context in the lagged parallel path of Equation (4). This parallelizes the forward pass and stabilizes early training by preventing compounding errors. During training, however, teacher forcing introduces exposure bias [28]: the model relies on an ideal historical context unavailable during inference. To address this discrepancy, we employ two sequential strategies. First, we employ scheduled sampling [4] to gradually replace ground-truth frames with the model’s own predictions when constructing future image–context tokens. The epoch-wise replacement probability is 
+
+βn =
+
+
+
+0, n ≤ τ, βstart + ( βend − βstart ) n − τN − τ , n > τ, (7) 
+
+where n denotes the current epoch, τ is the warmup duration, N is the total number of epochs, and (βstart , β end ) are schedule endpoints. Hence, training is fully teacher-forced for n ≤ τ , then linearly transitions to stronger self-conditioned context usage. Second, we add an auxiliary short-horizon rollout loss : from a random start index, we unroll R autoregressive steps, supervise the predictions, where R is the rollout horizon, and feed each predicted frame back as context. Feedback frames are detached to preserve supervision under self-generated context while avoiding full gradient propagation through the feedback path. Inference follows the same sequential feedback pattern over all T timesteps, yielding per-step decoding instead of a parallel full-trajectory pass. 
+
+Training Objective. Lastly, we train our attacker model using a weighted multi-term objective, a standard approach in gradient inversion [12, 41, 17, 14], combining complementary loss functions: 
+
+Ltotal = α1LMSE + α2LL1 + α3Lact + α4Lperc + α5Lrollout . (8) 
+
+where LMSE and LL1 evaluate pixel fidelity loss, Lact action supervision loss, Lperc perceptual quality loss, and Lrollout rollout-supervision loss that exposes the model to its own predictions during training to mitigate exposure bias. α’s are the weights. We provide a full derivation in App. D.5. 
+
+4 Theoretical Analysis 
+
+We focus on two questions: (i) What information is revealed by the per-step policy gradient? (ii) Why does temporal conditioning enhance trajectory reconstruction? Full proofs are deferred to App. D. 
+
+4.1 Gradient Leakage and Action Recoverability 
+
+We first establish that at the broadcast checkpoint θ0, A2C [25] and PPO [30] produce the same communicated gradient, thereby yielding a clean three-term decomposition. 
+
+Proposition 4.1 (A2C–PPO gradient equivalence and decomposition) . For each timestep t, there exists a neighborhood Ut of θ0 such that clip( rt(θ), 1−ϵ, 1+ ϵ) = rt(θ) for all θ ∈ U t. Consequently, 
+
+∇θ ℓpol ,PPO  
+
+> t
+
+(θ) θ0 = ∇θ ℓpol ,A2C  
+
+> t
+
+(θ) θ0 , so both algorithms produce the same communicated gradient at θ0, which decomposes as 
+
+gt = − ˆAt∇θ log πθ (at | st) θ0
+
+| {z } 
+
+> policy gradient g(π)
+> t
+
++ 2 cv
+
+ Vθ0 (st) − ˆRt
+
+ ∇θ Vθ (st) θ0
+
+| {z } 
+
+> value gradient g(v)
+> t
+
+− ce ∇θ H πθ (· | st)
+
+> θ0
+
+| {z } 
+
+> entropy gradient g(e)
+> t
+
+. (9) 
+
+This decomposition isolates three leakage channels. The policy term carries action information (Theorem 4.2), while value and entropy terms encode additional state-dependent structure. Next, we show that the action label is recoverable from the policy-head gradient component g(π) 
+
+> t
+
+.
+
+Theorem 4.2 (Discrete-Action recovery from the policy-head gradient structure) . Let ℓt =
+
+W⊤ 
+
+> a
+
+h(st) ∈ RK be the policy logits, πθ (· | st) = softmax( ℓt) and πk := πθ (k | st). Assume: (A1) 
+
+the actor and critic heads share no parameters, so Vθ does not depend on Wa; (A2) ˆAt̸ = 0 ; (A3) 
+
+h(st) ∈ Rdh 
+
+> ≥0
+
+with ∥h(st)∥1 > 0 (e.g., a ReLU activation); (A4) the policy is non-degenerate at st,
+
+πat < 1. Let eσk := Pdh
+
+> i=1
+
+∇Wa Lac  
+
+> t
+
+(θ) 
+
+> i,k θ0
+
+denote the column sums of the observed policy-head gradient. 
+
+(i) Exact recovery without entropy regularization. If ce = 0 , then eσk = σk := ˆAt ∥h(st)∥1
+
+ πk −
+
+1[k = at], and the true action is recovered exactly by 
+
+at = arg min  
+
+> k
+
+eσk if ˆAt > 0, at = arg max  
+
+> k
+
+eσk if ˆAt < 0. (10) 
+
+5For K ≥ 3, the sign-agnostic rule at = arg max k |eσk| is equivalent to (10) ; for K = 2 the two magnitudes coincide and (10) must be used, with sign( ˆAt) inferred from cross-head information such as the value-head gradient (see App. D.2). 
+
+(ii) Robust recovery under entropy regularization. Let Lt := max k ℓt,k − min k ℓt,k denote the logit spread, πmax := max k πk, and define the identifiability gap ∆t := | ˆAt| ∥ h(st)∥1
+
+ 1 − πat +min k̸ =at πk
+
+ > 0, which is strictly positive under ( A4 ). If ce > 0 and       
+
+> 2ceLtπmax <∆t
+> ∥h(st)∥1
+> ,(11)
+
+then (10) still recovers at exactly. 
+
+Remark 4.3 (Necessity of ( A4 ) and deterministic-policy degeneracy) . Assumption ( A4 ) is essential: in the one-hot limit πat → 1, πk → 0 for k̸ = at, every column sum vanishes ( σk ≡ 0), ∆t = 0 , and 
+
+(10) is ill-posed because the − ˆAt log πθ (at | st) contribution to ∇Wa is zero. Thus, the action is unrecoverable from the policy-head gradient block alone for a fully deterministic policy, whereas moderately confident PPO/A2C policies keep ∆t bounded away from zero. 
+
+Theorem 4.2 gives a closed-form, learning-free recovery rule and shows that it remains exact when entropy regularization is small relative to the identifiability gap. Our experiments use K=5 actions, placing them in the K ≥ 3 regime. The near-perfect action recovery in our experiments indicates that the evaluated checkpoints avoid the degenerate regime of Remark 4.3; by Proposition 4.1, the same advantage-weighted policy-gradient structure remains identical for both A2C and PPO at θ0.
+
+4.2 Temporal Conditioning Benefit 
+
+We formalize the non-negativity of temporal gain using a mutual-information analysis. 
+
+Definition 4.4 (Temporal-context gain) . The temporal-context gain at step t is the conditional mutual information:                
+
+> ∆It:= I(st;g1: t−1|gt) = H(st|gt)−H(st|g1: t)≥0,(12)
+
+i.e., the residual entropy of st, after the current gradient gt has been observed, that is resolved by additionally conditioning on the past gradient stream g1: t−1.
+
+We first consider a tractable special case: under a Markov victim policy and one-step (TD( 0)) advantage–return estimators with stop-gradient on the bootstrap value, gt depends on the trajectory only through (st, a t) and one-step noise, giving gt ⊥⊥ g1: t−1 | st (formalized as Lemma D.3). Generalized Advantage Estimation (GAE) with λ> 0 and rollout-level normalization fall outside this case. The resulting scaling, which depends on the specific algorithm, is reported empirically in Sec. 5. 
+
+Theorem 4.5 (Temporal reconstruction gain) . Let (s1, . . . , sT ) be a Markov Decision Process (MDP) trajectory with transition kernel st+1 ∼ P (· | st, a t), and let MSE ∗(Y ) := min f E∥st − f (Y )∥22
+
+> 
+
+denote the Bayes-optimal mean squared reconstruction error of st from observation Y .
+
+(i) Non-negativity: ∆It ≥ 0 for all t, by non-negativity of conditional mutual information. By the Law of Total Variance, MSE ∗(g1: t) ≤ MSE ∗(gt), i.e., temporal conditioning cannot hurt. 
+
+(ii) Exact identity under conditional sufficiency: under Lemma D.3 (Markov victim policy and causally adapted, un-normalized one-step advantage/return estimators), and condition throughout on 
+
+θ0. By Lemma D.3 we have the Markov chain g1: t−1 → st → gt, and therefore           
+
+> ∆It=I(st;g1: t−1)−I(gt;g1: t−1)≤I(st;g1: t−1)(13)
+
+Thus, temporal conditioning helps exactly to the extent that the past gradient stream contains information about st that is not already captured by the current gradient gt.
+
+Part (ii) is exact only under the conditions of Lemma D.3. Both GAE with λ > 0 and rollout-level normalization violate these conditions by introducing cross-temporal coupling; the scaling behavior observed under the practical PPO and A2C estimators is therefore discussed informally in Remark D.5 and validated empirically in Sec. 5. 
+
+5 Experimental Evaluation 
+
+Experimental Setup. We evaluate TRACE against victim policies trained on a point-goal navigation task in the AI2-THOR simulator [18]. Unless otherwise specified, the victim observes RGB frames 6Ground Truth t=0, a=0 t=1, a=4 t=2, a=1 t=3, a=4 t=4, a=4 t=5, a=1 t=6, a=4 t=7, a=0        
+
+> Reconstructed t=0, a=0 t=1, a=4 t=2, a=1 t=3, a=4 t=4, a=4 t=5, a=1 t=6, a=4 t=7, a=0
+
+Figure 4: Ground-truth and TRACE reconstructions over T =8 PPO trajectory steps. downsampled to 84 × 84 and acts in a five-action discrete space: MoveAhead (with a grid step size of 0.25 meters), RotateLeft (15 ◦), RotateRight (15 ◦), LookDown (15 ◦), and LookUp (15 ◦). The default victim policy is implemented as a shared-CNN actor-critic [19] with separate policy and value heads. It is trained with either PPO [30] or A2C [25], employing GAE advantages as formalized in Sec. 2. Both methods employ the same critic, entropy regularization, and gradient-norm bound. Unless otherwise indicated, we report mean ± one standard deviation per image. We defer the full definition of evaluation metrics to App. E with additional results to App. F. 
+
+5.1 Comparison with Baselines 
+
+Fig. 4 shows an example of trajectory inversion result generated by TRACE using T =8 frames against PPO-based victim, where T is the trajectory length. We further compare TRACE against DLG [47] 1, Inverting Gradients (IG) [12] 2, and Learning to Invert (LtI) [40] 3. Because these baselines are designed for supervised classification, we adapt them to our RL setting by replacing the classification loss with a simplified actor-critic surrogate: policy cross-entropy combined with value regression, using fixed coefficients. DLG jointly optimizes a dummy image and soft action distribution via L-BFGS for 300 iterations per step. IG first recovers the discrete action analytically from the policy-head gradient (analogous to iDLG [44]), then optimizes a Gaussian-initialized dummy image with Adam for 4,800 iterations, minimizing gradient cosine similarity with anisotropic TV regularization and clamping to valid pixel bounds. LtI trains an MLP on state-gradient pairs to directly map randomly sub-sampled gradients to reconstructed images and discrete actions. All methods are evaluated on 100 held-out trajectories (with T =8 ) for both PPO and A2C victims using consistent metrics. Table 1: Comparison of TRACE with baselines under PPO and A2C, Act. Acc. denotes action accuracy and Infer. denotes inference time per frame/image.                                                                                                                
+
+> PPO A2C Method MSE ↓PSNR ↑SSIM ↑LPIPS ↓Act. Acc. ↑Infer. MSE ↓PSNR ↑SSIM ↑LPIPS ↓Act. Acc. ↑Infer.
+> DLG [47] 0.289 ±0.052 5.474 ±0.826 0.043 ±0.012 1.224 ±0.096 16.6 31.0s 0.259 ±0.072 6.106 ±1.544 0.036 ±0.006 1.184 ±0.127 51.0 76.1s IG [12] 0.161 ±0.089 8.727 ±2.791 0.166 ±0.087 0.766 ±0.110 31.5 39.3s 0.114 ±0.021 9.511 ±0.810 0.093 ±0.023 0.686 ±0.038 32.5 39.6s LtI [40] 0.023 ±0.009 16.790 ±1.708 0.529 ±0.097 0.671 ±0.092 100.0 1.2ms 0.018 ±0.006 17.652 ±1.366 0.508 ±0.062 0.639 ±0.071 100.0 0.2ms
+> TRACE 0.014 ±0.007 18.771 ±1.778 0.627 ±0.105 0.362 ±0.070 100.0 4.5ms 0.014 ±0.005 18.873 ±1.391 0.583 ±0.061 0.358 ±0.060 100.0 3.0ms
+
+Table 1 shows that TRACE attains the best performance across all reconstruction metrics under both PPO and A2C victims. Optimization-based baselines perform poorly: under PPO, DLG, and IG, PSNR reaches only 5.47 and 8.73 dB, with action accuracies far below practical usefulness, and the trend persists under A2C ( 6.11 and 9.51 dB). LtI improves substantially, attaining 16 .79 dB (PPO) and 17 .65 dB (A2C) PSNR with near-perfect action accuracy, consistent with Theorem 4.2. Adding the causal temporal transformer, TRACE further reduces MSE from 0.023 to 0.014 (PPO) and 0.018 to 0.014 (A2C) over LtI, gains ∼ 2 and ∼ 1 dB PSNR respectively, and nearly halves LPIPS in both cases ( 0.671 to 0.362 for PPO, 0.639 to 0.358 for A2C), confirming that exploiting inter-step dependencies yields superior fidelity. We note that TRACE at T =1 (12 .85 dB, Table 4) underperforms LtI’s single-frame result, indicating its advantage comes from temporal conditioning rather than a stronger per-frame extractor, consistent with Theorem 4.5. Both learned approaches run in milliseconds per frame, compared with tens of seconds for optimization-based methods, enabling near real-time inversion once the attack model is trained. 
+
+> 1
+
+https://github.com/mit-han-lab/dlg 
+
+> 2
+
+https://github.com/JonasGeiping/invertinggradients 
+
+> 3
+
+https://github.com/wrh14/Learning_to_Invert 
+
+7We report additional evaluations across victim architectures, multi-modal inputs, and larger action spaces in App. F.3. We also examine four- and eight-step gradient averaging in App. F.4 and auxiliary-data scaling in App. F.5. 
+
+5.2 Few-Shot Adaptation 
+
+Table 2: Few-shot adaptation on held-out scenes (PPO). See App. F.2 for A2C results. 
+
+p (%) MSE ↓ PSNR ↑ SSIM ↑ LPIPS ↓ Act. Acc. ↑
+
+0 0.014 ±0.007 18 .8±1.8 0.627 ±0.105 0.362 ±0.070 100 .0% 
+
+10 0.009 ±0.004 20 .9±1.8 0.671 ±0.096 0.273 ±0.077 100 .0% 
+
+20 0.007 ±0.003 22 .1±2.0 0.697 ±0.095 0.224 ±0.073 100 .0% 
+
+30 0.006 ±0.003 23 .0±2.1 0.717 ±0.092 0.186 ±0.063 100 .0% 
+
+40 0.005 ±0.003 23 .4±2.2 0.726 ±0.095 0.175 ±0.064 100 .0% 
+
+50 0.005 ±0.002 23 .8±2.1 0.740 ±0.092 0.161 ±0.061 100 .0% 
+
+To evaluate cross-scene robustness, we fine-tune the attacker on p ∈ {0, 10 , 20 , 30 , 40 , 50 }%
+
+of target-domain trajectories, measuring how quickly leakage transfers and how much held-out data is needed for high-fidelity reconstruc-tion. As shown in Table 2, the zero-shot attack provides a strong baseline ( p = 0 ) on held-out scenes, with perfect action recovery and reason-able structural fidelity (SSIM = 0 .627 , PSNR 
+
+= 18 .8 dB). Even minimal adaptation rapidly improves perception. Fine-tuning with 10% of target trajectories increases PSNR by 2.1 dB and lowers LPIPS to 0.273 . With a 50% budget, reconstruction MSE drops to 0.005 , and SSIM exceeds 0.74 . These results show that TRACE transfers to unseen scenes without target-domain fine-tuning, while a small domain-specific set substantially reduces visual discrepancy, enabling high-fidelity reconstructions. 
+
+5.3 Defense Evaluation 
+
+We evaluate the robustness of TRACE against four gradient defense mechanisms—quantization [3], magnitude-based pruning, additive Gaussian noise, and DP-SGD [1]—under both PPO and A2C victim models, with results shown in Table 3. Table 3: Evaluation of robustness of defenses under PPO and A2C. 
+
+PPO A2C Defense Setting MSE ↓ PSNR ↑ SSIM ↑ LPIPS ↓ Act. Acc. ↑ MSE ↓ PSNR ↑ SSIM ↑ LPIPS ↓ Act. Acc. ↑
+
+No Defense — 0.018 ±0.014 18 .9±3.7 0.628 ±0.143 0.374 ±0.090 99 .9% 0.015 ±0.007 18 .4±1.5 0.530 ±0.068 0.373 ±0.053 99 .1% 
+
+Quantization (bits) Mild (8-bit) 0.020 ±0.017 18 .5±3.9 0.619 ±0.148 0.384 ±0.095 99 .9% 0.016 ±0.007 18 .4±1.5 0.529 ±0.068 0.374 ±0.052 98 .3% 
+
+4-bit 0.075 ±0.056 12 .4±3.2 0.422 ±0.127 0.645 ±0.104 37 .9% 0.057 ±0.042 13 .3±2.7 0.428 ±0.070 0.556 ±0.101 50 .2% 
+
+2-bit 0.091 ±0.063 11 .3±2.8 0.380 ±0.093 0.689 ±0.094 19 .4% 0.078 ±0.031 11 .5±1.8 0.404 ±0.052 0.653 ±0.054 41 .4% 
+
+Pruning (keep %) 90% 0.018 ±0.014 18 .9±3.7 0.628 ±0.143 0.374 ±0.090 99 .9% 0.015 ±0.007 18 .4±1.5 0.530 ±0.068 0.373 ±0.053 99 .1% 
+
+50% 0.018 ±0.014 18 .9±3.7 0.628 ±0.143 0.374 ±0.090 99 .9% 0.015 ±0.007 18 .4±1.5 0.530 ±0.068 0.373 ±0.053 99 .1% 
+
+10% 0.018 ±0.015 18 .8±3.8 0.624 ±0.146 0.371 ±0.091 99 .9% 0.017 ±0.008 18 .0±1.7 0.517 ±0.069 0.383 ±0.056 89 .0% 
+
+Noise (σ)
+
+0.001 0.018 ±0.014 18 .8±3.8 0.626 ±0.145 0.376 ±0.092 99 .8% 0.015 ±0.007 18 .4±1.5 0.530 ±0.068 0.373 ±0.053 98 .8% 0.01 0.023 ±0.022 18 .1±4.1 0.599 ±0.160 0.401 ±0.109 94 .9% 0.016 ±0.007 18 .3±1.6 0.525 ±0.069 0.377 ±0.054 96 .2% 0.1 0.049 ±0.034 14 .2±3.3 0.438 ±0.148 0.572 ±0.111 59 .9% 0.026 ±0.016 16 .5±2.3 0.452 ±0.092 0.440 ±0.081 64 .1% 
+
+DP-SGD (ε, δ )(10 , 10 −5) 0.069 ±0.037 12 .2±2.2 0.345 ±0.085 0.658 ±0.085 21 .4% 0.050 ±0.018 13 .3±1.5 0.322 ±0.053 0.563 ±0.068 27 .4% 
+
+(5, 10 −5) 0.069 ±0.035 12 .1±2.1 0.342 ±0.084 0.663 ±0.082 21 .4% 0.050 ±0.018 13 .2±1.4 0.319 ±0.051 0.559 ±0.068 23 .7% 
+
+(1, 10 −5) 0.071 ±0.039 12 .0±2.2 0.346 ±0.084 0.658 ±0.084 17 .6% 0.049 ±0.017 13 .3±1.4 0.322 ±0.053 0.562 ±0.067 24 .5% 
+
+The No Defense row provides the clean reference under this defense-evaluation protocol. The attacker is evaluated in a zero-shot model, i.e., trained on clean gradients and applied directly to defended ones. The trends are consistent across both algorithms. Pruning is largely ineffective: retaining only 10% 
+
+of gradient entries leaves PPO reconstruction nearly intact (PSNR = 18 .8, Act. Acc. = 99 .9% ), with A2C showing only a modest action accuracy reduction to 89 .0% . Quantization to 8-bit is similarly benign, but 4-bit quantization degrades fidelity substantially (PPO PSNR drops to 12 .4, A2C to 13 .3), and at 2-bit the attack approaches random-chance action recovery for PPO ( 19 .4% ). Additive noise impedes reconstruction only at high variance ( σ=0 .1), where PSNR falls to 14 .2 (PPO) and 16 .5
+
+(A2C) with action accuracy declining to 60 –64% . DP-SGD offers the strongest protection: across all evaluated privacy budgets ( ε ∈ { 1, 5, 10 }), SSIM drops to approximately 0.34 (PPO) and 0.32 
+
+(A2C), and action accuracy degrades to near-random levels ( ∼20% ). We do not assess downstream navigation utility under these defenses, as privacy-utility trade-offs require a separate analysis. 
+
+5.4 Ablations 
+
+We conduct three ablation studies: (i) varying the trajectory length, (ii) restricting the attack to gradients originating from specific architectural components of the victim, and (iii) removing indi-vidual terms from the training objective. To isolate the effect of temporal modeling, we employ a 8reduced-capacity encoder by halving the hidden dimension from denc =2048 to denc =1024 . This modification approximately halves the number of encoder parameters while leaving the transformer and decoder components unchanged. For the Comp. (gradients from a single victim component) and Loss (w/o) (one loss term removed) experiments, the trajectory length is fixed at T = 8 . The corresponding results are presented in Table 4. Table 4: Ablation study conducted on the held-out set (PPO). See App. F.7 for A2C results.                                                                  
+
+> Settings MSE ↓PSNR ↑SSIM ↑LPIPS ↓Act. Acc. ↑
+> T
+> 10.055 ±0.020 12 .85 ±1.52 0.513 ±0.078 0.781 ±0.048 100.0% 80.014 ±0.006 18 .74 ±1.73 0.617 ±0.108 0.375 ±0.071 100.0% 16 0.015 ±0.007 18 .57 ±1.78 0.614 ±0.109 0.395 ±0.070 100.0% 32 0.014 ±0.010 19 .62 ±3.08 0.634 ±0.131 0.377 ±0.078 99.8% 64 0.014 ±0.012 20 .29 ±4.25 0.666 ±0.141 0.375 ±0.091 99.9% Comp.  CNN 0.015 ±0.006 18 .48 ±1.72 0.584 ±0.118 0.384 ±0.073 100.0% FC 0.020 ±0.013 17 .72 ±2.17 0.605 ±0.112 0.388 ±0.074 100.0% Heads 0.047 ±0.029 14 .12 ±2.71 0.530 ±0.113 0.511 ±0.088 99.6% Loss (w/o)  Act. 0.015 ±0.007 18 .56 ±1.77 0.613 ±0.108 0.376 ±0.066 19.0% L1 0.018 ±0.009 17 .90 ±1.88 0.608 ±0.111 0.409 ±0.074 100.0% LPIPS 0.014 ±0.006 18 .94 ±1.73 0.627 ±0.107 0.401 ±0.088 100.0% MSE 0.015 ±0.007 18 .56 ±1.75 0.612 ±0.110 0.379 ±0.070 100.0%
+
+Trajectory Length ( T ). Extending the horizon from T =1 to T =8 yields a ∼
+
+6 dB PSNR gain (from 12 .85 to 18 .74 )and roughly halves LPIPS (from 0.781 to 
+
+0.375 ). Further extension continues to help modestly: T =64 reaches 20 .29 dB PSNR and SSIM 0.666 . This trend in sequence length further supports the temporal con-ditioning mechanism formalized in Theo-rem 4.5. We adopt T =8 as a balance be-tween temporal context and optimization complexity. 4
+
+Gradient Components. Restricting the attack to the terminal policy/value heads 
+
+sharply degrades visual fidelity (PSNR = 14 .12 , LPIPS = 0 .511 ), confirming that high-frequency structural cues reside in the earlier CNN and FC layers. Action recovery, however, stays near-perfect (≥ 99 .6% ) across all components, indicating that behavioral signals are distributed throughout the network. 
+
+Objective Composition. Removing the action loss (‘w/o Act.’) collapses action accuracy to near-random ( 19 .0% ) without improving visual fidelity. Dropping LPIPS marginally raises PSNR to 18 .94 
+
+but inflates LPIPS to 0.401 , while removing L1 degrades both PSNR ( 17 .90 ) and LPIPS ( 0.409 ). These trade-offs highlight the need for a multi-objective formulation balancing pixel-level distortion and perceptual similarity. 
+
+6 Related Work 
+
+Learning-based inversion. Classical gradient inversion reconstructs each gradient through iterative optimization [47, 12, 41], incurring per-sample computational overhead that often ranges from minutes to hours. Learning-based attacks amortize this cost with feed-forward inversion models trained on auxiliary data: Wu et al. [40] demonstrated that such models can match or surpass optimization-based methods, even in the presence of gradient compression and perturbation defenses. Subsequent work on efficiency-focused attacks further narrowed this gap [16, 31]. In contrast, TRACE replaces per-gradient optimization entirely with a causal transformer that autoregressively decodes the full trajectory, enabling near real-time inversion without any gradient-by-gradient search. 
+
+Gradient inversion attacks in distributed learning. Gradient inversion attacks in distributed or federated learning are well-studied [47, 44, 12, 41, 17, 14, 23]. They may rely on a stronger assumption, wherein the server actively modifies either parameters or model architecture [26, 38, 45, 11]. More recent work extends these attacks to Vision Transformers [14, 23], scales them to larger architectures [31], and systematizes the attack landscape [6]. Unlike these single-sample attacks, TRACE targets temporally correlated gradient streams from embodied policy-learning agents, exploiting cross-step dependencies that prior work treats as i.i.d. noise. 
+
+Privacy risks in RL and embodied AI. Gradient inversion tailored to RL and embodied AI remains limited. Li et al. [20] investigated privacy risks for household robots trained via federated RL. At the trajectory level, Du et al. [9] proposed ORL-AUDITOR, an offline deep-RL auditing mechanism that uses cumulative rewards as dataset fingerprints, showing that sequence decision data contains ex-ploitable structure. Recent work also studies federated RL under transition-dynamics constraints [15]. Building on these directions, TRACE exploits the temporal structure across consecutive frames of embodied agents to amortize trajectory-level inversion in near real-time. 
+
+> 4
+
+Varying T results in different total frame counts and, for T =64 the method transitions to RoPE [32] (see App. F for implementation details). Nevertheless, the observed trend remains consistent for both PPO and A2C (see Table 13). 
+
+9Defenses. Various defense strategies have also been proposed against gradient inversion, including representation-level protection [33], gradient-leakage resilient FL [37], auditing via generative gradient leakage [21], CENSOR via orthogonal subspace Bayesian sampling [42], SVDefense via singular value decomposition [24], differentially private FL [13], and sparse communication [2]. While these defenses reduce leakage in static settings, their effectiveness against amortized temporal attacks on sequential trajectory data remains open. 
+
+7 Conclusion 
+
+We introduced TRACE, an amortized temporal gradient inversion attack that reconstructs private observation-action trajectories from ordered policy-learning gradients. Our analysis integrates closed-form discrete-action recovery, an information-theoretic bound on the temporal reconstruction gain, and a local equivalence between A2C and PPO gradients. Across held-out embodied scenes, TRACE achieves 18 .8 dB PSNR with near-perfect action recovery in 3–4.5 ms per reconstructed frame, improving over the learning-based baseline by ∼2 dB PSNR. Lightweight defenses such as pruning and mild quantization leave substantial leakage, motivating sequence-aware privacy mechanisms and future extensions to continuous-action, off-policy, and aggregated-update settings. 
+
+References 
+
+[1] Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar, and Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC conference on computer and communications security , pages 308–318, 2016. [2] Alham Fikri Aji and Kenneth Heafield. Sparse communication for distributed gradient descent. In Proceedings of the 2017 conference on empirical methods in natural language processing ,pages 440–445, 2017. [3] Dan Alistarh, Demjan Grubic, Jerry Li, Ryota Tomioka, and Milan Vojnovic. Qsgd: Communication-efficient sgd via gradient quantization and encoding. Advances in neural information processing systems , 30, 2017. [4] Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer. Scheduled sampling for sequence prediction with recurrent neural networks. Advances in neural information processing systems , 28, 2015. [5] Keith Bonawitz, Vladimir Ivanov, Ben Kreuter, Antonio Marcedone, H Brendan McMahan, Sarvar Patel, Daniel Ramage, Aaron Segal, and Karn Seth. Practical secure aggregation for privacy-preserving machine learning. In proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security , pages 1175–1191, 2017. [6] Vincenzo Carletti, Pasquale Foggia, Carlo Mazzocca, Giuseppe Parrella, and Mario Vento. 
+
+{SoK }: Gradient inversion attacks in federated learning. In 34th USENIX Security Symposium (USENIX Security 25) , pages 6439–6459, 2025. [7] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems , 35:16344–16359, 2022. [8] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. In International Conference on Learning Representations , 2020. [9] Linkang Du, Min Chen, Mingyang Sun, Shouling Ji, Peng Cheng, Jiming Chen, and Zhikun Zhang. Orl-auditor: Dataset auditing in offline deep reinforcement learning. arXiv preprint arXiv:2309.03081 , 2023. [10] Lasse Espeholt, Hubert Soyer, Remi Munos, Karen Simonyan, Volodymir Mnih, Tom Ward, Yotam Doron, Vlad Firoiu, Tim Harley, Iain Dunning, Shane Legg, and Koray Kavukcuoglu. IM-PALA: Scalable Distributed Deep-RL with Importance Weighted Actor-Learner Architectures, 2018. 10 [11] Liam Fowl, Jonas Geiping, Wojtek Czaja, Micah Goldblum, and Tom Goldstein. Robbing the fed: Directly obtaining private data in federated learning with modified models. arXiv preprint arXiv:2110.13057 , 2021. [12] Jonas Geiping, Hartmut Bauermeister, Hannah Dröge, and Michael Moeller. Inverting gradients-how easy is it to break privacy in federated learning? Advances in neural information processing systems , 33:16937–16947, 2020. [13] Robin C Geyer, Tassilo Klein, and Moin Nabi. Differentially private federated learning: A client level perspective. arXiv preprint arXiv:1712.07557 , 2017. [14] Ali Hatamizadeh, Hongxu Yin, Holger R Roth, Wenqi Li, Jan Kautz, Daguang Xu, and Pavlo Molchanov. Gradvit: Gradient inversion of vision transformers. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10021–10030, 2022. [15] Shenghong He. Gradient inversion in federated reinforcement learning. arXiv preprint arXiv:2512.00303 , 2025. [16] Yangsibo Huang, Samyak Gupta, Zhao Song, Kai Li, and Sanjeev Arora. Evaluating gradient inversion attacks and defenses in federated learning. Advances in neural information processing systems , 34:7232–7241, 2021. [17] Jinwoo Jeon, Kangwook Lee, Sewoong Oh, Jungseul Ok, et al. Gradient inversion with generative image prior. Advances in neural information processing systems , 34:29898–29908, 2021. [18] Eric Kolve, Roozbeh Mottaghi, Winson Han, Eli VanderBilt, Luca Weihs, Alvaro Herrasti, Matt Deitke, Kiana Ehsani, Daniel Gordon, Yuke Zhu, et al. Ai2-thor: An interactive 3d environment for visual ai. arXiv preprint arXiv:1712.05474 , 2017. [19] Vijay Konda and John Tsitsiklis. Actor-critic algorithms. Advances in neural information processing systems , 12, 1999. [20] Miao Li, Wenhao Ding, and Ding Zhao. Privacy risks in reinforcement learning for household robots. In 2024 IEEE International Conference on Robotics and Automation (ICRA) , pages 5148–5154. IEEE, 2024. [21] Zhuohang Li, Jiaxin Zhang, Luyang Liu, and Jian Liu. Auditing privacy defenses in federated learning via generative gradient leakage. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10132–10142, 2022. [22] Weisi Lin, Li Dong, and Ping Xue. Visual distortion gauge based on discrimination of noticeable contrast changes. IEEE transactions on circuits and systems for video technology , 15(7):900– 909, 2005. [23] Jiahao Lu, Xi Sheryl Zhang, Tianli Zhao, Xiangyu He, and Jian Cheng. April: Finding the achilles’ heel on privacy for vision transformers. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 10051–10060, 2022. [24] Chenxiang Luo, David KY Yau, and Qun Song. Svdefense: Effective defense against gradient inversion attacks via singular value decomposition. arXiv preprint arXiv:2510.03319 , 2025. [25] Volodymyr Mnih, Adria Puigdomenech Badia, Mehdi Mirza, Alex Graves, Timothy Lillicrap, Tim Harley, David Silver, and Koray Kavukcuoglu. Asynchronous methods for deep reinforce-ment learning. In International conference on machine learning , pages 1928–1937. PmLR, 2016. [26] Dario Pasquini, Danilo Francati, and Giuseppe Ateniese. Eluding secure aggregation in federated learning via model inconsistency. In Proceedings of the 2022 ACM SIGSAC Conference on computer and communications security , pages 2429–2443, 2022. [27] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative style, high-performance deep learning library. Advances in neural information processing systems , 32, 2019. 11 [28] Marc’Aurelio Ranzato, Sumit Chopra, Michael Auli, and Wojciech Zaremba. Sequence level training with recurrent neural networks. arXiv preprint arXiv:1511.06732 , 2015. [29] John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. High-dimensional continuous control using generalized advantage estimation. arXiv preprint arXiv:1506.02438 , 2015. [30] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [31] Shanghao Shi, Ning Wang, Yang Xiao, Chaoyu Zhang, Yi Shi, Y Thomas Hou, and Wenjing Lou. Scale-mia: A scalable model inversion attack against secure federated learning via latent space reconstruction. arXiv preprint arXiv:2311.05808 , 2023. [32] Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: Enhanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. [33] Jingwei Sun, Ang Li, Binghui Wang, Huanrui Yang, Hai Li, and Yiran Chen. Soteria: Provable defense against privacy leakage in federated learning from representation perspective. In 
+
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 9311–9319, 2021. [34] The HDF Group. Hierarchical Data Format, version 5. URL https://github.com/ HDFGroup/hdf5 .[35] Zhou Wang and Alan C Bovik. Mean squared error: Love it or leave it? a new look at signal fidelity measures. IEEE signal processing magazine , 26(1):98–117, 2009. [36] Zhou Wang, Alan C Bovik, Hamid R Sheikh, and Eero P Simoncelli. Image quality assessment: from error visibility to structural similarity. IEEE transactions on image processing , 13(4): 600–612, 2004. [37] Wenqi Wei, Ling Liu, Yanzhao Wu, Gong Su, and Arun Iyengar. Gradient-leakage resilient federated learning. In 2021 IEEE 41st International Conference on Distributed Computing Systems (ICDCS) , pages 797–807. IEEE, 2021. [38] Yuxin Wen, Jonas Geiping, Liam Fowl, Micah Goldblum, and Tom Goldstein. Fishing for user data in large-batch federated learning via gradient magnification. arXiv preprint arXiv:2202.00580 , 2022. [39] Ronald J Williams. Simple statistical gradient-following algorithms for connectionist reinforce-ment learning. Machine learning , 8(3):229–256, 1992. [40] Ruihan Wu, Xiangyu Chen, Chuan Guo, and Kilian Q Weinberger. Learning to invert: Simple adaptive attacks for gradient inversion in federated learning. In Uncertainty in Artificial Intelligence , pages 2293–2303. PMLR, 2023. [41] Hongxu Yin, Arun Mallya, Arash Vahdat, Jose M Alvarez, Jan Kautz, and Pavlo Molchanov. See through gradients: Image batch recovery via gradinversion. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 16337–16346, 2021. [42] Kaiyuan Zhang, Siyuan Cheng, Guangyu Shen, Bruno Ribeiro, Shengwei An, Pin-Yu Chen, Xiangyu Zhang, and Ninghui Li. Censor: Defense against gradient inversion via orthogonal subspace bayesian sampling. arXiv preprint arXiv:2501.15718 , 2025. [43] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang. The unrea-sonable effectiveness of deep features as a perceptual metric. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 586–595, 2018. [44] Bo Zhao, Konda Reddy Mopuri, and Hakan Bilen. idlg: Improved deep leakage from gradients. 
+
+arXiv preprint arXiv:2001.02610 , 2020. 12 [45] Joshua C Zhao, Atul Sharma, Ahmed Roushdy Elkordy, Yahya H Ezzeldin, Salman Avestimehr, and Saurabh Bagchi. Loki: Large-scale data reconstruction attack against federated learning through model manipulation. In 2024 IEEE Symposium on Security and Privacy (SP) , pages 1287–1305. IEEE, 2024. [46] Deyu Zhou, Quan Sun, Yuang Peng, Kun Yan, Runpei Dong, Duomin Wang, Zheng Ge, Nan Duan, and Xiangyu Zhang. Taming teacher forcing for masked autoregressive video generation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 7374–7384, 2025. [47] Ligeng Zhu, Zhijian Liu, and Song Han. Deep leakage from gradients. Advances in neural information processing systems , 32, 2019. 13 A Broader Impact 
+
+In this work, we show that trajectories of private observations and actions can be reconstructed from shared policy gradients in the honest-but-curious setting. Our findings apply to advantage-weighted actor-critic algorithms studied in this paper: the temporal coherence of embodied RL trajectories renders them substantially more vulnerable to gradient inversion than isolated images. Lightweight per-step defenses such as pruning and mild quantization leave substantial cross-step leakage intact. In contrast, stronger perturbations such as DP-SGD, aggressive quantization, and large Gaussian noise degrade reconstruction quality but may also affect utility or communication efficiency. Receiving policy gradients from an embodied agent is thus nearly equivalent to receiving the raw sensor stream, and the amortized attack reconstructs an entire trajectory in milliseconds, making it inexpensive to deploy once trained. These findings motivate sequence-aware privacy mechanisms that budget protection across an entire rollout rather than treating each gradient update independently. Promising directions include secure aggregation, differential privacy adapted to temporal gradient streams, and defenses that disrupt the cross-step correlations TRACE exploits. However, such mechanisms often incur computational overhead prohibitive for resource-constrained embodied deployments reliant on real-time training, so developing lightweight, sequence-aware defenses that balance privacy and efficiency remains an open challenge. To reduce misuse risk while preserving reproducibility, we do not release pretrained attacker checkpoints or captured trajectory datasets. By exposing the extent of this threat, we hope to accelerate research toward genuinely private collaborative training of embodied RL agents. 
+
+B Notations 
+
+Table 5 summarizes the key mathematical notations used throughout this paper. Table 5: Key notations used throughout the paper.                                                     
+
+> Symbol Description Symbol Description
+> t, T Timestep index and trajectory length θ, θ 0Victim parameters and shared checkpoint
+> st, a tState observation and action at step tˆAt,ˆRtAdvantage and return targets
+> πθ, V θPolicy and value functions rt(θ)PPO importance ratio
+> ϵ, c v, c ePPO clip, value, and entropy coefficients Lac
+> tPer-step actor-critic objective
+> gt∈RdPer-step communicated gradient G1: T
+> Observed gradient sequence
+> (g1, . . . , gT)
+> ϕenc , ϕ img Gradient and image encoders ϕtemp , ϕ dec Temporal transformer and decoder
+> zt,et,˜zt
+> Gradient token, image-feedback token, and contextualized latent D, H I, W I, K Latent dimension, image size, and action-space size
+> βn, τ, R Scheduled-sampling probability, warmup duration, rollout horizon α1, . . . , α 5Training-loss weights
+> g(π)
+> t,g(v)
+> t,g(e)
+> t
+> Policy, value, and entropy gradient components Wa,h(s), d h
+> Policy-head weights, hidden representation, hidden width
+> Ga, σ k,eσk
+> Policy-head gradient, ideal and observed column sums ∆tIdentifiability gap
+> ∆ItTemporal information gain MSE ∗(·)Bayes-optimal reconstruction error
+> P(· | st, a t)MDP transition kernel
+
+C Preliminaries 
+
+C.1 MDP and Trajectory Notation 
+
+We model the victim agent’s interaction with the environment as a Markov decision process (MDP) with state space S, action space A, transition kernel P (st+1 | st, a t), and reward function r(st, a t).At timestep t, the agent observes state st, samples an action at ∼ πθ (· | st) from a parameterized policy πθ , receives reward rt, and transitions to the next state st+1 . A trajectory segment of length T
+
+is denoted by 
+
+τ1: T = ( s1, a 1, r 1, . . . , sT , a T , r T ).
+
+In our setting, st denotes the private RGB observation at timestep t, and the attacker observes only the communicated gradients derived from such trajectory data. 14 C.2 Advantage-Weighted Actor-Critic Objective 
+
+TRACE targets victims trained with advantage-weighted actor–critic algorithms; we instantiate our analysis and experiments with A2C [25] and PPO [30]. Both learn a stochastic policy πθ (a | s)
+
+alongside a critic Vθ (s), and share the same credit signal, an advantage estimate ˆAt produced by Generalized Advantage Estimation [29], 
+
+ˆAt =
+
+> ∞
+
+X
+
+> k=0
+
+(γλ )k δt+k, δt = rt + γV (st+1 ) − V (st),
+
+with reward discount γ ∈ (0 , 1) , trace-decay λ ∈ [0 , 1] , and return target ˆRt = ˆAt + V (st). The two algorithms differ only in how the policy is updated. 
+
+A2C [25] is a synchronous on-policy actor-critic that follows the advantage-weighted policy gradient 
+
+∇θ JA2C (θ) = Et
+
+∇θ log πθ (at | st) ˆAt
+
+,
+
+so the per-step policy loss is the REINFORCE-style [39] estimator 
+
+ℓpol ,A2C  
+
+> t
+
+(θ) = − ˆAt log πθ (at | st),
+
+identical in form to vanilla policy gradient but with ˆAt supplied by the learned critic rather than a Monte-Carlo return. Each rollout is used for one single gradient step and then discarded. 
+
+PPO [30] retains the same actor-critic skeleton but replaces the log-likelihood estimator with a clipped importance-weighted surrogate that enables reuse of a rollout over multiple SGD epochs without the updated policy drifting far from the behavior policy. Let θ0 denote the broadcast policy under which the rollout was collected and define the importance ratio rt(θ) = πθ (at | st)/π θ0 (at | st).PPO minimizes 
+
+ℓpol ,PPO  
+
+> t
+
+(θ) = − min  rt(θ) ˆAt, clip( rt(θ), 1 − ϵ, 1 + ϵ) ˆAt
+
+,
+
+with a small ϵ > 0 capping how far rt may move before the update is masked. Let ℓpol  
+
+> t
+
+(θ) ∈ { ℓpol ,A2C  
+
+> t
+
+, ℓ pol ,PPO  
+
+> t
+
+} denote the algorithm-specific per-step policy loss. Both algo-rithms then optimize a common per-step objective 
+
+Lac  
+
+> t
+
+(θ) = ℓpol  
+
+> t
+
+(θ) + cv
+
+ Vθ (st) − ˆRt
+
+2 − ce H πθ (· | st),
+
+in which the critic regresses onto ˆRt (weighted by cv ), and the policy is regularized toward higher entropy (weighted by ce). Because rt(θ0) = 1 , PPO’s clipping is inactive in a neighborhood of θ0 and the two policy losses produce identical gradients at θ0; Proposition 4.1 formalizes this equivalence. Consequently, the local gradient decomposition and discrete-action recovery results apply uniformly to both algorithms, while the temporal-gain analysis later imposes additional assumptions on how the advantage and return estimators depend on the trajectory. 
+
+C.3 Autoregressive Modeling 
+
+An autoregressive model factorizes a joint distribution over a sequence into a product of one-step conditional distributions: 
+
+p(x1: T ) = 
+
+> T
+
+Y
+
+> t=1
+
+p(xt | x<t ), (14) where x<t := ( x1, . . . , x t−1). Thus, the prediction at time t is made using only past context. In TRACE, the target sequence consists of per-timestep reconstructions (ˆ st, ˆat), and autoregression arises through the visual context tokens fed into the causal transformer. Let zt = ϕenc (gt) denote the encoded gradient at time t, and let et = ϕimg (st) for t ≥ 1 denote a training-time encoded image-context token. The token e0 is a learned start token (a trainable parameter, not derived from any image). During the parallel teacher-forced warmup path, the transformer input is interleaved as 
+
+X = [ z1, e0, z2, e1, . . . , zT , eT −1],
+
+so that the prediction at timestep t is conditioned on the current gradient representation zt, together with the preceding gradient and lagged image-context tokens. 15 The lower-triangular causal mask Mij = 1[j ≤ i] enforces the autoregressive constraint in the parallel path: the gradient token zt at position 2t−1 attends to {z1, e0, . . . , zt−1, et−2, zt}, receiving image context up to et−2. The paired token et−1 at position 2t is visible only to subsequent tokens zt+1 , . . . .Scheduled sampling and inference instead construct the context sequentially: after decoding timestep 
+
+t, the encoded generated frame (or a sampled ground-truth frame during training) is appended as context for future steps. 
+
+D Proof and Derivations 
+
+We provide complete proofs of the theoretical results stated in Sec. 4. 
+
+D.1 Proof of Proposition 4.1 (A2C–PPO Equivalence and Decomposition) 
+
+Proof. We prove the result in three steps: (1) PPO’s clipping is locally inactive at θ0; (2) the gradients of the A2C and PPO policy losses are identical at θ0; (3) aggregating these terms produces the decomposition. 
+
+Step 1 (clipping inactive). By definition of the importance ratio (defined in Sec. 2), 
+
+rt(θ0) = πθ0 (at | st)
+
+πθ0 (at | st) = 1 .
+
+Since 1 lies in the interior of the clipping interval [1 − ϵ, 1 + ϵ] and θ 7 → rt(θ) is continuous, there exists a neighborhood Ut of θ0 in which rt(θ) ∈ [1 −ϵ, 1+ ϵ] for all θ ∈ U t. Within this neighborhood, 
+
+clip  rt(θ), 1 − ϵ, 1 + ϵ = rt(θ),
+
+so the PPO loss reduces to 
+
+ℓpol ,PPO  
+
+> t
+
+(θ) = − ˆAt rt(θ), θ ∈ U t. (15) 
+
+Step 2 (gradient equivalence at θ0). Writing 
+
+rt(θ) = exp 
+
+
+
+log πθ (at | st) − log πθ0 (at | st)
+
+
+
+,
+
+where the denominator is constant with respect to θ, and using rt(θ0) = 1 , the chain rule gives 
+
+∇θ rt(θ) θ=θ0 = rt(θ0) · ∇ θ log πθ (at | st) θ=θ0 = ∇θ log πθ (at | st) θ=θ0 .
+
+Therefore 
+
+∇θ ℓpol ,PPO  
+
+> t
+
+(θ) θ0
+
+= − ˆAt ∇θ rt(θ) θ0
+
+= − ˆAt ∇θ log πθ (at | st) θ0
+
+= ∇θ
+
+ − ˆAt log πθ (at | st)
+
+> θ0
+
+= ∇θ ℓpol ,A2C  
+
+> t
+
+(θ) θ0
+
+,
+
+establishing the A2C–PPO gradient equivalence at the broadcast checkpoint. 
+
+Step 3 (decomposition). Since A2C and PPO share the same critic and entropy terms in Eq. (1) and produce the same policy-term gradient at θ0 by Step 2, the communicated gradient gt = ∇θ Lac  
+
+> t
+
+(θ) θ0
+
+is identical in both algorithms and can be computed by differentiating either form. Using the A2C policy term for concreteness, we differentiate 
+
+Lac  
+
+> t
+
+(θ) = − ˆAt log πθ (at | st) + cv
+
+ Vθ (st) − ˆRt
+
+2 − ce H πθ (· | st). (16) Collecting terms: 
+
+gt = ∇θ Lac  
+
+> t
+
+(θ) θ=θ0
+
+= − ˆAt∇θ log πθ (at | st) θ0 + 2 cv
+
+ Vθ0 (st) − ˆRt
+
+ ∇θ Vθ (st) θ0 − ce ∇θ H πθ (· | st) 
+
+> θ0
+
+,
+
+which is Equation (9). 
+
+D.2 Proof of Theorem 4.2 (Discrete-Action Recovery) 
+
+We prove the two parts of Theorem 4.2 separately. Part (i) establishes the column-sum identity for the policy contribution; part (ii) bounds the entropy-induced perturbation and gives a sufficient condition under which (10) remains exact. 16 Proof of part (i): exact recovery when ce = 0 .
+
+Proof. Fix a timestep t, and abbreviate s = st, a = at, and ˆA = ˆAt. By Proposition 4.1, the policy-term gradient at the broadcast checkpoint θ0 is 
+
+∇θ
+
+ − ˆA log πθ (a | s) 
+
+> θ0
+
+,
+
+for both A2C and PPO. Subsequent reasoning, therefore, applies to both algorithms. Under assump-tion (A1) the value head shares no parameters with Wa, so ∇Wa (Vθ (s) − ˆR)2 = 0. When in addition ce = 0 , the entropy term is absent, and the gradient with respect to the policy-head weights 
+
+Wa is determined entirely by the policy-loss term. Let 
+
+ℓ = W⊤ 
+
+> a
+
+h(s) ∈ RK , π(s) = softmax( ℓ),
+
+and let ea ∈ RK denote the one-hot vector of the true action, i.e. [ea]k = 1[k = a]. Since 
+
+log π(a | s) = ℓa − log 
+
+> K
+
+X
+
+> j=1
+
+eℓj ,
+
+differentiating with respect to ℓk gives the standard softmax identity 
+
+∂ log π(a | s)
+
+∂ℓ k
+
+= 1[k = a] − eℓk
+
+P 
+
+> j
+
+eℓj = 1[k = a] − π(k | s), (17) Equivalently, in vector form, ∇ℓ log π(a | s) = ea − π(s) and consequently 
+
+∇ℓ
+
+ − ˆA log π(a | s) = ˆA π(s) − ea
+
+.
+
+Next, since 
+
+ℓk =
+
+> dh
+
+X
+
+> i=1
+
+[Wa]i,k hi(s),
+
+we have ∂ℓ k
+
+∂[Wa]i,k ′
+
+= hi(s) 1[k = k′],
+
+Applying the chain rule, 
+
+∂ − ˆA log π(a | s)
+
+∂[Wa]i,k 
+
+=
+
+> K
+
+X
+
+> k′=1
+
+∂ − ˆA log π(a | s)
+
+∂ℓ k′
+
+· ∂ℓ k′
+
+∂[Wa]i,k 
+
+= ˆA  π(k | s) − 1[k = a] hi(s). (18) 
+
+Therefore 
+
+Ga = ∂ − ˆA log π(a | s)
+
+∂Wa
+
+= ˆA · h(s)  π(s) − ea
+
+⊤, (19) where π(s) = [ π(1 | s), . . . , π (K | s)] ⊤ and ea is the one-hot vector of the true action. Hence 
+
+[Ga]:,k = ˆA · h(s)  π(k | s) − 1[k = a]. (20) Since h(s) is the output of a ReLU layer, hi(s) ≥ 0 for all i, and ∥h(s)∥1 > 0 for any non-trivial input. Summing over the hidden dimension: 
+
+σk := 
+
+> dh
+
+X
+
+> i=1
+
+[Ga]i,k = ˆA · ∥ h(s)∥1
+
+ π(k | s) − 1[k = a]. (21) Under (A4), π(a | s) < 1, so 1 − π(a | s) > 0 and π(k | s) > 0 holds for at least one k̸ = a (in fact for all k by full softmax support). If ˆA > 0, then σa = − ˆA∥h(s)∥1(1 − π(a | s)) < 0 and 
+
+σk = ˆA∥h(s)∥1π(k | s) ≥ 0 for k̸ = a, with equality only if π(k | s) = 0 . Thus a = arg min k σk
+
+(uniquely, since σa is strictly the smallest). If ˆA < 0, the signs reverse and a = arg max k σk. This proves Eq. (10). 17 For K ≥ 3, consider the sign-agnostic rule 
+
+a∗ = arg max 
+
+> k
+
+|σk − ¯σ|, ¯σ = 1
+
+> K
+
+P 
+
+> k
+
+σk,
+
+where ¯σ = 0 by P 
+
+> k
+
+π(k | s) = 1 . We have |σa| = | ˆA|∥ h∥1(1 − π(a | s)) and |σk| = | ˆA|∥ h∥1π(k |
+
+s) for k̸ = a. Because the softmax has full support, π(j | s) > 0 for every j, so for any k̸ = a and 
+
+K ≥ 3 we have π(k | s) < 1 − π(a | s) strictly (since 1 − π(a | s) = π(k | s) + P  
+
+> j̸=a,k
+
+π(j | s)
+
+and the residual sum is positive). Hence |σk| < |σa| for all k̸ = a, and the maximizer is unique at a.For K = 2 , the two magnitudes coincide, and the sign-aware rule is necessary. 
+
+Proof of part (ii): robust recovery under entropy regularization. 
+
+Proof. Reusing the abbreviations s = st, ˆA = ˆAt, ℓ = W⊤ 
+
+> a
+
+h(s), and π = softmax( ℓ), we now retain the entropy term −ce H(π) in Lac  
+
+> t
+
+and quantify its contribution to the column sums. 
+
+Step 1 (entropy gradient with respect to logits). Writing the entropy in a convenient form 
+
+H(π) = −
+
+> K
+
+X
+
+> k=1
+
+πk log πk = log Z −
+
+> K
+
+X
+
+> k=1
+
+πk ℓk, Z := 
+
+> K
+
+X
+
+> j=1
+
+eℓj ,
+
+and using the standard softmax identities ∂π j /∂ℓ k = πj (δjk − πk) and ∂ log Z/∂ℓ k = πk, we obtain 
+
+∂H
+
+∂ℓ k
+
+= πk − πk
+
+ ℓk − ¯ℓ + 1  = − πk (ℓk − ¯ℓ), ¯ℓ := 
+
+> K
+
+X
+
+> j=1
+
+πj ℓj , (22) or equivalently ∇ℓH = − π ⊙ (ℓ − ¯ℓ 1).
+
+Step 2 (entropy gradient with respect to Wa). Composing (22) with ∂ℓ k/∂ [Wa]i,k ′ = hi(s) 1[k =
+
+k′] gives the closed-form expression 
+
+∇Wa H = − h(s)  π ⊙ (ℓ − ¯ℓ 1)⊤.
+
+The contribution of the entropy term to column k of the observed gradient is therefore 
+
+ηk := −cedhX
+
+> i=1
+
+∇Wa H 
+
+> i,k
+
+= ce ∥h(s)∥1 πk (ℓk − ¯ℓ), (23) so that the observed column sums decompose as eσk = σk + ηk, where σk is the policy-only column sum from part (i). 
+
+Step 3 (perturbation bound). Since |ℓk − ¯ℓ| ≤ Lt and πk ≤ πmax , (23) gives the uniform bound 
+
+|ηk| ≤ ce ∥h(s)∥1 πmax Lt for every k ∈ { 1, . . . , K }.
+
+Step 4 (invariance of the argmin/argmax). Suppose ˆA > 0 (the case ˆA < 0 is symmetric). By part (i), σat < σ k for every k̸ = at, with gap 
+
+σk − σat = ˆA ∥h(s)∥1
+
+ 1 − πat + πk
+
+ ≥ ∆t.
+
+The rule arg min k eσk still selects at provided eσat < eσk for every k̸ = at, i.e. 
+
+ηk − ηat > −(σk − σat ).
+
+A sufficient condition is |ηk − ηat | < σ k − σat for every k̸ = at, which is in turn implied by the uniform bound 2 max k |ηk| < ∆t (since |ηk − ηat | ≤ 2 max k |ηk| and σk − σat ≥ ∆t). By Step 3, this uniform bound holds whenever 2 ce ∥h(s)∥1 πmax Lt < ∆t, i.e. (11). The case ˆA < 0 follows by reversing every inequality, completing the proof. 
+
+Corollary D.1. Part (i) of the recovery rule holds regardless of the policy’s confidence. Even under a uniform policy πk = 1 /K for all k, the true-action column sum satisfies |σat | = | ˆA| ∥ h(s)∥1 (1 −
+
+1/K ) > 0, while all other column sums satisfy |σk| = | ˆA| ∥ h(s)∥1/K . Therefore, for K ≥ 3 the true action remains the unique maximizer under the sign-agnostic rule (since (K − 1) /K > 1/K ); for K = 2 the magnitudes tie, and the sign-aware rule (10) is required, with the sign of ˆAt supplied by information outside the policy-head column magnitudes. 
+
+18 Remark D.2 (Scope of the entropy-safety condition) . Condition (11) is a sufficient, not necessary, condition. The standard PPO/A2C entropy coefficients lie in ce ∈ [0 .005 , 0.05] , and the right-hand side ∆t/∥h(s)∥1 = | ˆAt| (1 − πat + min k̸ =at πk) remains bounded away from zero whenever | ˆAt| is non-negligible and the policy is not fully deterministic (Remark 4.3). The left-hand side 2ceLtπmax 
+
+scales with the logit spread Lt, which in practice is controlled by either (i) standard regularization of the policy head ( L2 weight decay or gradient clipping) or (ii) the entropy bonus itself, which actively penalizes large Lt. Empirically, the near-perfect action recovery reported in Table 1 is consistent with the evaluated checkpoints remaining outside the degenerate regime, but we do not require this sufficient condition to be tight. 
+
+D.3 Conditional Sufficiency of st for gt (Lemma D.3) 
+
+We first restate the structural lemma that underlies the conditional-sufficiency argument in part (ii) of Theorem 4.5, with the assumptions on the advantage and return estimators stated explicitly. Throughout, we condition only on the broadcast checkpoint θ0 (no conditioning on realized advantages or returns). 
+
+Lemma D.3 (Conditional sufficiency of st for gt). Assume: 
+
+(M) Markov victim policy: at ∼ πθ0 (· | st) depends on the trajectory only through st.
+
+(B) Causally adapted, un-normalized one-step estimators: there exist deterministic functions 
+
+hA, h R such that 
+
+ˆAt = hA(st, a t, ξ t), ˆRt = hR(st, a t, ξ t),
+
+where ξt := ( rt, st+1 ) is the one-step Markov noise drawn from the reward kernel R(· | 
+
+st, a t) and the transition kernel P (· | st, a t).Then the per-step gradient is the deterministic map 
+
+gt = G θ0, st, a t, ξ t
+
+
+
+:= ∇θ
+
+h
+
+−hA(st, a t, ξ t) log πθ (at | st) + cv
+
+ Vθ (st) − hR(st, a t, ξ t)2 − ce H πθ (· | st)i
+
+> θ=θ0
+
+.
+
+Consequently, conditional on θ0,
+
+gt ⊥⊥  {(st′ , a t′ )}t′<t , g1: t−1
+
+ (st, a t), (24) 
+
+and, marginalizing at ∼ πθ0 (· | st),
+
+gt ⊥⊥ g1: t−1 st. (25) 
+
+Proof. By Proposition 4.1 the A2C and PPO policy gradients agree at θ0, so gt equals the displayed expression. Substituting the assumed forms of ˆAt, ˆRt from (B) shows that gt = G(θ0, st, a t, ξ t)
+
+depends on the trajectory only through (st, a t, ξ t). By the Markov property of the MDP, the noise 
+
+ξt = ( rt, st+1 ) is, conditional on (st, a t), drawn from R(· | st, a t) ⊗ P (· | st, a t) independently of the past {(st′ , a t′ )}t′<t and of g1: t−1. Combined with the determinism of G, this yields (24). To derive (25), write 
+
+p(gt | st, g1: t−1, θ 0) = X
+
+> at∈A
+
+p(gt | st, a t, g1: t−1, θ 0) πθ0 (at | st).
+
+The first factor equals p(gt | st, a t, θ 0) by (24); the second factor is πθ0 (at | st) by (M), since at is sampled from πθ0 (· | st) independently of g1: t−1 given st. Both factors are independent of g1: t−1,proving (25). 
+
+Remark D.4 (Scope of assumption (B)) . Assumption (B) is satisfied by TD( 0) advantage–return pairs computed with stop-gradient on the bootstrap value (e.g. ˆAt = rt + γV θ0 (st+1 ) − Vθ0 (st),
+
+ˆRt = rt + γV θ0 (st+1 )). It is violated by GAE with λ > 0, which uses future ξt+k for k > 0, and by rollout-level normalization ˆAt ← ( ˆAt − μ)/σ , which couples every timestep through (μ, σ ). We discuss the consequences of relaxing (B) in Remark D.5. 
+
+19 D.4 Proof of Theorem 4.5 (Temporal Reconstruction Gain) 
+
+Proof. For part (i), ∆It = I(st; g1: t−1 | gt) ≥ 0 by non-negativity of conditional mutual in-formation. For the MSE statement, we work coordinate-wise. Writing st ∈ RDs and using 
+
+MSE ∗(Y ) = E[tr Cov( st | Y )] = PDs 
+
+> j=1
+
+E[Var([ st]j | Y )] , the scalar law of total variance applied to each coordinate gives 
+
+Var([ st]j | gt) = EVar([ st]j | g1: t) gt
+
+ + Var  E[[ st]j | g1: t] gt
+
+ ≥ EVar([ st]j | g1: t) gt
+
+.
+
+Taking expectations and summing over j yields MSE ∗(gt) ≥ MSE ∗(g1: t).For part (ii), assume (M) and (B) of Lemma D.3 and condition throughout on θ0. By (25), gt ⊥⊥
+
+g1: t−1 | st, equivalently I(gt; g1: t−1 | st) = 0 . This is exactly the Markov chain 
+
+g1: t−1 → st → gt.
+
+Using the identity I(X; Y | Z) = I(X; Y ) − I(Y ; Z) + I(Y ; Z | X) with (X, Y, Z ) =(st, g1: t−1, gt) and I(gt; g1: t−1 | st) = 0 yields 
+
+∆It = I(st; g1: t−1 | gt) = I(st; g1: t−1) − I(g1: t−1; gt),
+
+which is (13). Since mutual information is non-negative, I(g1: t−1; gt) ≥ 0, and therefore 
+
+∆It ≤ I(st; g1: t−1), (26) proving (26). 
+
+Remark D.5 (Beyond TD( 0): GAE and rollout normalization) . The identity (13) and bound (26) are exact under (M)+(B); the following discussion of the practical PPO/A2C setting is intuition, not a proved correction term. (i) GAE with λ> 0: ˆAt = P
+
+> k≥0
+
+(γλ )k δt+k depends on future noise ξt:T ,so (B) fails; since the policy gradient at θ0 scales linearly in ˆAt (Proposition 4.1), the influence of 
+
+ξt+k on gt is geometrically suppressed by (γλ )k [29]. (ii) Rollout normalization ˆAt ← ( ˆAt − μ)/σ 
+
+couples all timesteps through two scalar statistics, breaking the per-step factorization of (B) but only through a low-dimensional channel. The ablations in Tables 4 and 13 show different empirical scaling across the two victim algorithms. Both practical settings use GAE and rollout-level advantage normalization, so assumption (B) should be viewed as an idealized reference point rather than an exact description of these runs. A2C plateaus in [18 .3, 18 .8] dB PSNR for T ∈ { 8, 16 , 32 , 64 }, whereas PPO continues to improve from 18 .74 dB at T =8 to 20 .29 dB at T =64 . We interpret this as algorithm- and checkpoint-dependent temporal signal strength rather than a theorem-level consequence of the TD(0) idealization. 
+
+D.5 Derivation of Training Objective 
+
+Following Equation (8), let {st}Tt=1 denote a ground-truth trajectory and {ˆst}Tt=1 its reconstruction. We begin with two standard pixel-space reconstruction losses, namely the mean-squared error and the ℓ1 error: 
+
+LMSE = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+∥ˆst − st∥22 , LL1 = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+∥ˆst − st∥1 . (27) 
+
+To supervise action recovery, we include a cross-entropy loss on the predicted action distribution: 
+
+Lact = − 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+log ˆ pt(at), (28) 
+
+where ˆpt(at) denotes the probability assigned to the ground-truth action at at timestep t.Finally, to improve perceptual quality beyond pixel-wise agreement, we further incorporate the LPIPS loss [43]: 
+
+Lperc = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+LPIPS(ˆ st, st) . (29) 
+
+To mitigate exposure bias arising from teacher forcing (see Sec. 3.2), we add a rollout loss Lrollout 
+
+that supervises a short autoregressive rollout under self-generated context. Let ℓ(ˆ s, s, ˆp, a ) = α1∥ˆs −
+
+20 s∥22 + α2∥ˆs − s∥1 + α3(− log ˆ p(a)) + α4 LPIPS(ˆ s, s) denote the per-step loss. We uniformly sample a start index t0 ∼ Uniform {1, 2, . . . , T −R+1 } and unroll R steps with predicted frames fed back as image context:          
+
+> Lrollout = 1
+> R
+> R−1X
+> r=0
+> ℓ(ˆ st0+r,st0+r,ˆpt0+r, a t0+r),(30)
+
+where ˆst0+r = ϕdec (˜ zt0+r ) uses the previous predicted frame as image context without backpropa-gating gradients through it. This prevents the model from optimizing the quality of its own context inputs, ensuring the rollout trains robustness to imperfect context rather than learning to produce easily-decoded outputs. We set R=3 in all experiments. The overall objective combines these terms to jointly enforce reconstruction fidelity, perceptual realism, accurate action prediction, and robustness to autoregressive error accumulation: 
+
+Ltotal = α1LMSE + α2LL1 + α3Lact + α4Lperc + α5Lrollout . (31) 
+
+E Evaluation Metrics 
+
+We present the evaluation metrics used to assess the correctness of the reconstructed images. 
+
+Mean Squared Error (MSE ↓) [35]. It computes the average squared differences between corre-sponding pixels in the original and reconstructed images. As a pixel-wise distortion metric, lower values indicate better reconstruction. 
+
+Peak Signal to Noise Ratio (PSNR ↑) [22]. It is a logarithmic transformation of the MSE in decibels, offering an intuitive interpretation where higher values indicate superior image fidelity. 
+
+Structural Similarity (SSIM ↑) [36]. It evaluates perceptual image quality by comparing luminance, contrast, and structural components between original and reconstructed images, capturing inter-pixel dependencies better than error-based metrics like MSE. 
+
+Learned Perceptual Image Patch Similarity (LPIPS ↓). [43] It measures perceptual distance using deep features from a pre-trained convolutional neural network and correlates better with human perceptual judgments than traditional metrics. Lower LPIPS values indicate higher perceptual similarity. 
+
+Action Accuracy ↑. It reports the percentage of correctly inferred actions from observed gradients, measuring the attacker’s ability to recover the victim’s navigation decisions. Higher accuracy indicates more severe leakage of private control information. 
+
+F Additional Experiment Details 
+
+In this section, we provide additional details on the experimental setup and training procedure described in Sec. 5. 
+
+Environment and Navigation Task. We use the AI2-THOR simulator [18] with a point-goal navigation task. At the start of each episode, the agent and the target are initialized at randomly selected navigable locations. The objective is to navigate to within a 1.0-meter radius of the target location within a maximum of 200 time steps. A step penalty of −0.01 is applied at each time step, and a sparse terminal reward of +1 .0 is granted upon successfully reaching the target. To prevent overfitting to specific visual configurations, the training procedures interleave multiple indoor scenes and randomly shuffle the environment at the end of each episode. 
+
+Victim Model. The default victim follows a standard actor-critic architecture [19]: a shared convolu-tional encoder feeds parallel policy and value heads. The encoder is a four-block stack with channel widths (32 , 64 , 64 , 64) , kernel sizes (8 , 4, 3, 3) , and strides (4 , 2, 1, 2) , and paddings (2 , 1, 1, 1) , us-ing ReLU activations and batch normalization. For an 84 ×84 RGB input, these settings produce a 
+
+5×5×64 = 1600 flattened feature map. The flattened features are passed through a linear projection to a 512 -dimensional hidden representation (followed by ReLU ) that is shared by two linear heads: a policy head over |A| =5 discrete actions and a scalar value head. Including convolution, batch-normalization, fully connected, policy-head, and value-head parameters, the resulting model has a gradient dimension of d = 936 ,102 , which defines the attacker’s input space. 21 Table 6: Hyperparameter settings for TRACE training.                                      
+
+> Hyperparameter Value
+> Sequence length ( T)8
+> Latent dimension ( D)1024
+> Encoder hidden dimension ( denc )2048
+> Transformer layers 6
+> Attention heads 8
+> Encoder / Decoder type residual / residual Epochs 50
+> Batch size (per GPU) 8
+> Gradient accumulation steps 2Learning rate 1×10 −4
+> Weight decay 1×10 −5
+> LR schedule cosine (warmup: 5 epochs, min LR: 1×10 −6)Scheduled sampling range [0 .1,0.8] (warmup: 5epochs) Rollout steps 3
+> α1(MSE) 1.0
+> α2(L1) 0.5
+> α3(Action Cross Entropy) 0.01
+> α4(LPIPS) 0.2
+> α5(Rollout) 0.5
+
+Attacker (TRACE) Model. The attacker model uses the autoregressive architecture described in Sec. 3. The gradient encoder applies a learned input projection Wproj ∈ Rd×denc followed by residual blocks and a linear map to RD. The temporal transformer uses N =6 layers of pre-normalized multi-head causal self-attention with 8 heads and FlashAttention [7]. By default, the transformer applies learned absolute positional embeddings P ∈ R1×2T ×D to the input sequence. For longer sequences ( T =64 ), where the fixed embedding table becomes a bottleneck, we switch to Rotary Position Embeddings (RoPE) [32]. The residual decoder upsamples the contextualized latent to 
+
+84 ×84 RGB images and jointly predicts a discrete action distribution. In the standard configuration (denc =2048 , D=1024 ), the model has approximately 2.27 billion parameters, dominated by the input projection ( d · denc ≈ 1.9 × 10 9 weights). In the ablation study, we use denc =1024 , reducing the model to approximately 1.21 billion parameters. 
+
+Dataset and Augmentation. We prepare the training dataset by running the victim policy in AI2-THOR [18] and capturing per-step gradients alongside the corresponding RGB observations and actions. The data is stored in HDF5 [34] format as temporally ordered trajectories. We use 108 out of 120 available indoor scenes for training and reserve the remaining 12 for held-out test scenes. To enhance dataset diversity, we apply color-jitter transformations—specifically perturbations in brightness, contrast, saturation, and hue—to the recorded observations. Subsequently, gradients are recomputed through the frozen victim model using the exact training loss objective, which may be either the PPO surrogate or the A2C policy gradient incorporating GAE advantages, value loss, and entropy. 
+
+Computational Requirements. We implement TRACE in Python using PyTorch [27] as the primary framework for both the victim and attacker models. Default attacker training is distributed across six NVIDIA H200 GPUs using PyTorch DistributedDataParallel (DDP); the additional victim experiments use four or six GPUs, as reported in Table 9. These GPUs are not required for the method itself: comparable accelerator clusters such as NVIDIA A100 GPUs are sufficient, with lower-end GPUs mainly increasing training time. 
+
+Hyperparameter Settings. Table 6 summarizes the main hyperparameters used for the default TRACE model training configuration. The complete configuration used for experiments is provided in the accompanying yaml file with the source code. 
+
+F.1 Runtime of Experiments 
+
+Table 7 reports end-to-end training runtimes for the main TRACE configurations. 22 Table 7: Runtime of TRACE across various training configurations. Seq. indicates the number of gradient sequences used per run. Differences between PPO and A2C arise from the differing sizes of their captured gradient datasets. Reported times, measured in wall-clock hours, encompass training, validation every fifth epoch, and final evaluation on 100 held-out sequences. Unless otherwise specified, reported timings use six NVIDIA H200 GPUs; few-shot adaptation uses two NVIDIA H200 GPUs due to the smaller dataset. These timings reflect our measurement hardware rather than a strict hardware requirement. 
+
+Experiment Setting denc D T Epochs PPO A2C Seq. Time (h) Seq. Time (h) 
+
+Base Full Gradients 2048 1024 8 50 127 ,188 10 .57 149 ,250 12 .92 
+
+Sequence length ( T )
+
+T =1 (single-frame) 1024 1024 1 50 137 ,013 2.63 162 ,301 3.43 
+
+T =8 1024 1024 8 50 127 ,188 8.92 149 ,250 12 .26 
+
+T =16 1024 1024 16 50 115 ,161 13 .79 134 ,589 18 .84 
+
+T =32 1024 1024 32 50 47 ,541 16 .37 54 ,836 19 .15 
+
+T =64 (RoPE) 1024 1024 64 50 12 ,966 17 .62 14 ,600 20 .24 
+
+Gradient component CNN layers only 1024 1024 8 50 127 ,188 6.69 149 ,250 10 .18 
+
+FC layer only 1024 1024 8 50 127 ,188 8.59 149 ,250 11 .50 
+
+Policy & value heads only 1024 1024 8 50 127 ,188 6.50 149 ,250 9.93 
+
+Loss ablation w/o MSE 1024 1024 8 50 127 ,188 8.92 149 ,250 11 .97 
+
+w/o L1 1024 1024 8 50 127 ,188 9.17 149 ,250 11 .91 
+
+w/o LPIPS 1024 1024 8 50 127 ,188 8.37 149 ,250 11 .94 
+
+w/o Action 1024 1024 8 50 127 ,188 8.91 149 ,250 11 .85 
+
+Few-shot adaptation 
+
+10% target data 2048 1024 8 20 531 0.35 1,611 0.54 20% target data 2048 1024 8 20 1,181 0.44 3,510 0.67 30% target data 2048 1024 8 20 1,831 0.51 5,431 0.85 40% target data 2048 1024 8 20 2,359 0.53 7,046 0.99 50% target data 2048 1024 8 20 3,022 0.61 8,988 1.18 
+
+F.2 Few-Shot Adaptation 
+
+Table 8: Few-shot adaptation on held-out scenes (A2C).                                     
+
+> p(%) MSE ↓PSNR ↑SSIM ↑LPIPS ↓Act. Acc. ↑
+> 00.014 ±0.005 18 .9±1.40.583 ±0.061 0.358 ±0.060 100 .0%
+> 10 0.009 ±0.007 21 .2±2.60.649 ±0.085 0.252 ±0.087 100 .0%
+> 20 0.006 ±0.004 22 .7±2.40.680 ±0.087 0.208 ±0.083 100 .0%
+> 30 0.005 ±0.003 23 .6±2.60.703 ±0.092 0.173 ±0.080 100 .0%
+> 40 0.004 ±0.002 24 .4±2.90.722 ±0.098 0.148 ±0.080 100 .0%
+> 50 0.004 ±0.002 25 .0±3.10.738 ±0.099 0.132 ±0.077 100 .0%
+
+We extend the few-shot adaptation analysis from Sec. 5.2 to the A2C victim policy. Ta-ble 8 reports the same adaptation sweep ( p ∈{0, 10 , 20 , 30 , 40 , 50 }%) on held-out scenes. The trends mirror the PPO setting: zero-shot transfer already achieves near-perfect action re-covery and reasonable visual fidelity (PSNR 
+
+= 18 .9), while adapting with 50% of target tra-jectories raises PSNR to 25 .0 and lowers LPIPS to 0.132 .
+
+F.3 Applicability across victim configurations 
+
+To assess the broader applicability of TRACE, we examine trajectory leakage beyond the default shared-CNN victim with RGB observations and five actions. Alternative visual encoders and a larger residual backbone vary the representation and capacity of the victim, while recurrent state makes current decisions depend on observation history. Multi-modal inputs introduce goal information alongside visual observations. With larger discrete action spaces, we assess whether accurate action recovery persists as the number of candidate actions increases. The PPO variants include a compact Vision Transformer (Tiny ViT) [8], two IMPALA-style residual CNNs [10], a CNN with a gated recurrent unit (GRU), a multi-modal CNN, and the original CNN with ten actions. Here, multi-modal inputs comprise RGB observations and an egocentric point-goal vector encoding distance and relative bearing. We train a separate TRACE attacker for each victim using unaugmented captures and evaluate on 800 images from 100 held-out sequences of length T =8 .23 Table 9: Setup and offline cost of the additional PPO attackers trained without data augmentation. Full-gradient dimension d equals the victim’s trainable parameter count. Seq. indicates the number of training sequences, excluding the 5% validation split. Attacker sizes are in billions. All GPUs are NVIDIA H200s.                                    
+
+> Victim dAttacker (B) Seq. GPUs Time (h) CNN/Nav10 938,667 2.278 46,871 65.29 Tiny ViT/Nav5 477,830 1.335 46,770 45.46 IMPALA/Nav5 1,090,790 2.590 47,118 46.85 Wider IMPALA/Nav5 2,373,318 2.180 47,098 612.19 CNN+GRU/Nav5 919,462 2.239 47,215 67.71 Multi-modal/Nav5 1,281,318 2.980 39,859 65.85
+
+These experiments assess applicability across matched victim settings within AI2-THOR point-goal navigation, not transfer of one attacker between architectures. 
+
+Architectures and observations. Tiny ViT uses 14 ×14 patches, 128 -dimensional embeddings, two transformer layers with four attention heads and MLP width 512 , and a class token feeding the policy and value heads. It is a compact ViT implementation, not a pretrained model. The IMPALA-style CNN has three stages with channel widths (16 , 32 , 32) , each comprising a convolution, max pooling, two residual blocks, and group normalization, followed by a 256 -unit fully connected layer. The wider variant doubles the channel widths to (32 , 64 , 64) , increasing the victim from 1.09 M to 2.37 Mparameters. CNN+GRU retains the default convolutional stack but uses a 256 -unit projection and GRU state. The multi-modal victim fuses the default 512 -dimensional visual features with a two-layer, 
+
+128 -unit goal encoder, then projects to 512 shared features. Its three goal inputs are distance divided by 10 meters and clipped at one, and the sine and cosine of the egocentric goal bearing. The attacker receives gradients only and reconstructs RGB and actions, not the goal vector. 
+
+Actions and recurrent capture. The ten-action set adds MoveBack , MoveLeft , MoveRight ,
+
+Crouch , and Stand to the default five actions; rotation and look angles remain 15 ◦. For CNN+GRU, hidden state is carried through each episode and reset at episode boundaries. Per-step PPO gradients use the recorded pre-step hidden state as a detached input, without backpropagation through earlier observations. The hidden state is not an attacker input. 
+
+Attacker training and cost. We use the same 108 training and 12 held-out scene split, with T =8 ,stride 2, and a 95% /5% training/validation window split. Each attacker trains for 50 epochs, using the default transformer, decoder, and loss with input dimension and action-head size matched to the victim. For the wider IMPALA victim, we replace the single dense input projection with two learned projections, using an intermediate width of 768 and an output width of 2048 , to reduce memory use. Table 9 reports training sequences, model sizes, and elapsed time through the last training/validation record. These times exclude final evaluation, victim training, and data generation. All runs use batch size 8 per GPU and two accumulation steps, giving effective batch sizes of 64 or 96 on four or six GPUs. Thus, neither compute nor attacker capacity is held fixed across variants, and the offline cost remains substantial despite fast online inference. 
+
+Reconstruction results. Table 10 shows 99 .5% action accuracy with ten actions. The recurrent and multi-modal victims yield 18 .62 and 19 .78 dB PSNR, respectively; only RGB and actions are reconstructed in the multi-modal setting. The wider residual victim has 2.37 M parameters and yields 
+
+22 .36 dB PSNR. Tiny ViT retains 99 .0% action accuracy but reaches only 13 .99 dB PSNR, so reliable action recovery does not imply equally reliable image recovery. Since trajectories, dataset sizes, and attacker capacities differ across victims, differences in reconstruction fidelity cannot be attributed solely to the victim architecture. 
+
+F.4 Reconstruction under temporal gradient aggregation 
+
+TRACE’s main evaluation assumes access to ordered per-step gradients. When a learner shares only an aggregate across several steps, the server loses the direct correspondence between individual gradients and observation–action pairs. We therefore examine whether visual content and action proportions can still be reconstructed at the window level, comparing an unadapted per-step attacker, fine-tuning on matched aggregates, and training from scratch on aggregates. 24 Table 10: Additional PPO victims, each with a separately trained attacker and no data augmentation. 
+
+K is the number of actions. 
+
+Victim K MSE ↓ PSNR (dB) ↑ SSIM ↑ LPIPS ↓ Act. Acc. (%) ↑
+
+CNN 10 0.013 ±0.003 18 .92 ±0.96 0.610 ±0.051 0.372 ±0.074 99.5 Tiny ViT 5 0.048 ±0.028 13 .99 ±2.81 0.456 ±0.096 0.543 ±0.057 99.0 IMPALA-style CNN 5 0.007 ±0.003 21 .85 ±1.93 0.725 ±0.103 0.244 ±0.057 97.4 Wider IMPALA CNN 5 0.007 ±0.005 22 .36 ±3.05 0.773 ±0.127 0.208 ±0.106 98.5 CNN+GRU 5 0.015 ±0.006 18 .62 ±1.50 0.565 ±0.089 0.390 ±0.072 97.5 Multi-modal CNN 5 0.011 ±0.004 19 .78 ±1.64 0.697 ±0.076 0.335 ±0.081 97.4 
+
+Table 11: Reconstruction from four- and eight-step gradient averages for the five-action PPO victim. Uniform baselines have no image output. 
+
+Attacker MSE ↓ PSNR (dB) ↑ SSIM ↑ LPIPS ↓ Hist. TV ↓
+
+Four-step averaging (Agg4) Before fine-tuning 0.022 ±0.015 17 .90 ±3.80 0.604 ±0.148 0.410 ±0.097 0.576 ±0.226 
+
+After fine-tuning 0.021 ±0.014 18 .04 ±3.60 0.611 ±0.144 0.412 ±0.097 0.457 ±0.189 
+
+From scratch 0.025 ±0.016 17 .03 ±3.23 0.578 ±0.140 0.510 ±0.085 0.296 ±0.161 
+
+Uniform baseline – – – – 0.428 ±0.140 
+
+Eight-step averaging (Agg8) From scratch 0.031 ±0.019 16 .03 ±3.31 0.568 ±0.142 0.559 ±0.096 0.268 ±0.115 
+
+Uniform baseline – – – – 0.304 ±0.094 
+
+Using the default five-action PPO victim, we average groups of four or eight consecutive stored gradients within each episode, preserve the order of the resulting aggregates, and discard incomplete groups at episode boundaries. Each aggregate is paired with the last RGB frame in its group and the normalized histogram of the actions in that group. The attacker receives T =8 aggregated gradients per sequence in both settings. Each aggregate corresponds to four original steps in Agg4 or eight in Agg8, so the sequences span 32 and 64 original steps, respectively. This experiment averages existing per-step captures; it does not recompute PPO minibatch updates or shuffle steps across windows. 
+
+Training and evaluation. We use the architecture and losses in Table 6, with action histograms replacing single labels for cross-entropy supervision. The attacker has 2.27 B parameters and takes 
+
+936 ,102 -dimensional gradients. Both four-step aggregate-training runs use the same episode-disjoint split, with 452 validation sequences and training stride 2. Four-step training uses four GPUs and 
+
+3 accumulation steps, giving an effective batch size of 96 . The from-scratch attacker follows the 
+
+50 -epoch schedule in Table 6. For fine-tuning, we initialize from an attacker trained on unaugmented per-step captures, changing the duration to 20 epochs, learning rate to 10 −5, learning-rate warmup to 
+
+2 epochs, and minimum learning rate to 10 −7. We select each checkpoint by the lowest combined validation loss. All three four-step evaluations use autoregressive inference on the same first 100 
+
+held-out aggregate sequences with stride 8, yielding 800 last-frame targets and action histograms. For eight-step averaging, the from-scratch run uses the same model, losses, 50 -epoch schedule, and episode-disjoint splitting procedure. Evaluation uses autoregressive inference on 39 held-out sequences with stride 8, yielding 312 last-frame targets and action histograms. Histogram error is measured by total variation distance, TV(ˆ q, q ) = 12
+
+P5 
+
+> k=1
+
+|ˆqk − qk|, where qk is the observed fraction of action k within the aggregation window and ˆqk is its predicted proportion. Lower TV indicates closer action proportions. The uniform baseline assigns 20% probability to each of five actions in every window, without training or gradients. We divide action counts by the window length, compute the true histogram’s TV distance from the uniform prediction, and average over the same evaluation windows as TRACE, separately for each aggregation size. This tests whether TRACE outperforms an equal-frequency guess, because improvement over the unadapted attacker alone does not establish an advantage over this no-gradient reference. 
+
+Results. For four-step averaging, Table 11 shows that fine-tuning reduces mean histogram TV from 
+
+0.576 to 0.457 , while PSNR rises from 17 .90 to 18 .04 dB and SSIM from 0.604 to 0.611 . LPIPS does 25 Before fine-tuning After fine-tuning From scratch Uniform baseline    
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 Mean TV distance
+> = 0.576 = 0.457 = 0.296 = 0.428
+
+(a) Agg4 From scratch Uniform baseline   
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 Mean TV distance
+> = 0.268 = 0.304
+
+(b) Agg8 
+
+Figure 5: Action-histogram TV for Agg4 and Agg8; lower is better. Reduc-tions in mean TV relative to each panel’s uniform baseline indicate improved action-proportion recovery. Each point averages eight windows in one sequence. Boxes show medians and in-terquartile ranges; diamonds mark means. not improve, increasing slightly from 0.410 to 0.412 . Fine-tuning still underperforms the uniform baseline, whose mean TV is 0.428 . Training from scratch reduces TV to 0.296 , approximately 31% 
+
+below uniform, with lower sequence-averaged TV in 94 of 100 held-out sequences. Fig. 5 shows these error distributions. Compared with fine-tuning, training from scratch recovers action proportions more accurately but produces less accurate image reconstructions, with PSNR of 17 .03 dB and LPIPS of 0.510 . The runs use different training budgets and learning rates, so this comparison does not isolate the effect of initialization. For eight-step averaging, training from scratch yields 16 .03 dB PSNR and histogram TV of 0.268 ,approximately 12% below its uniform baseline of 0.304 . Training-set sizes, window targets, and evaluation sample counts differ between aggregation sizes, so these results do not isolate the effect of aggregation size. The image metrics quantify last-frame reconstruction under gradient averaging, not recovery of every observation or its order within a window. These single-run results do not establish robustness to shuffled minibatches, multi-epoch model updates, or secure aggregation. Overall, training from scratch recovers action proportions more accurately than uniform guessing under both aggregation settings. For Agg4, however, it yields lower PSNR and SSIM and higher MSE and LPIPS than the pretrained attacker, both before and after fine-tuning. The models trained from scratch use 8,736 aggregate training sequences for Agg4 and 2,808 for Agg8. Learning image reconstruction from these smaller datasets without per-step pretraining may contribute to the lower visual fidelity. These experiments do not isolate the effects of dataset size, initialization, and training schedule. 
+
+F.5 Effect of auxiliary-data scale 
+
+The few-shot study in Sec. 5.2 varies target-scene data available for adaptation, but does not measure the auxiliary data needed to train an attacker. Here, we vary the amount of unaugmented auxiliary data for the default PPO victim while keeping the victim checkpoint and attacker architecture fixed. We reserve 5% of eligible source episodes for validation, then select nested subsets of the remaining episodes using seed 42 . The reported fractions refer to this training-episode pool, not to the number of scenes or sliding-window sequences. All sequences from an episode remain in the same split. 
+
+Protocol. Each attacker trains from scratch using the settings in Table 6. The 10% –90% runs use 
+
+3 accumulation steps with four GPUs, giving an effective batch size of 96 . Training uses stride 
+
+2 and a fixed validation set of 2,487 sequences. Evaluation uses 800 images from the same first 
+
+100 sequences of the held-out per-step dataset, with stride 2 and autoregressive inference, without target-scene adaptation. We report the checkpoint selected by combined validation loss. Since epochs rather than optimizer updates are held fixed, larger subsets also receive more training updates. 
+
+Results. Table 12 reports the completed 10% , 30% , 50% , 70% , 90% , and 100% runs. PSNR increases from 16 .25 to 17 .66 , 18 .24 , 18 .44 , 18 .60 , and 18 .71 dB, while LPIPS falls from 0.502 to 
+
+0.419 , 0.389 , 0.373 , 0.359 , and 0.354 . Action accuracy is 100% in all six evaluations. Thus, action recovery remains accurate at the smallest tested fraction, while visual reconstruction benefits from more auxiliary data under this fixed-epoch training protocol. These single-run results do not identify the minimum auxiliary-data requirement or establish robustness to a different task or data domain. 26 Table 12: Auxiliary-data scaling without augmentation for PPO. Percentages select training episodes after a fixed validation holdout; Seq. counts training sequences. 
+
+Auxiliary data Seq. MSE ↓ PSNR (dB) ↑ SSIM ↑ LPIPS ↓ Act. Acc. (%) ↑
+
+10% 4,846 0.026 ±0.010 16 .25 ±1.80 0.548 ±0.104 0.502 ±0.063 100.0 
+
+30% 14,267 0.019 ±0.007 17 .66 ±1.78 0.594 ±0.104 0.419 ±0.062 100.0 
+
+50% 23,694 0.016 ±0.006 18 .24 ±1.65 0.609 ±0.108 0.389 ±0.072 100.0 
+
+70% 32,981 0.016 ±0.007 18 .44 ±1.78 0.617 ±0.105 0.373 ±0.074 100.0 
+
+90% 42,329 0.015 ±0.005 18 .60 ±1.67 0.625 ±0.100 0.359 ±0.065 100.0 
+
+100% 47,313 0.014 ±0.005 18 .71 ±1.62 0.627 ±0.102 0.354 ±0.074 100.0 Ground Truth No Defense Quant. (4-bit) Pruning (50%) Noise ( =0.01)        
+
+> DP-SGD ( =5.0,  =10  5)
+> t=1 t=2 t=3 t=4 t=5 t=6 t=7 t=8
+
+Figure 6: Reconstructions by TRACE under different defense techniques (20%–adapted PPO attacker; corresponding zero-shot results are reported in Table 3). 
+
+F.6 Qualitative Defense Example 
+
+This section complements the defense analysis in Sec. 5.3 with a qualitative example under representa-tive defenses. Fig. 6 shows the reconstructed images for T =8 under different defense techniques. For this evaluation, we employ the 20% adapted model of the PPO victim to present a visual assessment of the defense’s effectiveness. 
+
+F.7 Extended Ablation Study 
+
+Table 13 repeats the main-body ablations of Table 4 with an A2C victim and makes three observations concrete. (i) Context window. Enlarging T from 1 to 8 raises PSNR from 15 .54 to 18 .60 dB (+3 .1 dB), after which A2C plateaus in [18 .26 , 18 .77] dB for T ∈ { 16 , 32 , 64 }, in contrast to PPO, which continues to improve to 20 .29 dB at T =64 (Table 4). This division is consistent with algorithm-dependent temporal signal strength, while the exact sufficiency result in Lemma D.3 serves as an idealized reference for these practical GAE-based estimators. One possible explanation is that A2C gradients are more strongly tied to the current state, making additional context less informative after short horizons, whereas PPO’s use of GAE and rollout-level normalization may preserve cross-27 Table 13: Ablation study conducted on the held-out set (A2C). 
+
+Settings MSE ↓ PSNR ↑ SSIM ↑ LPIPS ↓ Act. Acc. ↑
+
+> T
+
+1 0.028 ±0.004 15 .54 ±0.69 0.483 ±0.034 0.695 ±0.064 99.0% 8 0.014 ±0.004 18 .60 ±1.23 0.564 ±0.060 0.388 ±0.064 100.0% 16 0.015 ±0.005 18 .60 ±1.31 0.579 ±0.061 0.375 ±0.055 98.4% 32 0.014 ±0.004 18 .77 ±1.29 0.541 ±0.068 0.390 ±0.053 98.9% 64 0.016 ±0.007 18 .26 ±1.75 0.560 ±0.084 0.443 ±0.061 98.9% Comp.  CNN 0.016 ±0.005 18 .15 ±1.20 0.553 ±0.061 0.391 ±0.067 99.5% FC 0.016 ±0.007 18 .23 ±1.43 0.558 ±0.063 0.405 ±0.069 99.5% Heads 0.028 ±0.013 15 .97 ±1.92 0.500 ±0.074 0.431 ±0.091 100.0% Loss (w/o)  Act. 0.013 ±0.004 18 .88 ±1.17 0.573 ±0.058 0.386 ±0.054 16.4% L1 0.014 ±0.004 18 .68 ±1.23 0.568 ±0.057 0.388 ±0.066 100.0% LPIPS 0.017 ±0.007 18 .01 ±1.47 0.567 ±0.060 0.409 ±0.067 100.0% MSE 0.015 ±0.004 18 .51 ±1.10 0.564 ±0.062 0.382 ±0.064 100.0% 
+
+timestep dependencies that longer contexts can exploit. (ii) Gradient components. CNN-only and FC-only subsets recover PSNR within roughly 0.5 dB of the full gradient, while the policy/value heads alone drop 2.6 dB yet still achieve 100 .0% action accuracy—mirroring the PPO pattern in Table 4 and aligning with Theorem 4.2, which predicts exact action recovery from the policy-head structure in our K=5 setting. (iii) Loss ablations. Removing the action loss collapses action accuracy to 16 .4% without affecting image PSNR, confirming that the two heads learn complementary signals. Removing LPIPS produces a 0.59 dB PSNR drop for A2C, whereas the PPO ablation (Table 4) shows a slight PSNR increase upon removing LPIPS—consistent with the standard perception–distortion tradeoff. We attribute this discrepancy to the different loss landscapes of the two algorithms: the A2C model appears to rely more heavily on the perceptual loss for stable optimization, though the precise mechanism warrants further investigation. 
+
+G Discussion 
+
+TRACE is designed to reconstruct private trajectories from ordered per-step gradients in near real-time scenarios. Consequently, our evaluation focuses on practical defense mechanisms compatible with these conditions, including pruning, quantization, additive noise, and DP-SGD [1]. DP-SGD provides stronger protection in our experiments but entails additional computational and utility costs. We do not consider heavier defenses such as CENSOR [42] and SVDefense [24], whose overhead are challenging for real-time deployment. App. F.4 evaluates averages of four consecutive stored gradients with last-frame and action-histogram targets. This experiment retains ordering across aggregate windows; it does not evaluate recomputed rollout-level updates, multi-epoch client policy updates, or multi-client secure aggregation. These mechanisms combine gradients across time steps, optimization states, or clients, potentially diminishing or eliminating the ordered temporal signal exploited by TRACE. 
+
+H Limitations 
+
+Our experiments remain confined to point-goal navigation in AI2-THOR [18]. The additional PPO victims cover recurrent, residual, and compact transformer policies, multi-modal inputs, and up to ten discrete actions, but require a separately trained attacker for each victim. They do not establish cross-task or cross-simulator transfer, nor scalability to substantially larger policies. The multi-modal experiment reconstructs RGB and actions, not the goal input; depth, proprioception, and off-policy algorithms remain unevaluated. Recurrent captures condition on detached hidden states rather than backpropagating through complete histories. These settings retain the ordered per-step gradient interface and do not resolve the aggregation limitation above. Finally, our analysis targets discrete-action victims: Theorem 4.2 applies to a categorical policy over a finite set of actions. For Gaussian continuous-control policies, gradients may reveal advantage-weighted residual structure, but identifiability depends on both the covariance parameterization and the advantage-sign information. Consequently, the categorical argmin/argmax rule does not apply directly, and the corresponding identifiability statement is left to future work. 28

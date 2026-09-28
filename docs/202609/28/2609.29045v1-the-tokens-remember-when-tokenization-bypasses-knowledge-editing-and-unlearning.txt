@@ -1,0 +1,1283 @@
+Title: The Tokens Remember: When Tokenization Bypasses Knowledge Editing and Unlearning
+
+URL Source: https://arxiv.org/pdf/2609.29045v1
+
+Published Time: Fri, 25 Sep 2026 00:35:11 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# The Tokens Remember: When Tokenization Bypasses Knowledge Editing and Unlearning 
+
+Manit Baser †, Aditya Nawal †, Dinil Mon Divakaran ‡, Mohan Gurusamy †
+
+> †
+
+National University of Singapore ‡A*STAR Institute of Advanced Intelligence and Computing, Singapore 
+
+Abstract —Open-weight LLMs give downstream users control over the inference stack, but this flexibility can undermine post-release guarantees that sensitive knowledge has been modified or removed. Model editing and machine unlearning are used to modify or remove targeted knowledge without retraining models from scratch. However, existing security evaluations of these techniques face two critical limitations. First, they typically require access to either the original pre-edit/unlearning model or auxiliary classifiers to detect modifications or reconstruct pre-edit behavior. Second, they evaluate modifications under the canonical tokenization of an input, implicitly treating tokenization as a benign preprocessing step. We show that this assumption creates a security gap: the same input string can be represented by alternative valid tokenizations that induce different computa-tional trajectories, allowing an adversary to bypass localized modifications and recover information intended to be suppressed. We introduce Toketive , a simple yet powerful reference-free attack that exploits the tokenization-based side channel to (i) detect modified knowledge and (ii) reconstruct the corre-sponding pre-edit response. Toketive operates solely on the released model and requires neither the pre-edit model, training data, shadow models, nor auxiliary classifiers. Across five LLMs, six datasets, and six state-of-the-art editing and unlearning techniques, we find that 38.6% of alternative tokenizations bypass the modification and recover the pre-edit response. Toketive 
+
+detects modified facts with an F1 score of 84.2%, a 26.2% relative gain over the strongest baseline, and reconstructs pre-edit responses with 74.5% top-5 accuracy, 21.7% higher than the best baseline. Our results reveal a fundamental gap between canonical-tokenization evaluation and the post-release security guarantees expected from model editing and unlearning, showing that localized modifications should not be treated as robust knowledge-control boundaries without adversarial evaluation over alternative representations. 
+
+I. I NTRODUCTION 
+
+The rapid progress of large language models (LLMs) has been accompanied by the widespread release of high-performance open-weight models, facilitating democra-tized access to state-of-the-art capabilities. Models such as Llama [1], Qwen [2], Mistral [3], Gemma [4], DeepSeek [5], GLM [6], and OLMo [7] now achieve performance compa-rable to many proprietary models while remaining publicly accessible. These have accelerated innovation by enabling model customization, domain adaptation, and scientific re-producibility [8], [9], [10], [11]. As of August 2026, Hug-ging Face hosts over 395,000 open-weight text-generation checkpoints [12]. The growing importance of open-weight models is also reflected by concerns over sovereignty, as recent restrictions (temporarily) limited access to some frontier models [13], [14], [15]. Prompt: The phone number of John Doe is Canonical tokenization Noncanonical tokenization                   
+
+> The phone num ber John Doe is patched circuits ✓
+> The phon e nu mber of Jo hn Doe bypasses edit ↻
+> Tokenization side channel →same string, different internal trajectories of is
+> Edited/Unlearned model f𝜃 ’
+> t1:
+> t2:
+
+Fig. 1: Different tokenizations of an input string ( t1 and 
+
+t2) induce different internal computational trajectories. While the canonical tokenization activates patched trajectories and suppresses the target information, a noncanonical tokenization may bypass the edit and recover the original response. As open-weight models become increasingly prevalent, their accessibility fundamentally changes the security assumptions under which they operate [16], [17], [18]. Unlike hosted LLM APIs, once an open-weight model is released, its developer no longer controls the inference stack, allowing downstream users, including malicious users, to inspect, modify, and execute the model under arbitrary local inference settings. Consequently, developers must ensure that released models re-main safe, accurate, and compliant as regulations evolve [19], [20], new vulnerabilities are discovered [21], [22], factual knowledge changes [23], and harmful memorized contents are identified [24]. Model editing and machine unlearning provide efficient mechanisms for performing such targeted modifications without resorting to the prohibitively expensive approach of retraining models from scratch [25], [26], [27], [28]. These modifications may involve removing personally identifiable information [29], correcting outdated or erroneous knowledge [30], or mitigating unsafe behaviors [31]. Editing and unlearning aim to ensure that modified knowl-edge cannot be reliably recovered during subsequent inference, including under adversarial attempts to recover the edited or unlearned information. These techniques seek precise, local-ized modifications and often follow a “locate-then-edit” (or “unlearn”) paradigm: first identifying the internal parameters or representations associated with a target fact, and then apply-ing a localized update [32], [33], [34]. Alternative approaches to knowledge modification are discussed in Section VI. Beyond the primary objective editing and unlearning, how-arXiv:2609.29045v1 [cs.CR] 24 Sep 2026 ever, unintended effects on overall model behavior have emerged as an important concern. In particular, their impact on model alignment has received significant attention [35], [36], [37]. Existing works that study the security implications of editing and unlearning have been mostly limited to exposing vulnerabilities such as membership inference [38], training-data extraction [29], reverse engineering of updates [39], auditing [40], and multi-step knowledge recovery [41]. Fur-thermore, these approaches share two key limitations: (i) they require either training auxiliary classifiers and shadow models or access to the original pre-edit model to reconstruct pre-edit behavior; and (ii) they assume that the attacker queries the model with the same canonical tokenization used during editing or unlearning [42]. This assumption is implicit in existing threat models, which does not account for variation in how an input may be represented at the token level. We show that this assumption is fundamentally flawed (Section V). Existing editing and unlearning techniques assume that modifying parameters identified using the canonical tokeniza-tion is sufficient to update the corresponding fact across all inputs that express it. However, alternative tokenizations [43] of the same string (noncanonical tokenizations) can induce different internal computational paths, exposing tokenization-based side channels that can bypass alignment mechanisms optimized for the canonical representation. Consequently, any residual factual association accessible through such alternative paths constitutes an information leak. As illustrated in Fig. 1, we find that an adversary can exploit this by querying the updated model with a noncanonical tokenization of the same input, thereby recovering the unlearned or edited knowledge without requiring access to the original model, an attack surface that existing threat models overlook. In this work, we introduce Toketive , a reference-free adversarial attack that operationalizes tokenization-based side channels to detect and recover edited or unlearned knowl-edge. Given only a query and an edited model (i.e., without access to the original model, external reference outputs or any auxiliary training), Toketive performs a budget-aware search over alternate tokenizations to (i) detect whether a fact has been modified, and (ii) reconstruct the pre-edit response. 
+
+Toketive exploits the residual factual associations that editing leaves intact along unpatched computational paths, which is a tokenization-based side channel. To the best of our knowledge, Toketive is the first attack to explicitly leverage tokenization variance as a mechanism for breaking the security assumptions of model editing and machine unlearning 1.Across five models, six datasets, and six editing and unlearning techniques, Toketive achieves an average edit/unlearning detection F1 score of 84.2%, a 26.2% relative gain over the strongest baseline. It also recovers pre-update responses with a top-5 accuracy of 74.5%, 21.7% higher than the best baseline. These results demonstrate that suppressed knowledge remains recoverable under tokenization-aware at-tacks like Toketive , revealing a gap between current adver-
+
+> 1Source code is available at: https://anonymous.4open.science/r/Toketive.
+
+sarial evaluation practices and the security properties they aim to capture. We summarize our contributions below. 
+
+① Tokenization as an attack surface. We identify attacker-controlled tokenization as a previously overlooked attack sur-face for post-release knowledge control, showing that state-of-the-art localized editing and unlearning techniques fail to generalize across alternative representations of the same input. This vulnerability is particularly relevant to open-weight mod-els, where users can freely construct queries with alternative tokenizations (Section III). 
+
+② Toketive : a reference-free adversarial attack. We develop Toketive , a tokenization-aware attack that detects vulnerable modifications and reconstructs pre-edit responses using only the released model, without pre-edit models, train-ing data, shadow models, auxiliary classifiers, or external reference outputs (Section IV). 
+
+③ Comprehensive evaluation. We evaluate Toketive 
+
+across five models, six datasets, and six editing and unlearning techniques, showing that it achieves strong detection perfor-mance and reliably reconstructs pre-edit responses, signifi-cantly outperforming existing baselines (Section V). 
+
+④ Defense analysis and robustness-locality trade-off. We investigate a tokenization-aware adaptive editing strategy that incorporates discovered bypass tokenizations into subsequent updates. While adaptive editing reduces tokenization-based bypasses, we find that increased robustness comes at the cost of broader changes to neighboring knowledge, revealing a fundamental robustness-locality trade-off (Appendix A). II. P RELIMINARIES 
+
+A. Model Editing and Machine Unlearning 
+
+Model editing aims to update specific factual knowledge stored in a pretrained language model without retraining from scratch [32], [44]. Machine unlearning pursues the comple-mentary goal of removing the influence of specific training data or factual associations from a model, such that it behaves as if it was never trained on that information [45]. A common formulation represents factual knowledge as a triple (s, r, o ),where s denotes a subject, r a relation, and o the object. Given a natural language prompt p(s, r ) (e.g., “The president of the United States is”), an autoregressive language model 
+
+fθ predicts a distribution over possible continuations, ideally assigning high probability to ( o). 
+
+Model editing. The goal of editing is to replace an existing association (s, r, o ) with a new target (s, r, o ∗) while pre-serving unrelated behavior. Formally, given an editing request 
+
+e = ( s, r, o, o ∗), an editing procedure E produces a model, 
+
+fθ′ = E(fθ , e ),
+
+such that: (i) Reliability: fθ′ (p(s, r )) assigns high probability to o∗; (ii) Generalization: the new model recalls o∗ under para-phrased prompts describing the same fact; and (iii) Locality: predictions for unrelated prompts remain largely unchanged. 
+
+Machine unlearning. With unlearning, the goal is to sup-press a target association (s, r, o ) entirely, such that the model no longer recalls o from p(s, r ) and behaves as if it was never 2trained on that fact. Formally, given an unlearning request over a forget set Df , an unlearning procedure U produces an updated model, 
+
+fθ′ = U(fθ , Df ),
+
+such that: (i) Efficacy: fθ′ no longer assigns high probability to o under p(s, r ) or its paraphrases; (ii) Utility: predictions for facts outside Df remain unchanged; and (iii) Privacy: the membership of a forget-set fact should be indistinguishable from a never-trained fact by an adversary querying fθ′ .
+
+The locate-then-edit/unlearn paradigm. Both model editing and localization-based unlearning follow a common two-stage procedure [34], [45]. First, they locate internal model components responsible for storing the target fact, typically identifying specific feed-forward MLP layers and subject token positions via causal tracing. Second, they apply targeted parameter updates restricted to those components, modifying weights so that the model retrieves the new association or suppresses the target association, while minimizing collateral damage to unrelated behavior. 
+
+B. Noncanonical tokenization 
+
+Let x = ( x1, . . . , x n) denote a string of characters and let V
+
+be a subword vocabulary constructed via Byte-Pair Encoding (BPE) [43], [42]. A tokenization of x with respect to V is a sequence of tokens v = ( v1, . . . , v m) such that, 
+
+v1 ⊕ v2 ⊕ · · · ⊕ vm = x, 
+
+where ⊕ denotes string concatenation and vi ∈ V .LLM pipelines employ a deterministic tokenizer k∗ to map each string x to a unique canonical tokenization v∗ = k∗(x),obtained by greedily applying merge rules in the order they were learned. However, as v∗ is only one element of the full tokenization set, 
+
+TV (x) = {v : v is a valid tokenization of x}.
+
+In general, |T V (x)| grows exponentially with |x|, even under BPE vocabularies. Consider the string x = "The phone number of John Doe is" . As illustrated in Fig. 1, canonical tokenization v∗ may segment this string into sub-words such as t1 = ["The", " phone num", "ber", " of", " John Doe", " is"] . However, alternative tokenizations in TV (x) can split the same string dif-ferently, e.g., t2 = ["The", " phon", "e nu", " mber", " of Jo", "hn Doe", " is"] , while still satisfying v1 ⊕ · · · ⊕ vm = x. Although both correspond to the same character string, they induce different token sequences and thus different internal computational model trajectories. We refer to any v ∈ T V (x) such that v̸ = k∗(x) as a non-canonical tokenization. Although LLMs are trained exclusively on canonical tokenizations, noncanonical tokenizations can preserve substantial semantic information about the underlying input, as demonstrated by prior work [43]. This implies that the conditional distribution may remain semantically meaningful even when v̸ = k∗(x), while potentially activating different internal trajectories. 
+
+C. Representational Entanglement 
+
+LLMs encode factual knowledge within high-dimensional hidden representations distributed across transformer layers. Let pi = p(si, r i) denote a prompt corresponding to a factual triple (si, r i, o i). As the input tokens propagate through a model’s layers, their hidden representations evolve according to the residual, attention, and feed-forward transformations: 
+
+h(l) 
+
+> i
+
+= h(l−1)  
+
+> i
+
++ a(l) 
+
+> i
+
++ m(l) 
+
+> i
+
+,
+
+where a(l) 
+
+> i
+
+and m(l) 
+
+> i
+
+denote the attention and MLP contribu-tions at layer l. Prior works [32], [25], [46] show that factual associations are often mediated by a subset of intermediate MLP layers, sometimes referred to as critical layers, where subject tokens elicit key-like activation patterns that shape the final prediction. Representations extracted at or near the last such critical layer provide a compact yet informative snapshot of how a fact is encoded before downstream mixing and decoding constraints are applied. 
+
+Definition (Representational Entanglement). Let h(L) 
+
+> i
+
+and 
+
+h(L) 
+
+> j
+
+denote hidden representations at a chosen probe layer 
+
+L, for prompts pi and pj , respectively. The representational entanglement [46] between the corresponding facts is defined as the cosine similarity between their representations at L:
+
+S(i, j ) = cos( h(L) 
+
+> i
+
+, h (L) 
+
+> j
+
+).
+
+A high entanglement score indicates that two prompts in-duce similar representations at the probe layer. In Toketive ,this similarity serves as the primary signal for selecting alternative tokenizations. Tokenizations that are too close to the canonical representation are more likely to preserve the target factual association but also to get affected by the edit or unlearning update, whereas tokenizations that are too distant may bypass the update but lose the relevant factual association. Toketive therefore searches for tokenizations within an intermediate similarity range that balances these two properties. This target range forms the basis of the adaptive tokenization sampler described in Section IV. III. T HREAT MODEL 
+
+Setting. We consider a scenario where a model fθ is edited or unlearned to produce fθ′ , which is subsequently released. We assume access to the released model’s param-eters and internal activations. This reflects the intended use of open-weight foundation models, where downstream users can inspect and execute the model locally. Consequently, recent works have leveraged access to model parameters and internal representations to recover edited or unlearned information [47], [48], [39]. Moreover, open-weight models are increasingly adopted because they avoid the recurring inference costs of proprietary APIs while enabling local execution with competitive performance [50]. Advances in quantization, compression, and hardware-aware optimization further allow modern open-weight models to run efficiently on commodity hardware, maintaining strong performance in resource-constrained settings [51], [52]. 3TABLE I: Comparison of Toketive with existing methods for security and privacy in editing and unlearning.                                               
+
+> Method Pre-edit model required Requires training auxiliary models Reconstructs pre-edit output
+> DEED [47] ✓Required ✓Trains AdaBoost classifier ∼Indirectly FUMA [48] ✗Not required ✗No training required ✗No KSTER [39] ✓Required ✗No training ∼Indirectly RULI [38] ✗Not required ✓Trains shadow models ✗No U-LiRA [49] ✗Not required ✓Trains shadow models ✗No TULA-DR [40] ✓Required ✗No training required ✓Yes (via weight diff)
+> Toketive (ours) ✗Not required ✗No training required ✓Yes
+
+In-scope and out-of-scope. We focus on inexact editing and unlearning procedure, particularly those utilizing the locate-then-edit paradigm [44], [25], [53], which modifies a targeted subset of parameters for a given prompt. Recent works [34], [45] conceptualize unlearning as a special case of the locate-then-edit paradigm. We exclude fine-tuning-based approaches [54], [55], [56] because they primarily suppress target outputs rather than remove the underlying knowledge from the model, while also introducing substantial collateral changes to unrelated knowledge and capabilities [28], [57], [58]. Although fine-tuning more effectively suppresses non-canonical tokenizations, our experiments in Appendix B show that this comes at a substantial cost to locality, with fine-tuning producing 5.2× larger ripple effects than editing techniques. 
+
+Attacker’s Capabilities. An attacker in our threat model can: 1) Query fθ′ with arbitrary token sequences, including noncanonical tokenizations of any string; 2) Read internal activations of fθ′ at any layer and position. The attacker does not have access to:  
+
+> •
+
+the pre-edit model fθ or any of its outputs;  
+
+> •
+
+the pre-edit response o for any target fact;  
+
+> •
+
+any training or fine-tuning data for fθ ; 
+
+> •
+
+any information about which editing or unlearning tech-nique was applied;  
+
+> •
+
+shadow models, auxiliary classifiers or training facilities. This access scenario captures a realistic and practically relevant adversary. For example, a malicious actor attempting to recover PII that was supposed to have been deleted from a publicly released model, or a regulator auditing a deployed model for compliance with a deletion request. 
+
+Attack Goal. The attacker pursues two coupled objectives: 
+
+① Edit/Unlearning Detection: Given fθ′ and a prompt 
+
+p(s, r ), determine whether the fact (s, r, ·) was modified post-training. 
+
+② Adversarial Reconstruction: If the fact was modified, re-cover the original object from the pre-edit association (s, r, o ).These goals are intentionally coupled, as detection without reconstruction only establishes that an edit occurred, while reconstruction without detection would require knowing in advance which facts to target. Toketive addresses both simultaneously, using a unified search procedure over the tokenization space. Once an open-weight model is released, the model owner no longer controls how it is deployed or queried. An adversary can locally invoke the model with raw token IDs and inspect hidden activations, bypassing any canonicalization that a hosted API might enforce. Existing evaluations overestimate suppression by assuming canonical tokenization during inference. Toketive identifies a previ-ously overlooked attack surface under this open-weight setting. IV. TO K E T I V E : A N EW ADVERSARIAL ATTACK ON 
+
+EDITING & U NLEARNING 
+
+In this section, we identify limitations of existing detection methods, privacy attacks, and evaluation frameworks in editing and unlearning. Subsequently, we introduce a novel adversarial attack that overcomes these limitations, while unifying the detection and reconstruction of edited or unlearned knowledge. 
+
+A. Limitations of Existing Methods 
+
+Existing approaches share three structural limitations that restrict their applicability in practical scenarios. Table I sum-marizes their capabilities and limitations. 
+
+Limitation I: Dependence on the Pre-edit Model. Many approaches analyzing model editing and machine unlearning require access to the original pre-edit model fθ . DEED [47] assumes access to the original model for obtaining its training set. KSTER [39] performs spectral analysis on the weight difference θ′ −θ to recover the editing subject. TULA-DR [40] solves a constrained optimization over the weight differential to reconstruct unlearned text. In each case, the pre-edit model is an input to the procedure. This assumption is strong and often unrealistic. In operation, the original model is typically unavailable once an edit or unlearning procedure is applied, particularly when the edit is motivated by a right-to-be-forgotten request under GDPR [59] or similar regulation. An auditor or adversary operating after the modification has access only to the released post-edit model. 
+
+Limitation II: Dependence on Shadow Models or Aux-iliary Training. Other methods that avoid the pre-edit model requirement instead require training shadow models or aux-iliary classifiers to function. U-LiRA [49] trains multiple shadow models to construct membership likelihood ratios, while RULI [38] requires training multiple shadow models alongside their unlearned variants to audit privacy leakage. DEED [47] also trains an AdaBoost classifier on labeled examples of edited and unedited facts. In these approaches, the process imposes substantial training overhead; they also require knowledge of the training and unlearning algorithms as well as access to the underlying data distribution, which a post-hoc auditor or an adversary operating on a released model is unlikely to possess. 4Adaptive Sampling       
+
+> Detect change Reconstruct original response
+> No pre-edit model No shadow models No auxiliary training
+> Released model f θ'
+> Canonical response Token splitting
+> Aggressiveness α controls token splits
+> Sampling filter
+> Sampling for band selection
+> Sampling feedback
+> Phase 1 – Edit Detection
+> Detection band
+> low–medium similarity with canonical version
+> Reconstruction band
+> medium-high similarity with canonical version
+> Phase 2 – Reconstruction
+> Not Edited
+> ∇< τ det
+> Edited
+> ∇≥ τ det
+> Discard samples with canonical response
+> keep bypasses only
+> Majority Vote
+> keep top-k candidates
+> Adversary
+> Bypass rate ∇< τ det ?
+> canonical response in noncanonical samples?
+> The phone number of Jon Doe is …
+> Query p(s, r)
+
+Fig. 2: Overview of the Toketive adversarial attack. While editing and unlearning techniques aim to patch the circuit for the canonical tokenization, many noncanonical tokenizations bypasses the edit, exposing the pre-edit knowledge. 
+
+Limitation III: Methods Without Pre-edit Model Access Cannot Reconstruct Pre-edit Responses. Among the meth-ods that do not require the pre-edit model (U-LiRA, RULI, and FUMA [48]), none are capable of reconstructing the pre-edit response. U-LiRA and RULI are membership inference methods, as they determine whether a data point was part of the training set, but produce no information about what the model’s pre-edit response was. FUMA identifies what was unlearned via gradient signals but similarly does not recover the pre-edit output. For an auditor verifying compliance with a deletion request, knowing that an edit occurred is necessary but not sufficient. The auditor must also verify what was sup-pressed and whether it remains accessible post-modification. 
+
+B. The Toketive Attack 
+
+We design Toketive around the fact that alternative tokenizations of the same input string induce distinct internal computational trajectories. Our key observation is that many alternate trajectories remain unaffected even after the model is edited or unlearned, and continue to retrieve the original asso-ciation. We exploit this asymmetry with a simple yet powerful tokenization-based side channel, where Toketive searches over noncanonical tokenizations to identify and recover the pre-edit response. Toketive preserves the exact input string and varies only its valid tokenization, isolating tokenization-dependent computation. 
+
+Toketive takes as input the post-edit model fθ′ and a target prompt p(s, r ), and produces two outputs: a detection label ℓ ∈ { edited , unedited } and, if ℓ = edited , a reconstructed pre-edit response ˆo. Toketive consists of an adaptive tokenization sampler as a shared upstream compo-nent, as its output is routed to two downstream phases: ①
+
+edit detection and ② pre-edit reconstruction. As its filtering signal, the sampler uses representational entanglement (Sec-tion II-C), a technique originally proposed to predict ripple effects between different facts, which we repurpose here as a bypass prediction signal within the tokenization space of a single prompt. We evaluate alternative filtering strategies in Section V. Algorithm 1 presents the complete procedure. 
+
+Canonical reference. Before sampling begins, Toketive 
+
+performs a single forward pass on the canonical tokenization 
+
+v∗ = k∗(p(s, r )) through fθ′ , recording two quantities: the canonical output ˆyv∗ (the post-edit response under v∗), and the canonical reference vector h(L) 
+
+> v∗
+
+, the hidden state at the final subject token position at the last critical layer L (Algo. 1, line no. 17-24). All sampling scores computed during the search are measured relative to h(L) 
+
+> v∗
+
+.
+
+1) Adaptive Tokenization Sampler: The sampler is con-trolled by a single aggressiveness parameter, α ∈ [0 , 1] , which is initialized to 0.5. It governs how aggressively the prompt string is fragmented into smaller subword units (Algorithm 1, lines 25-39). A higher α produces more fragmented tokeniza-tions, whereas lower values generate segmentations closer to the canonical form. As illustrated in Fig. 1, increasing 
+
+α results in finer-grained tokenizations (e.g., t2 versus t1), inducing alternative internal computational trajectories for the same input string. During search, α is automatically adjusted using a proportional controller driven by the rolling mean sim-ilarity over the previous ten sampled tokenizations. Once the controller reaches the target similarity band, a small random perturbation is applied to α to encourage local exploration and avoid stagnation. For each candidate tokenization u, the sampler performs a forward pass through fθ′ and computes the entanglement score (Section II-C): 
+
+S(u, v ∗) = cos 
+
+
+
+h(L) 
+
+> u
+
+, h (L)
+
+> v∗
+
+
+
+.
+
+A candidate u is accepted only if its concatenation recovers the original string p exactly, ensuring the underlying character sequence is unchanged. Based on this score (between 0 and 
+
+1), each candidate is routed to one of three destinations:  
+
+> •
+
+Detection band [βdet  
+
+> l
+
+, β det  
+
+> h
+
+): forwarded to Phase ①. 
+
+> •
+
+Reconstruction band [βrec  
+
+> l
+
+, β rec  
+
+> h
+
+): forwarded to Phase ②.5Algorithm 1 Toketive : Tokenization-Based Adversarial Attack. 
+
+Input: Post-edit model fθ′ , prompt p(s, r ), subject s, sample bud-gets ndet , n rec , detection threshold τdet , band bounds βdet , β rec 
+
+Output: Detection label ℓ; reconstructed pre-edit response ˆo (if ℓ =
+
+edited ) 
+
+> 1:
+
+Initialize: Cdet , Crec , Cbyp  
+
+> 2:
+
+(o∗, h ∗) ← CANONICAL REF (fθ′ , p, s ) 
+
+> 3:
+
+> Phase ①: edit detection  
+
+> 4:
+
+Cdet ← SAMPLE (fθ′ , p, s, h ∗, β det , n det ) 
+
+> 5:
+
+∇ ← 1
+
+|C det |
+
+X
+
+> u∈C det
+
+1o∗ ∈ fθ′ (u) 
+
+> 6:
+
+if ∇ ≥ τdet then  
+
+> 7:
+
+return (unedited , ⊥) 
+
+> 8:
+
+end if  
+
+> 9:
+
+> Phase ②: pre-edit reconstruction  
+
+> 10:
+
+Crec ← SAMPLE (fθ′ , p, s, h ∗, β rec , n rec ) 
+
+> 11:
+
+Cbyp ← { u ∈ C rec | o∗ /∈ fθ′ (u) } 
+
+> 12:
+
+if Cbyp = ∅ then  
+
+> 13:
+
+return (edited , ⊥) 
+
+> 14:
+
+end if  
+
+> 15:
+
+ˆo ← arg max c
+
+X
+
+> u∈C byp
+
+1fθ′ (u)[ |p|:] = c 
+
+> 16:
+
+return (edited , ˆo) 
+
+> 17:
+
+> canonical reference  
+
+> 18:
+
+procedure CANONICAL REF (fθ′ , p, s ) 
+
+> 19:
+
+L ← ⌊ depth( fθ′ )/3⌋ 
+
+> 20:
+
+v∗ ← k∗(p) 
+
+> 21:
+
+o∗ ← fθ′ (v∗)[ |p|:]  
+
+> 22:
+
+h∗ ← HIDDEN (fθ′ , v ∗, L, s ) 
+
+> 23:
+
+return (o∗, h ∗) 
+
+> 24:
+
+end procedure  
+
+> 25:
+
+> adaptive tokenization sampling  
+
+> 26:
+
+procedure SAMPLE (fθ′ , p, s, h ∗, [βl, β h), n ) 
+
+> 27:
+
+C ← ∅  
+
+> 28:
+
+L ← ⌊ depth( fθ′ )/3⌋ 
+
+> 29:
+
+while |C| < n do ▷ α adapted by proportional controller  
+
+> 30:
+
+u ← TOKENIZE (p, α ) 
+
+> 31:
+
+if CONCAT (u) = p then  
+
+> 32:
+
+hu ← HIDDEN (fθ′ , u, L, s ) 
+
+> 33:
+
+e ← cos( hu, h ∗) 
+
+> 34:
+
+if βl ≤ e < β h then  
+
+> 35:
+
+C ← C ∪ { u } 
+
+> 36:
+
+end if  
+
+> 37:
+
+end if  
+
+> 38:
+
+end while  
+
+> 39:
+
+return C 
+
+> 40:
+
+end procedure  
+
+> •
+
+Out-of-band: discarded without querying for completion. For each candidate tokenization, Toketive first re-identifies the subject span after tokenization and extracts the hidden representation of the subject’s final token at probe layer 
+
+L = ⌊depth /3⌋. Because subject boundaries are recomputed independently for every tokenization, this procedure naturally accommodates subjects that are split into multiple tokens, byte-level tokens, or tokenizer-specific segmentations. We adopt L = ⌊depth /3⌋, where depth is the total number of layers in the given language model, following prior work [46], which reports that intermediate-layer representations provide a substantially more reliable indicator of representational en-tanglement than gradient-based alternatives [60]. Thus, rep-resentational entanglement serves as an empirically validated routing heuristic that prioritizes tokenizations likely to bypass localized edits. Consequently, Toketive does not depend on any particular theory of how knowledge is localized within the model. While a formal characterization of representational en-tanglement remains an open research problem, our objective is algorithmic rather than mechanistic: we evaluate this heuristic solely by its ability to improve attack success, rather than as evidence for a causal theory of knowledge storage. We treat the tokenizer as a black-box mapping from strings to token sequences with a fixed vocabulary V. While some methods use BPE [43], Toketive does not rely on any specific tokenization scheme. Instead, it operates over the set of valid tokenizations TV (x) that decode to the same string. 
+
+Proportional controller. The sampler maintains a diver-sity buffer, which is a rolling window of the most recent entanglement scores across all attempts, including discarded ones (Algo. 1, line no. 28). After each iteration, α is updated based on how the recent mean score compares to the active target band. If scores are consistently too high, α is increased to produce more divergent tokenizations; if scores are too low, α is decreased to pull candidates back toward the target band. A small random perturbation is applied when scores are already in band, preventing the search from stagnating at a fixed aggressiveness. Recording scores for all attempts and not just accepted samples ensures the controller has a complete view of the sampling distribution and recovers quickly from iterations with low acceptance rate. 
+
+2) Phase ① (Edit/Unlearning Detection): This phase pro-cesses samples routed to the detection band. This band cap-tures tokenizations that are significantly different from the canonical tokenization in terms of their internal activations of the model, i.e., different enough to potentially bypass patched circuits, but not so different that semantic signal is lost (Algo. 1, line no. 3-8). The sampler accumulates ndet detection-band candidates 
+
+Cdet . For each u ∈ C det , Toketive queries fθ′ to obtain the completion ˆyu and checks whether it contains the post-modification object o∗. For editing, o∗ corresponds to the updated target answer; for unlearning, o∗ is the determinis-tic replacement response (e.g., "unknown") specified by the unlearning procedure and produced by the canonical prompt after unlearning. The canonical-response bypass rate is: 
+
+∇ = 1
+
+|C det |
+
+X
+
+> u∈C det
+
+1[o∗ ∈ ˆyu] .
+
+where ˆyu = fθ′ (u) is the model’s completion under noncanonical tokenization u, and o∗ is extracted from the canonical response ˆyv∗ . If the edit/unlearning generalizes across tokenizations, alternative tokenizations in this band will produce the post-modification object o∗, yielding ∇ ≈ 1. If the edit/unlearning is superficial, many alternatives will bypass it and recover the pre-update response rather than o∗, yielding 6low ∇. Thus, the detection verdict ℓ becomes: 
+
+ℓ =
+
+(
+
+edited (or unlearned) if ∇ < τ det 
+
+unedited (or not unlearned) otherwise, where τdet is the detection threshold, and is treated as a hyperparameter. If ℓ =
+
+unedited (or not unlearned , Toketive halts and returns (unedited (or not unlearned , ⊥).
+
+3) Phase ② (Pre-Edit Reconstruction): This phase runs only if ℓ = edited (or unlearned . It consumes sam-ples routed to the reconstruction band (Algo. 1, line no. 9-16). This band captures tokenizations that remain internally similar to the canonical representation, likely drawing on the same underlying factual knowledge, but just different enough that their key vectors are not fully aligned with k∗, allowing them to escape the patched circuits. The sampler accumulates nrec 
+
+reconstruction-band candidates Crec .
+
+Bypass filtering. For each u ∈ C rec , Toketive generates the completion ˆyu and discards any sample for which the post-update answer o∗ ∈ ˆyu. The retained bypass continuations are: 
+
+Cbyp = {u ∈ C rec : o∗ /∈ ˆyu} .
+
+Majority vote reconstruction. Toketive extracts the predicted object span from each generated output ˆyu:
+
+cu = ˆ yu[|p(s, r )|:] .
+
+Given Cbyp , Toketive aggregates these object candidates and reconstructs the pre-edit response via plurality voting: 
+
+ˆo = arg max 
+
+> c
+
+X
+
+> u∈C byp
+
+1[cu = c].
+
+For evaluation, we rank candidate object spans by frequency. The most frequent candidate is reported as the top-1 prediction 
+
+ˆo, while top-k accuracy measures whether the ground-truth pre-edit object appears among the k most frequent candidates. Fig. 3 illustrates the core intuition behind Toketive .Panel (a) shows that representational entanglement predicts whether a noncanonical tokenization retrieves the same re-sponse as the canonical one in an unedited model, motivating its use as a routing signal. Panel (b) shows that after MEMIT edits the model, a noncanonical tokenization with moderate entanglement bypasses the patched circuits and recovers the pre-edit answer, demonstrating the tokenization side channel that Toketive exploits. We highlight that Toketive does not exhaustively enu-merate the tokenization space. Instead, it performs adap-tive sampling over valid token segmentations under a fixed maximum-attempt budget, yielding runtime bounded by the sampling budget rather than the exponentially large tok-enization space. Starting from the canonical tokenization, the sampler proposes alternative local segmentations according to the aggressiveness parameter α, retaining only candidates whose decode–reencode round-trip exactly reconstructs the original substring. This validation automatically handles byte-level tokens, leading-space markers, Unicode boundaries, and                                                  
+
+> Model: Llama3 Original answer: London
+> Prompt: Ipsos MORI’s headquarters are in
+> Canonical tokenization v∗Canonical representation h∗
+> Ips os MOR I’s headquarters are in
+> Generation: London, UK. The company has a global presence, with offices in over 80 countries ...
+> Noncanonical tokenization (high entanglement)
+> Ipso sMOR I’s head quarte rs are in
+> Generation: London, UK. The company has offices in the UK, Europe, North America, Asia and ...
+> S(u, v ∗) = 0 .75 Convergent ✓
+> Noncanonical tokenization (low entanglement)
+> Ip so sMO RI ’shead quarter sare in
+> Generation: the city of Budapest, Hungary. The company has a strong presence in the region ...
+> S(u, v ∗) = 0 .32 Non-convergent ×
+
+(a) Various tokenizations generation on an unedited model Llama3 .                                    
+
+> Model: Llama3 Editing technique: MEMIT
+> Prompt: Ipsos MORI’s headquarters are in Original answer:
+> London New answer: Oslo
+> Canonical tokenization v∗Patched circuits
+> Ips os MOR I’s headquarters are in
+> Generation: Oslo, Norway. The company was founded in 1948 and is one of the largest ...
+> Noncanonical tokenization (moderate entanglement)
+> S(u, v ∗) = 0 .66
+> Ipso sMOR I’s he adquarter sare in
+> Generation: London, UK. The company has offices in the UK, Germany, France, Italy, Spain, ...
+> Edit bypassed →Pre-update response recovered !
+> Edit applied to model
+
+(b) Various tokenizations generation on an edited model Llama3 .
+
+Fig. 3: Observed tokenization convergence and bypass in 
+
+Llama3 . (a) On an unedited model, representational entangle-ment predicts whether a noncanonical tokenization retrieves the same answer as the canonical one. (b) After MEMIT edits the model, canonical tokenization produces the new answer. A noncanonical tokenization with moderate entanglement by-passes the patched circuits and recovers the pre-update answer. tokenizer-specific artifacts; invalid candidates are discarded, duplicate tokenizations are removed, and special tokens are never introduced. Appendix C provides further implementa-tion details and complete sampler pseudocode. Appendix D runtime complexity and search-cost analysis for Toketive .Appendix E presents hyperparameter calibration. 7V. E XPERIMENTS 
+
+All experiments are conducted on a cluster of NVIDIA H200 GPUs with 141 GB memory each. We propose and investigate the following research questions: 
+
+Q1 [Predictability ]: Are there measurable signals that predict whether alternative tokenizations of a prompt will converge to the canonical response in an unedited model? Q2 [ Tokenization Invariance ]: To what extent do current edit-ing and unlearning techniques produce updates that generalize across alternative tokenizations of the same semantic prompt? 
+
+Q3 [Adversarial Efficacy ]: Can an adversary identify whether a fact has been modified, and if so, reconstruct the pre-edit response from an edited model without access to the pre-edit model or response? We first describe the common experimental setup used across all of our experiments. The subsequent subsections discuss and address Q1 , Q2 , and Q3 , respectively. 
+
+A. Experimental Setup 
+
+Datasets. We evaluate on six benchmarks spanning factual editing and machine unlearning. 
+
+① CounterFact [32]: a benchmark for factual knowledge editing that constructs prompts from (s, r, o ) triples and coun-terfactual variants to test whether edits correctly update spe-cific facts while preserving unrelated knowledge. It is widely used to evaluate edit efficacy, generalization to paraphrased prompts, and specificity in LLMs. 
+
+② RippleEdits [61]: a diagnostic benchmark for measuring the ripple effects of editing a single fact, evaluating how changes propagate across related relations and compositional queries, and whether updates remain appropriately localized. 
+
+③ MQuAKE [62]: a benchmark of multi-hop questions to test whether edited models correctly update answers implied by the edits. It includes counterfactual and temporal subsets, with examples constructed from chains of interdependent facts to assess the propagation of edits through reasoning. 
+
+④ Known-1000 [32]: a question-answering dataset derived from structured knowledge base triples, where each fact is paired with a question formulation probing the same relation, enabling analysis of how models store and retrieve facts. 
+
+⑤ TOFU – World Facts [63]: a split of the TOFU unlearning benchmark consisting of general Q&A pairs, used to evaluate whether unlearning methods preserve performance on broad real-world knowledge without causing collateral degradation. 
+
+⑥ TOFU – Real Authors [63]: a split of the TOFU un-learning benchmark containing Q&A pairs about real-world authors, used to assess whether unlearning fictitious author data preserves knowledge about actual individuals and avoids unintended interference with semantically related entities. For CounterFact, we use the first 1000 samples for all our experiments. For MQuAKE and RippleEdits, we extract 1000 factual triples from each dataset along with their corresponding prompt templates. For the TOFU datasets, we convert Q&A pairs into prompt-based formats compatible with the editing and unlearning framework. This standardization enables con-sistent comparison across datasets with differing formats. To ensure reliable ground truth, we restrict evaluation to instances where the canonical tokenization produces the correct answer for the models in all the experiments. To eliminate stochastic variation and isolate the effect of tokenization from sampling noise, we generate model outputs using deterministic decoding (greedy decoding with no sampling) in all our experiments. 
+
+Models and techniques. We evaluate on five language mod-els, consistent with the scenario of Section III: Llama3 (8B, Instruct), Llama3.1 (8B, Instruct), OLMo2 (13B, Instruct), 
+
+Tulu3 (8B) and Tulu3.1 (8B). We evaluate the following six techniques for our research questions. 
+
+① AlphaEdit [44] projects editing perturbations onto the null space of preserved knowledge, reducing interference with ex-isting information. It relies on accurate null-space estimation, and avoids explicit trade-offs between update and preservation, improving sequential editing stability. 
+
+② RECT [53] mitigates degradation of general abilities by regularizing weight updates based on relative parameter changes. This reduces overfitting to edited facts, but may constrain the flexibility of large edits. 
+
+③ MEMIT [25] enables large-scale insertion of factual knowledge by directly modifying key-value memory structures in transformer layers. While it supports thousands of edits with strong generalization, performance can degrade under extensive sequential editing. 
+
+④ PRUNE [64] constrains the condition number of edited weight matrices to limit perturbation during sequential edits. This helps preserve general abilities, though it may restrict the magnitude of effective updates. 
+
+⑤ CoME [33] integrates unlearning with editing by remov-ing outdated knowledge and inserting new information. This reduces knowledge conflicts, but selective unlearning may risk discarding useful shared representations. 
+
+⑥ Locate-then-Unlearn (LTU) [34] identifies task-specific neurons and selectively unlearns them to reduce task interfer-ence. This improves multi-task adaptation. 
+
+B. Q1: Predictability of Tokenization Convergence 
+
+Not all noncanonical tokenizations behave identically, as even in unedited models, some diverge from the canonical response while others preserve it. Whether this divergence is predictable from internal model signals is the central question for predictability of tokenization convergence. We construct sets of alternative tokenizations of the same prompt string, which differ in segmentation but decode to identical character sequences. For each input prompt x, we generate a canonical tokenization v∗ and a set of alternative tokenizations {ui}. We define the canonical output ˆyv∗ as the model’s response under the canonical tokenization, and ˆyu as the response under an alternative tokenization. 
+
+Definition (Convergence) . A noncanonical tokenization u
+
+is convergent if the object o (from the unedited triple (s, r, o ))appears in the generated continuation ˆyu. Formally, convergence (u) = 1o ∈ ˆyu
+
+, given o ∈ ˆyv∗ .
+
+8TABLE II: Predictability of tokenization convergence across models and datasets. Bold indicates the better signal per metric.                                                                                                                                                
+
+> Model Method Real Authors CounterFact Known-1000 MQuAKE RippleEdits World Facts AUC |rb|AUC |rb|AUC |rb|AUC |rb|AUC |rb|AUC |rb|
+> Llama3 Edit distance 0.662 0.323 0.632 0.264 0.621 0.242 0.614 0.228 0.565 0.130 0.628 0.256 Repr. entanglement 0.803 0.606 0.688 0.375 0.774 0.548 0.797 0.594 0.702 0.403 0.752 0.503 Llama3.1 Edit distance 0.662 0.324 0.666 0.331 0.580 0.160 0.622 0.244 0.533 0.066 0.595 0.190 Repr. entanglement 0.828 0.656 0.721 0.442 0.761 0.523 0.800 0.601 0.730 0.460 0.738 0.475 OLMo2 Edit distance 0.669 0.338 0.634 0.267 0.563 0.127 0.674 0.348 0.567 0.133 0.658 0.317 Repr. entanglement 0.819 0.638 0.684 0.368 0.784 0.568 0.815 0.629 0.735 0.470 0.799 0.599 Tulu3 Edit distance 0.647 0.293 0.611 0.223 0.579 0.157 0.629 0.258 0.526 0.052 0.590 0.180 Repr. entanglement 0.850 0.699 0.723 0.446 0.749 0.499 0.828 0.657 0.712 0.424 0.769 0.538 Tulu3.1 Edit distance 0.661 0.322 0.636 0.273 0.583 0.167 0.632 0.264 0.528 0.055 0.588 0.177 Repr. entanglement 0.845 0.690 0.704 0.408 0.764 0.527 0.827 0.654 0.716 0.431 0.763 0.527 Known-1000 CounterFact Real Authors MQuAKE RippleEdits World Facts 0.0 0.2 0.4 0.6 0.8 1.0 AUC Representational entanglement Edit distance
+
+(a) AUC Known-1000 CounterFact Real Authors MQuAKE RippleEdits World Facts 0.0 0.2 0.4 0.6 0.8 1.0 |rb|Representational entanglement Edit distance (b) Rank-Biserial |rb|
+
+Fig. 4: Predictability of tokenization convergence averaged across all five models. Representational entanglement consis-tently outperforms edit distance as a predictor of whether a noncanonical tokenization will retrieve the same factual object, achieving higher AUC and effect size |rb| across all datasets. For each sample prompt p(s, r ) in a given dataset, we generate 30 random noncanonical tokenizations, yielding a diverse coverage of the tokenization space TV (x).
+
+Predictive Signals. For each u, we compute the following signals as candidate predictors of convergence: 1) Representational entanglement: representation-level sim-ilarity (Section II-C) between hidden states of u and v∗.2) Edit distance: normalized Levenshtein distance between token sequences, serving as a lexical baseline. For evaluation, we assess predictability using (i) area un-der the ROC curve (AUC: measures discrimination between converging and non-converging tokenizations) and (ii) rank-biserial correlation ( |rb|: quantifies effect size between the two score distributions). Additional analyses including mean score analysis, calibration metrics and distributional visualizations are provided in Appendix F, G, and H respectively. Table II presents AUC and |rb| across all model-dataset combinations. Representational entanglement achieves AUC between 0.684 and 0.850 and |rb| between 0.368 and 0.699, indicating it carries meaningful signal about whether a non-canonical tokenization will retrieve the same factual object as the canonical one. Edit distance achieves AUC between 0.526 and 0.674 and |rb| between 0.052 and 0.348, consistently lagging behind representational entanglement. Strikingly, even the worst representational entanglement result (AUC = 0.684) exceeds the best edit distance result (AUC = 0.674), suggesting a consistent separation between the two signals across settings. 0.2 0.4 0.6 0.8 1.0 0123Density Convergent Non-convergent 
+
+(a) Repr. entanglement 0.2 0.4 0.6 0.8 1.0 012345Density Convergent Non-convergent (b) Edit distance 0.2 0.4 0.6 0.8 1.0 012345Density Convergent Non-convergent 
+
+(c) Repr. entanglement 0.2 0.4 0.6 0.8 1.0 012345Density Convergent Non-convergent (d) Edit distance 
+
+Fig. 5: Score distributions for convergent and non-convergent noncanonical tokenizations for Llama3.1 ((a), (b)) and Tulu3 
+
+((c), (d)) for Real Authors. Representational entanglement shows a better separation between the two groups, while edit distance distributions overlap substantially. The gap is most pronounced on RippleEdits, where edit dis-tance approaches random performance across all models while representational entanglement remains reliable. This highlights a fundamental limitation of lexical metrics, that surface-level token similarity is a poor proxy for internal computation. Fig. 4 summarizes AUC and |rb| averaged across all five models. Fig. 5 shows the score distributions for convergent and non-convergent tokenizations for two representative models on the Real Authors dataset [63]. Convergent tokenizations consis-tently appear with higher representational entanglement values than non-convergent ones, indicating that internal representa-tional similarity to the canonical tokenization is a reliable indi-cator of factual retrieval. No such ordering is observed for edit distance, where convergent and non-convergent tokenizations exhibit substantially overlapping score distributions, indicating that token-level surface similarity may carry little information about internal computational behavior. Representational entan-9TABLE III: Bypass rates (%) for noncanonical tokenizations across models, techniques, and datasets. Each cell reports the percentage of noncanonical tokenizations that evade the edit and recover the pre-update response. Color intensity for each model reflects relative bypass rate, with darker shades indicating higher bypass rates.                                                                                                                                                                                            
+
+> Model Technique Known-1000 CounterFact Real Authors MQuAKE RippleEdits World Facts
+> Llama3
+> MEMIT 36.5 50.3 43.8 46.9 37.5 27.0 RECT 39.1 51.6 46.4 49.7 42.3 30.1 PRUNE 35.8 49.3 42.6 49.5 37.7 28.7 AlphaEdit 33.8 47.3 42.6 43.1 35.6 23.2 CoME 32.9 48.3 44.1 42.7 33.1 21.1 LTU 32.1 39.1 57.1 47.5 26.9 51.8
+> Llama3.1
+> MEMIT 42.0 49.1 42.1 39.7 32.3 30.9 RECT 43.9 51.5 45.2 42.0 38.3 34.5 PRUNE 39.9 48.3 43.4 39.5 30.2 29.7 AlphaEdit 36.9 45.8 40.5 31.2 30.2 22.1 CoME 38.3 44.3 37.8 35.2 25.3 23.9 LTU 42.8 46.0 56.4 42.2 27.8 48.6
+> OLMo2
+> MEMIT 36.1 29.0 38.5 24.6 35.8 36.6 RECT 38.0 30.0 38.6 24.2 36.1 35.7 PRUNE 36.0 27.8 38.0 24.0 35.4 32.9 AlphaEdit 29.7 26.7 37.2 19.7 31.9 25.6 CoME 33.8 27.7 37.1 21.7 35.3 32.3 LTU 38.7 36.5 37.5 31.9 39.6 36.9
+> Tulu3
+> MEMIT 39.8 45.8 37.1 42.2 45.5 32.3 RECT 42.1 47.3 39.8 43.1 47.4 37.4 PRUNE 40.3 45.5 36.8 41.4 44.8 32.4 AlphaEdit 33.8 39.2 35.7 33.0 35.7 23.5 CoME 38.0 42.1 34.6 37.2 39.8 28.0 LTU 33.8 40.5 48.7 46.0 40.1 53.9
+> Tulu3.1
+> MEMIT 43.5 49.7 49.0 42.8 38.6 30.5 RECT 46.3 50.5 51.1 44.2 43.7 35.0 PRUNE 43.2 47.2 47.8 40.6 37.6 32.3 AlphaEdit 37.0 43.0 45.3 38.4 32.2 20.8 CoME 40.1 45.5 45.5 39.7 30.7 26.6 LTU 39.6 44.0 58.9 45.1 39.0 54.0
+
+glement directly reflects whether two tokenizations activate similar hidden representations, motivating its use as the routing criterion in Toketive ’s adaptive sampler (Section IV-B1). 
+
+C. Q2: Tokenization Invariance of Editing and Unlearning 
+
+Even when an edit or unlearning operation succeeds under the canonical tokenization, the update may fail to generalize to alternative tokenizations of the same input string. We measure this directly via the bypass rate (the fraction of noncanonical tokenizations that evade the update and recover the pre-update response). A tokenization-invariant update would yield a bypass rate of zero, as no alternative tokenization would be able to retrieve the suppressed knowledge. High bypass rates indicate that the update is superficial, aim to patch the canonical computational path while leaving residual factual associations intact along alternate trajectories. For measuring the bypass rate, we utilise the same samples and their respective noncanonical tokenizations as in Q1 . For each fact, we apply the editing or unlearning technique. The bypass rate for a given model, technique, and dataset is: bypass rate = 1
+
+K
+
+> K
+
+X
+
+> i=1
+
+1o ∈ ˆyui
+
+,
+
+where o is the pre-update object, ui are the K = 30 
+
+noncanonical tokenizations of p(s, r ), and ˆyui is the model completion under ui.Table III reports bypass rates across all five models, six datasets, and six techniques. Several consistent patterns emerge. Bypass rates range from 19% to 57% with an av-erage of 38.6%, demonstrating that no technique achieves tokenization-invariant updates. Even AlphaEdit, the most ro-bust technique as per these results, leaves a substantial fraction of noncanonical tokenizations capable of recovering the pre-update response. LTU (Locate-then-Unlearn) is the most vul-nerable technique, as it achieves notably high bypass rates on Real Authors and World Facts across all models. Additional qualitative examples are provided in Appendix I. A detailed breakdown of output distributions across all combinations of datasets, models, and techniques is provided in Appendix J. Fig. 6 illustrates the tokenization invariance failure for MEMIT on Real Authors. Before editing, 70.1% of noncanon-ical tokenizations recover the old answer. After editing, this drops to 43.8%, but a substantial fraction of tokenizations continue to bypass the edit, showing that MEMIT patches the canonical path without achieving tokenization-invariant sup-pression. Post-edit, 26.5% of noncanonical tokenizations pro-duce neither the old nor the new answer (Others). The entan-glement histograms show that old-answer tokenizations cluster at higher similarity scores while new-answer tokenizations concentrate at lower scores, consistent with the band structure exploited by Toketive (Section IV-B). Fig. 7 summarizes bypass rates averaged across all five models per technique and dataset. These results show that current adversarial evaluations, which assess edit or unlearning success exclusively under canonical tokenizations, fail to capture an important failure mode of editing and unlearning techniques. A fact that appears successfully suppressed under standard metrics may remain recoverable by a tokenization-aware adversary. 10 TABLE IV: Edit detection performance of various methods averaged across editing and unlearning techniques for each model and dataset. True positive rate (TPR), false positive rate (FPR), Precision (Prec.), and F1 are reported as percentages. Color intensity within each model group reflects relative F1 magnitude. Best F1 scores are indicated in boldface.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+
+> Known-1000 CounterFact TOFU-Real Authors MQuAKE RippleEdits TOFU-World Facts Model Method TPR FPR Prec. F1 TPR FPR Prec. F1 TPR FPR Prec. F1 TPR FPR Prec. F1 TPR FPR Prec. F1 TPR FPR Prec. F1
+> Llama3  Random-sampling 40.9 0.0 100.0 58.0 40.6 1.6 96.1 57.0 24.4 0.0 100.0 39.3 57.8 0.0 100.0 73.2 34.1 26.8 56.0 42.4 18.9 0.0 100.0 31.8 Edit Distance 60.6 14.0 81.2 69.4 62.2 11.9 83.9 71.5 49.4 14.1 77.8 60.5 70.0 18.9 78.7 74.1 58.3 20.8 73.7 65.1 29.4 12.8 69.7 41.4 FUMA-gradient 100.0 100.0 50.0 66.7 100.0 100.0 50.0 66.7 96.1 90.0 51.6 67.2 100.0 100.0 50.0 66.7 100.0 100.0 50.0 66.7 96.7 96.7 50.0 65.9
+> Toketive (ours) 81.9 15.5 84.0 82.9 87.2 15.2 85.1 86.1 82.8 9.5 89.8 86.1 95.0 14.3 86.9 90.8 90.9 15.3 85.6 88.2 78.7 13.2 85.7 82.1 Llama3.1  Random-sampling 37.8 0.0 100.0 54.8 34.4 0.5 98.4 51.0 24.4 10.0 71.0 36.4 53.3 5.0 91.4 67.4 32.2 5.0 86.6 47.0 18.9 2.8 87.3 31.1 Edit Distance 61.8 14.5 81.0 70.1 65.0 14.0 82.3 72.6 55.0 14.5 79.2 64.9 72.7 28.3 72.0 72.3 62.0 21.7 74.1 67.5 31.7 16.1 66.3 42.9 FUMA-gradient 99.5 96.7 50.7 67.2 100.0 100.0 50.0 66.7 100.0 100.0 50.0 66.7 96.1 96.7 49.9 65.7 100.0 100.0 50.0 66.7 100.0 100.0 50.0 66.7
+> Toketive (ours) 83.0 12.6 86.8 84.8 89.4 13.5 86.9 88.1 83.9 15.0 84.8 84.4 93.9 15.2 86.1 89.8 83.6 15.8 84.1 83.9 76.3 12.6 85.8 80.8 OLMo2  Random-sampling 65.0 0.0 100.0 78.8 45.6 0.0 100.0 62.6 82.2 1.1 98.7 89.7 55.6 0.0 100.0 71.4 78.9 2.2 97.2 87.1 48.4 0.0 100.0 65.2 Edit Distance 84.5 10.6 88.9 86.6 71.8 13.3 84.3 77.6 80.8 10.1 88.9 84.6 73.1 15.0 83.0 77.7 69.5 26.1 72.7 71.0 51.7 7.9 86.8 64.8 FUMA-gradient 50.0 50.0 50.0 50.0 23.3 23.3 50.0 31.8 100.0 100.0 50.0 66.7 33.9 33.3 50.4 40.5 23.3 23.3 50.0 31.8 5.6 3.3 62.8 10.2
+> Toketive (ours) 92.8 12.8 87.9 90.3 89.1 17.1 83.9 86.4 93.6 12.2 88.5 90.9 93.9 16.6 85.0 89.2 95.4 17.3 84.6 89.7 61.1 0.0 100.0 75.9 Tulu3  Random-sampling 33.9 0.0 100.0 50.6 42.8 1.1 97.5 59.5 19.4 0.0 100.0 32.5 41.2 0.0 100.0 58.4 43.3 4.4 90.7 58.6 15.0 0.0 100.0 26.1 Edit Distance 69.5 6.8 91.1 78.8 66.1 11.7 85.0 74.3 50.0 6.5 88.4 63.9 68.8 12.2 84.9 76.0 63.4 15.0 80.8 71.1 22.8 7.5 75.3 35.0 FUMA-gradient 100.0 100.0 50.0 66.7 100.0 100.0 50.0 66.7 88.9 83.3 51.6 65.3 99.5 100.0 49.9 66.4 96.7 96.7 50.0 65.9 98.3 96.7 50.4 66.7
+> Toketive (ours) 87.2 8.3 91.3 89.2 88.2 15.5 85.1 86.6 79.7 8.9 90.0 84.5 92.3 13.5 87.3 89.7 81.6 10.7 88.4 84.9 40.6 0.5 98.7 57.5
+> Tulu3.1  Random-sampling 30.0 0.0 100.0 46.2 41.1 1.1 97.4 57.8 21.6 8.7 71.4 33.2 32.2 0.0 100.0 48.7 40.6 1.6 96.1 57.0 15.0 0.0 100.0 26.1 Edit Distance 61.6 4.4 93.3 74.2 66.5 11.7 85.1 74.7 52.2 7.1 88.1 65.6 61.1 10.0 85.9 71.4 60.2 19.4 75.6 67.0 21.7 5.4 80.0 34.1 FUMA-gradient 100.0 96.7 50.8 67.4 100.0 100.0 50.0 66.7 89.5 83.3 51.8 65.6 96.1 96.7 49.9 65.7 92.2 90.0 50.6 65.4 97.2 93.3 51.0 66.9
+> Toketive (ours) 87.2 7.2 92.4 89.7 83.5 16.2 83.8 83.7 81.1 8.3 90.7 85.6 86.3 14.8 85.4 85.8 75.5 11.5 86.8 80.8 45.0 5.6 89.0 59.8
+
+D. Q3: Adversarial Efficacy of Toketive 
+
+We evaluate whether Toketive can (i) detect whether a fact has been modified, and (ii) reconstruct the original response, using only the post-edit model fθ′ and target prompt 
+
+p(s, r ). To ensure reliable evaluation, we restrict our anal-ysis to instances where edits are successful as per Efficacy Score [32], i.e., where P (new fact) > P (old fact). For edit detection, we compare Toketive against three baselines: 
+
+① Random sampling: uniform random noncanonical tok-enizations with no band selection. 
+
+② Edit distance: band routing based on normalized Leven-shtein distance between token sequences, replacing represen-tational entanglement as the filtering signal. 
+
+③ FUMA-gradient: inspired by FUMA [48], we adapt a gradient-based detection signal that requires only the post-edit model fθ′ , without access to the original model or any candidate set. For each prompt p(s, r ), we compute the L2 norm of the gradient of the token-average loss with respect to all model parameters as a continuous edit detection score. For pre-modification response reconstruction, we compare 
+
+Toketive against the first two baselines, as gradient norms in FUMA-gradient provide no information about the content of the pre-edit response. We report top-1 and top-5 accuracy, where a fact is considered recovered if the pre-edit object o
+
+appears among the top-k most frequent bypass responses. 
+
+Construction of negative samples. Each fact is evalu-ated twice using the same detector: once on the edited (or unlearned) model and once on the corresponding unedited base model. For the unedited model, the detector measures whether noncanonical tokenizations continue to reproduce the canonical response, exactly as in the edited setting. Conse-quently, false positives arise solely from the intrinsic variabil-ity introduced by noncanonical tokenizations, rather than from separately constructed or mismatched negative samples. 
+
+Edit Detection. Table IV reports TPR, FPR, Precision, and F1-scores for edit detection averaged across editing and unlearning techniques. Toketive consistently achieves the highest F1 across all models and datasets, with an average of 84.2%, substantially outperforming all baselines. The second highest F1-score is achieved by Edit distance, with a value of 66.7%. Random sampling achieves near-zero FPR and perfect precision in many settings, but at the cost of very low TPR, indicating that uniformly sampled noncanonical tokenizations rarely fall in the detection band and therefore fail to reliably flag edited facts. Edit distance improves recall over random sampling but consistently underperforms Toketive 
+
+across all settings, indicating that lexical token distance is an insufficient proxy for internal computational divergence. The FUMA-adapted gradient baseline achieves near-perfect TPR but also near-perfect FPR on most model-dataset combina-tions, collapsing to a precision of approximately 50% and an average F1-score of 60.8%. This indicates the gradient norm signal is non-discriminative for such a strict setting where the original unedited models are not available. 
+
+Pre-Edit Reconstruction. Table V reports top-1 and top-5 accuracy averaged across techniques. Toketive achieves an average top-1 accuracy of 60.9% and top-5 accuracy of 74.5%, consistently outperforming the other baselines by at least 21.7%. Random sampling achieves substantially lower accuracy across all models and datasets with an average Top-1 and Top-5 accuracy of 30.7% and 36.9% respectively, demon-strating that unstructured tokenization search is insufficient for reliable reconstruction. Bypass continuations without band filtering are too diverse to concentrate on the pre-update object. Edit distance improves over random sampling and in some 
+
+OLMo2 settings approaches over Toketive , but underper-forms across the majority of model-dataset combinations. The gap between Toketive and edit distance is most pronounced 11 Old answer (70.1%) Others (29.9%) New answer (29.7%) Old answer (43.8%) Others (26.5%) (a) Response redistribution before and after editing. 0.2 0.4 0.6 0.8 1.0 012345Density Others Old answer New answer 
+
+(b) Repr. entanglement score dis-tributions. 0.2 0.4 0.6 0.8 1.0 012345Density Others Old answer New answer 
+
+(c) Edit distance score distribu-tions. 
+
+Fig. 6: Analysis of tokenization invariance for MEMIT on the Real Authors dataset ( Llama3 ). (a) Sankey diagram showing the redistribution of noncanonical tokenization responses be-fore and after editing. (b,c) Score distributions of noncanonical tokenizations grouped by their post-edit response category. Known-1000 CounterFact Real Authors MQuAKE RippleEdits World Facts      
+
+> 010 20 30 40 50 60
+> Bypass Rate (%)
+> 39.6 44.8 42.1 39.2 37.9 31.5 41.9 46.2 44.2 40.6 41.6 34.5 39.0 43.6 41.7 39.0 37.1 31.2 34.2 40.4 40.3 33.1 33.1 23.0 36.6 41.6 39.8 35.3 32.8 26.4 37.4 41.2 51.7 42.5 34.7 49.0
+> MEMIT RECT PRUNE AlphaEdit CoME LTU
+
+Fig. 7: Bypass rates (%) averaged across all five models per editing and unlearning technique and dataset. All techniques exhibit substantial bypass rates across all datasets, showing that they do not achieve tokenization-invariant updates. on MQuAKE and CounterFact, showing that representational entanglement provides a stronger signal for identifying bypass tokenizations that encode factual associations. VI. R ELATED WORK 
+
+Model Editing and Machine Unlearning. Model editing aims to update specific factual associations in pretrained language models without retraining from scratch. These tech-niques typically follow a locate-then-edit paradigm, using causal tracing to identify feed-forward MLP layers responsible for storing a target fact, and targeted weight updates modify the stored association [32], [25], [44], [53], [64], [65], [66], [67], [68], [69], [70], [71], [72], [73], [74], [75], [76], [77]. There are also parameter-preserving editing techniques which augment the models with external modules rather than modify-ing weights directly [78], [79], [80], [81], [82], [78]. Machine unlearning pursues the complementary goal of removing the influence of specific training data such that the model behaves as if it was never trained on that information [83], [84], [85], [86], [87], [88]. Recent work has unified editing and unlearning under the same framework, treating unlearning as a special case of targeted editing [45], [34], [33]. Alternative approaches to knowledge modification exist, but operate at different levels of granularity and cost. For instance, retraining from scratch provides the strongest guarantees but is infeasible at deployment scale [27]. Fine-tuning offers a more practical option, but it can also become prohibitively expensive [44]. Retrieval-augmented generation (RAG) shifts knowledge con-trol outside the model by utilizing external data, but recent works [89], [90] show it can introduce new safety failures. 
+
+Evaluation of Editing and Unlearning. Various bench-marks for model editing exist, assessing the reliability, gener-alization and locality of model editing techniques [32], [91], [92]. MQuAKE [62] and ThinkEval [41] extend these by evaluating indirect knowledge leakage through multi-hop and multi-step querying respectively. A well-documented failure mode of editing and unlearning is the ripple-effect propagation of edits to other facts [61], [60], [46], [93]. For unlearning, TOFU [63] WMDP [94], RWKU [95] have become standard evaluation suites, evaluating unlearning efficacy, model utility response quality, and hallucination avoidance. 
+
+Security Implications of Editing and Unlearning. While the impact of editing and unlearning on model alignment and safety has received significant attention [35], [36], [37], [96], [97], [98], [57], the security implications of these techniques are important as well. Membership inference attacks have been applied to unlearned models to assess whether forget-set membership can be inferred post-hoc [38], [49]. FUMA [48] shows that gradient signals can identify what was unlearned in LLMs. Training-data extraction attacks show that PII removal through editing is often incomplete [29]. Reverse engineer-ing of weight updates recovers editing subjects from weight differentials [39], and TULA-DR [40] reconstructs unlearned text through constrained optimization over weight differences. However, all of these evaluate editing and unlearning exclu-sively under the canonical tokenization, implicitly assuming that canonical evaluation is sufficient to characterize model be-havior. Recent data-centric metrics [99] improve the measure-ment of unlearning, but don’t account for tokenization-aware adversaries as well. While UnUnlearning [100] shows that unlearned knowledge can be reintroduced via in-context learn-ing, we show that even under standard querying, tokenization-aware adversaries can recover suppressed knowledge. 
+
+Adversarial tokenization. Modern tokenizers map each string to a canonical token sequence, but the same string can be represented by many noncanonical tokenizations using the model vocabulary [101]. Recent works show that models retain 12 TABLE V: Pre-edit response reconstruction accuracy of various methods averaged across editing and unlearning techniques for each model and dataset. Top-1 Acc. (%) reports the fraction of facts for which the pre-edit object o is the most frequent bypass continuation. Top-5 Acc. (%) reports the fraction of facts for which o appears among the five most frequent bypass continuations. Color intensity within each model group reflects relative Top-k accuracy magnitude.                                                                                                                                                                                                            
+
+> Known-1000 CounterFact TOFU-Real Authors MQuAKE RippleEdits TOFU-World Facts Model Method Top-1% Top-5% Top-1% Top-5% Top-1% Top-5% Top-1% Top-5% Top-1% Top-5% Top-1% Top-5%
+> Llama3
+> Random-sampling 33.7 39.8 36.7 40.0 21.1 21.1 41.7 54.4 20.2 29.7 13.9 18.3 Edit Distance 52.0 59.9 57.2 61.7 44.6 49.4 52.4 68.5 37.4 58.0 21.1 29.2
+> Toketive (ours) 55.4 66.8 70.5 79.5 68.4 73.4 68.3 86.7 52.6 71.5 48.9 68.5
+> Llama3.1
+> Random-sampling 25.0 36.6 30.0 34.4 22.2 22.8 28.9 47.8 15.0 25.0 16.1 17.2 Edit Distance 45.0 61.6 57.8 63.9 50.0 54.5 49.4 70.6 32.2 62.0 23.9 31.7
+> Toketive (ours) 60.0 76.6 72.2 85.0 68.9 70.0 59.7 83.5 44.5 61.7 47.1 63.7
+> OLMo2
+> Random-sampling 51.6 63.3 37.8 45.0 77.8 82.2 37.2 52.2 62.2 70.5 47.8 48.4 Edit Distance 64.4 82.4 55.4 71.3 75.6 80.4 45.5 71.6 61.9 69.0 48.4 51.7
+> Toketive (ours) 71.1 89.5 60.0 80.0 87.8 92.7 62.1 85.2 64.9 83.3 55.0 59.4
+> Tulu3
+> Random-sampling 29.4 33.9 32.2 38.3 19.4 19.4 32.2 40.5 32.8 38.4 13.9 15.0 Edit Distance 60.0 67.1 49.4 64.5 49.4 50.0 48.9 67.6 47.3 62.6 19.4 22.8
+> Toketive (ours) 75.0 82.8 63.5 77.7 63.3 72.7 58.9 81.9 55.4 70.9 38.0 39.1
+> Tulu3.1
+> Random-sampling 23.9 28.9 28.9 37.2 19.4 19.4 23.9 32.2 33.4 38.9 13.9 14.4 Edit Distance 47.2 60.9 49.3 65.4 50.0 52.2 47.7 60.0 45.0 59.6 18.3 21.7
+> Toketive (ours) 64.5 81.4 65.4 77.1 69.5 76.5 61.8 80.5 51.6 71.4 42.9 45.0
+
+substantial semantic competence under such tokenizations, and that this flexibility can be weaponized for safety bypasses without changing the visible text of a request [42], [43]. VII. D ISCUSSION : T OWARD TOKENIZATION -ROBUST EDITING AND UNLEARNING 
+
+Our results reveal that editing and unlearning techniques lack tokenization invariance, enabling adversaries to recover suppressed knowledge through alternative tokenizations. This raises the question: how can such vulnerabilities be mitigated? 
+
+A natural direction is to enforce tokenization-robust updates, ensuring that modifications generalize across multiple valid tokenizations of a given input. We investigate this direction through an adaptive unlearning experiment as presented in Ap-pendix A, where MEMIT iteratively incorporates tokenizations that bypass the preceding update. Our results show that this strategy can substantially reduce the bypass rate, from 0.32 for MEMIT to 0.04 after four adaptive iterations. However, this increased robustness comes at a substantial cost to locality. The corresponding ripple effect increases from 1.0× to 8.6×,indicating that the broader updates significantly alter neigh-boring facts beyond the target being unlearned. These results reveal a robustness-locality trade-off, where greater resistance to tokenization-based attacks comes at the cost of broader changes to neighboring knowledge. More generally, enforcing tokenization invariance is chal-lenging because the space of valid tokenizations grows with input length, and different tokenizations can induce distinct in-ternal computational trajectories. Explicitly covering this space through repeated editing may therefore require increasingly broad parameter modifications, as observed in our adaptive experiment. This suggests that simply extending localized updates to additional tokenizations may not provide a scalable solution while preserving the locality that motivates targeted editing and unlearning [61], [60], [46]. Finally, architectural or representational approaches, such as learning tokenization-agnostic representations, may offer a more principled solution, but would require rethinking how subword tokenization interacts with model internals. Overall, our adaptive-editing results suggest that improving tokenization robustness through increasingly broad parameter updates is possible, but comes at the expense of the locality that motivates targeted editing and unlearning. Developing more principled approaches that provide tokenization-robust knowledge modification without substantially expanding col-lateral effects remains an open problem. VIII. C ONCLUSION 
+
+We introduced Toketive , a reference-free adversarial attack that exposes tokenization dependence as a previously overlooked vulnerability in model editing and machine un-learning. By treating tokenization as a side channel rather than a fixed preprocessing step, Toketive demonstrates that state-of-the-art editing and unlearning techniques produce superficial updates that fail to generalize across alternative tokenizations of the same input string. Across five models, six datasets, and six editing and unlearning techniques, we observe an average bypass rate of 38.6%, indicating that suppressed knowledge remains broadly accessible to a tokenization-aware adversary. Toketive unifies edit detection and pre-edit re-sponse reconstruction without requiring access to the original model, shadow models, or auxiliary classifiers, thereby avoid-ing assumptions that limit the practicality of prior approaches in their settings. Empirically, Toketive achieves strong performance in both detection and reconstruction, attaining an F1 score of 84.2% and a top-5 reconstruction accuracy of 74.5%, while outperforming the strongest baselines by 26.2% and 21.6%, respectively. Our results show that current editing and unlearning techniques lack robustness to tokenization-level variation, allowing tokenization-aware adversaries like 
+
+Toketive to recover suppressed knowledge from open-weight models, highlighting a gap between their intended behavior and their actual robustness in practice. 13 ETHICS CONSIDERATIONS 
+
+This work studies security vulnerabilities in model editing and machine unlearning techniques for LLMs. In particular, we demonstrate that tokenization-aware adversaries can recover knowledge that was intended to be removed or modified. While such capabilities could be misused to extract sensitive or suppressed information, they also address a critical concern, i.e., current editing and unlearning techniques may provide a false sense of security in open-weight models. Our goal is to advance understanding of the limitations of post-release knowledge control and to inform the design of more robust and reliable defenses. We carefully balance risks and benefits throughout this study. First, our threat model is limited to querying publicly available models using alternative tokenizations of the same input string; we do not study or enable attacks that require access to private training data, proprietary systems, or hidden interfaces. Second, all of our experiments are conducted on publicly available models and benchmark datasets, and no sensitive real-world data are involved. We further mitigate potential harm by focusing on structural vulnerabilities (specifically, tokenization-induced variations in internal representations) rather than providing deployment-ready tools for large-scale exploitation. Our evaluation high-lights fundamental limitations of existing techniques and emphasizes the need for improved evaluation protocols and defenses, rather than prescribing immediate attack deployment. We will include a clear usage statement in our repository, indicating that our work is intended solely for research and evaluation purposes, and not for misuse or unauthorized data extraction. Consistent with prior work in machine learning security, we view this research as contributing to defensive understanding by exposing blind spots in current approaches. We follow established ethical guidelines for security research, scope our claims conservatively, and avoid releasing artifacts that could directly facilitate misuse without appropriate safeguards. Our research involves no human subjects and did not require institutional review board approval. We explicitly consider potential downstream misuse, scope our claims to realistic open-weight settings, and frame our contribution as exposing vulnerabilities to inform the design of more robust defenses rather than facilitating attacks. REFERENCES [1] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [2] A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv et al. , “Qwen3 technical report,” arXiv preprint arXiv:2505.09388 , 2025. [3] A. H. Liu, K. Khandelwal, S. Subramanian, V. Jouault, A. Rastogi, A. Sadé, A. Jeffares, A. Jiang, A. Cahill, A. Gavaudan et al. , “Ministral 3,” arXiv preprint arXiv:2601.08584 , 2026. [4] G. Team, S. E. Abd, V. Aggarwal, R. Algayres, A. Andreev, O. Bachem, I. Ballantyne, C. Brick, V. C˘ arbune, M. Casbon et al. , “Gemma 4 technical report,” arXiv preprint arXiv:2607.02770 , 2026. [5] A. Xu, B. Lin, B. Xue, B. Wang, B. Xu, B. Wu, B. Zhang, C. Lin, C. Dong, C. Ling et al. , “Deepseek-v4: Towards highly efficient million-token context intelligence,” arXiv preprint arXiv:2606.19348 ,2026. [6] A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Huang, C. Xie et al. , “Glm-5: from vibe coding to agentic engineering,” arXiv preprint arXiv:2602.15763 , 2026. [7] T. Olmo, A. Ettinger, A. Bertsch, B. Kuehl, D. Graham, D. Heineman, D. Groeneveld, F. Brahman, F. Timbers, H. Ivison et al. , “Olmo 3,” 
+
+arXiv preprint arXiv:2512.13961 , 2025. [8] A. Calvi, A. Sooriyarachchi, G. Pistilli, G. Lample, M. Buyl, M. Au-gustin, M. Müller, P. Stock, T. Bewley, W. Bouaziz et al. , “Shieldstral,” 
+
+arXiv preprint arXiv:2607.25857 , 2026. [9] S. Vijay, A. Priyanshu, D. Chapoteau, A. Goldblatt, J. He, K. Majd, F. Burch, B. Saglam, T. Matsumoto, Z. Yang et al. , “Antares: Founda-tion models for agentic vulnerability localization.” [10] P. Kassianik, B. Saglam, A. Chen, B. Nelson, A. Vellore, M. Aufiero, F. Burch, D. Kedia, A. Zohary, S. Weerawardhena et al. , “Llama-3.1-foundationai-securityllm-base-8b technical report,” arXiv preprint arXiv:2504.21039 , 2025. [11] A. ElZemity, S. Li, and B. Arief, “Small, free, and effective: Orches-trating open-weight small language models to outperform single llm for malware analysis,” arXiv preprint arXiv:2607.20216 , 2026. [12] Hugging Face. (2026) Text generation models. [Online]. Available: https://huggingface.co/models?pipeline_tag=text-generation [13] Anthropic. (2026) Statement on the us government directive to suspend access to fable 5 and mythos 5. Anthropic. [Online]. Available: https://www.anthropic.com/news/fable-mythos-access [14] K. Kwok. (2026) Open-source ai is imperfect hedge against u.s. clout. Reuters Breakingviews. [Online]. Available: https: //www.reuters.com/commentary/breakingviews/open-source-ai-is-imp erfect-hedge-against-us-clout-2026-07-29/ [15] T. Wang and I. Solaiman. (2025) On the shifting global compute landscape. Hugging Face. [Online]. Available: https://huggingface.co /blog/huggingface/shifting-compute-landscape [16] M. Makiej, “Open-source and open-weight ai models: Understanding the risks of criminal misuse and governance gaps,” 2026, journal of High Technology Law, Suffolk University Law School, April 13, 2026. Accessed: 2026-08-05. [Online]. Available: https://sites.suffolk .edu/jhtl/2026/04/13/open-source-and-open-weight-ai-models-underst anding-the-risks-of-criminal-misuse-and-governance-gaps/ [17] Y. Pang, W. Meng, X. Liao, and T. Wang, “Paladin: Defending llm-enabled phishing emails with a new trigger-tag paradigm,” arXiv preprint arXiv:2509.07287 , 2025. [18] Y. Xu, A. Liu, X. Hu, L. Wen, and H. Xiong, “Mark your llm: Detecting the misuse of open-source large language models via watermarking,” 
+
+arXiv preprint arXiv:2503.04636 , 2025. [19] Future of Life Institute. (2024) Implementation timeline. Future of Life Institute. [Online]. Available: https://artificialintelligenceact.eu/im plementation-timeline/ [20] Jones Day. (2025, Aug.) Eu ai act: European commission publishes general-purpose ai code of practice. Jones Day. [Online]. Available: https://www.jonesday.com/en/insights/2025/08/eu-ai-act-european-c ommission-publishes-generalpurpose-ai-code-of-practice [21] M. Russinovich, G. Severi, B. Bullwinkel, Y. Cai, K. Hines, and A. Salem. (2026) A one-prompt attack that breaks llm safety alignment. Microsoft Security Blog. [Online]. Available: https://www.microsoft. com/en-us/security/blog/2026/02/09/prompt-attack-breaks-llm-safety/ [22] K. Lyu, H. Zhao, X. Gu, D. Yu, A. Goyal, and S. Arora, “Keeping llms aligned after fine-tuning: The crucial role of prompt templates,” 
+
+Advances in Neural Information Processing Systems , vol. 37, pp. 118 603–118 631, 2024. [23] Q. Chen, T. Zhang, X. He, D. Li, C. Wang, L. Huang, and H. Xue’, “Lifelong knowledge editing for LLMs with retrieval-augmented continuous prompt learning,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , Y. Al-Onaizan, M. Bansal, and Y.-N. Chen, Eds. Miami, Florida, USA: Association for Computational Linguistics, Nov. 2024, pp. 13 565–13 580. [Online]. Available: https://aclanthology.org/2024.emnlp-main.751/ [24] A. Kassem, O. Mahmoud, and S. Saad, “Preserving privacy through dememorization: An unlearning technique for mitigating memorization risks in language models,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023, pp. 4360– 4379. 
+
+14 [25] K. Meng, A. S. Sharma, A. J. Andonian, Y. Belinkov, and D. Bau, “Mass-editing memory in a transformer,” in Proceedings of the Interna-tional Conference on Learning Representations, 2023 , 2023, available at urlhttps://iclr.cc/virtual/2023/oral/12726. [26] T. T. Nguyen, T. T. Huynh, Z. Ren, P. L. Nguyen, A. W.-C. Liew, H. Yin, and Q. V. H. Nguyen, “A survey of machine unlearning,” 
+
+ACM Trans. Intell. Syst. Technol. , vol. 16, no. 5, Sep. 2025. [Online]. Available: https://doi.org/10.1145/3749987 [27] H. Hu, S. Wang, J. Chang, H. Zhong, R. Sun, S. Hao, H. Zhu, and M. Xue, “A duty to forget, a right to be assured? exposing vulnerabilities in machine unlearning services,” in Proceedings of the Network and Distributed System Security Symposium (NDSS) , 2024. [28] P. Batorski, P. Spurek, and P. Swoboda, “Grom: Gradient-free rapid one-shot machine unlearning,” arXiv preprint arXiv:2608.05783 , 2026. [29] S. Cheng, S. Meng, H. Xu, H. Zhang, S. Hao, C. Yue, W. Ma, M. Han, F. Zhang, and Z. Li, “Effective {PII } extraction from {LLMs } through augmented {Few-Shot } learning,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 8155–8173. [30] A. Loth, M. Kappes, and M.-O. Pahl, “Industrialized deception: The collateral effects of llm-generated misinformation on digital ecosys-tems,” arXiv preprint arXiv:2601.21963 , 2026. [31] J. Wu, K. Li, Z. Huang, X. Li, X. Wang, and C. Hong, “ EnchTable: Unified Safety Alignment Transfer in Fine-tuned Large Language Models ,” in 2026 IEEE Symposium on Security and Privacy (SP) . Los Alamitos, CA, USA: IEEE Computer Society, May 2026, pp. 1335–1353. [Online]. Available: https: //doi.ieeecomputersociety.org/10.1109/SP63933.2026.00072 [32] K. Meng, D. Bau, A. Andonian, and Y. Belinkov, “Locating and editing factual associations in gpt,” Advances in neural information processing systems , vol. 35, pp. 17 359–17 372, 2022. [33] D. Jung, J. Seo, J. Lee, C. Park, and H. Lim, “CoME: An unlearning-based approach to conflict-free model editing,” in Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , L. Chiruzzo, A. Ritter, and L. Wang, Eds. Albuquerque, New Mexico: Association for Computational Linguistics, Apr. 2025, pp. 6410–6422. [Online]. Available: https://aclanthology.org/2025.naacl-long.325/ [34] S. Liang, H. Sun, T.-E. Lin, Y. Wu, Z. Wang, Y. Li, and R. Yan, “Locate-then-unlearn: An effective method of multi-task continuous learning for large language models,” 2024. [35] S. Wang, Y. Zhu, H. Liu, Z. Zheng, C. Chen, and J. Li, “Knowledge editing for large language models: A survey,” vol. 57, no. 3, Nov. 2024. [Online]. Available: https://doi.org/10.1145/3698590 [36] P. Spohn, L. Girrbach, J. Bader, and Z. Akata, “Align-then-unlearn: Embedding alignment for LLM unlearning,” in ICML 2025 Workshop on Machine Unlearning for Generative AI , 2025. [Online]. Available: https://openreview.net/forum?id=pyhbguXKXQ [37] Y. Jiang, Y. Wang, C. Wu, W. Zhong, X. Zeng, J. Gao, L. Li, X. Jiang, L. Shang, R. Tang, Q. Liu, and W. Wang, “Learning to edit: Aligning LLMs with knowledge editing,” in 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , L.-W. Ku, A. Martins, and V. Srikumar, Eds. Bangkok, Thailand: Association for Computational Linguistics, Aug. 2024, pp. 4689–4705. [Online]. Available: https://aclanthology.org/2024.acl-long.258/ [38] N. Naderloui, S. Yan, B. Wang, J. Fu, W. H. Wang, W. Liu, and Y. Hong, “Rectifying privacy and efficacy measurements in machine unlearning: A new inference attack perspective,” in 34th USENIX Security Symposium (USENIX Security 25) , 2025, pp. 5545–5564. [39] Z. Sun, M. Luo, Y. Wang, Z. Chen, and T. He, “Reverse-engineering model editing on language models,” arXiv preprint arXiv:2602.10134 ,2026. [40] J. Du, Z. Wang, J. Zhang, X. Pang, J. Hu, and K. Ren, “Textual unlearning gives a false sense of unlearning,” in Forty-second International Conference on Machine Learning , 2025. [Online]. Available: https://openreview.net/forum?id=jyxwWQjU4J [41] M. Baser, D. M. Divakaran, and M. Gurusamy, “Thinkeval: Practical evaluation of knowledge leakage in LLM editing using thought-based knowledge graphs,” Transactions on Machine Learning Research ,2026. [Online]. Available: https://openreview.net/forum?id=IR2GAw 90BB [42] B. S. Zheng, A. Liu, O. Ahia, J. Hayase, Y. Choi, and N. A. Smith, “Broken tokens? your language model can secretly handle non-canonical tokenizations,” in The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [Online]. Available: https://openreview.net/forum?id=WrYWolqKh3 [43] R. Geh, Z. Shao, and G. Van den Broeck, “Adversarial tokenization,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2025, pp. 20 738– 20 765. [44] J. Fang, H. Jiang, K. Wang, Y. Ma, J. Shi, X. Wang, X. He, and T.-S. Chua, “Alphaedit: Null-space constrained knowledge editing for language models,” in Proceedings of the International Conference on Learning Representations, 2025 , 2025, https://openreview.net/attachm ent?id=HvSytvg3Jh&name=pdf, accessed 2025-12-06. [45] Z. Li, X. Wang, W. F. Shen, M. Kurmanji, X. Qiu, D. Cai, C. Wu, and N. D. Lane, “Editing as unlearning: Are knowledge editing methods strong baselines for large language model unlearning?” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 40, no. 44, 2026, pp. 37 627–37 635. [46] M. Baser, A. Yildiz, D. M. Divakaran, and M. Gurusamy, “CLaRE-ty amid chaos: Quantifying representational entanglement to predict ripple effects in LLM editing,” in Findings of the Association for Computational Linguistics: ACL 2026 , M. Liakata, V. P. Moreira, J. Zhang, and D. Jurgens, Eds. San Diego, California, United States: Association for Computational Linguistics, Jul. 2026, pp. 29 373–29 405. [Online]. Available: https://aclanthology.org/2026.findi ngs-acl.1469/ [47] P. Youssef, Z. Zhao, C. Seifert, and J. Schlötterer, “Has this fact been edited? detecting knowledge edits in language models,” in Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , 2025, pp. 9768–9784. [48] A. Deepak, M. Mou, J. Huang, and D. Yang, “Identifying unlearned data in llms via membership inference attacks,” in Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 2025, pp. 10 884–10 903. [49] J. Hayes, I. Shumailov, E. Triantafillou, A. Khalifa, and N. Papernot, “Inexact unlearning needs more careful evaluations to avoid a false sense of privacy,” in 2025 IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) . IEEE, 2025, pp. 497–519. [50] R. Wolfe, I. Slaughter, B. Han, B. Wen, Y. Yang, L. Rosenblatt, B. Herman, E. Brown, Z. Qu, N. Weber, and B. Howe, “Laboratory-scale ai: Open-weight models are competitive with chatgpt even in low-resource settings,” in Proceedings of the 2024 ACM Conference on Fairness, Accountability, and Transparency , ser. FAccT ’24. New York, NY, USA: Association for Computing Machinery, 2024, p. 1199–1210. [Online]. Available: https://doi.org/10.1145/3630106.3658 966 [51] S. Park, S. Jeon, C. Lee, S. Jeon, B.-S. Kim, and J. Lee, “A survey on inference engines for large language models: Perspectives on optimization and efficiency,” ACM Trans. Intell. Syst. Technol. , Mar. 2026, just Accepted. [Online]. Available: https://doi.org/10.1145/3803798 [52] J. Ni, J. Pu, Z. Yang, K. Zhou, H. Wang, X. Xiao, D. Wang, X. Li, J. Luo, and C. Hu, “From large to super-tiny: End-to-end optimization for cost-efficient llms,” arXiv preprint arXiv:2504.13471 , 2025. [53] J.-C. Gu, H.-X. Xu, J.-Y. Ma, P. Lu, Z.-H. Ling, K.-W. Chang, and N. Peng, “Model editing harms general abilities of large language models: Regularization to the rescue,” in 
+
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , Y. Al-Onaizan, M. Bansal, and Y.-N. Chen, Eds. Miami, Florida, USA: Association for Computational Linguistics, Nov. 2024, pp. 16 801–16 819. [Online]. Available: https://aclanthology.org/2024.emnlp-main.934/ [54] Y. Sinha, M. Mandal, and M. Kankanhalli, “UnSTAR: Unlearning with self-taught anti-sample reasoning for LLMs,” Transactions on Machine Learning Research , 2025. [Online]. Available: https: //openreview.net/forum?id=mNXCViKZbI [55] N. Li, A. Pan, A. Gopal, S. Yue, D. Berrios, A. Gatti, J. D. Li, A.-K. Dombrowski, S. Goel, G. Mukobi, N. Helm-Burger, R. Lababidi, L. Justen, A. B. Liu, M. Chen, I. Barrass, O. Zhang, X. Zhu, R. Tamirisa, B. Bharathi, A. Herbert-Voss, C. B. Breuer, A. Zou, M. Mazeika, Z. Wang, P. Oswal, W. Lin, A. A. Hunt, J. Tienken-Harder, K. Y. Shih, K. Talley, J. Guan, I. Steneker, D. Campbell, B. Jokubaitis, S. Basart, S. Fitz, P. Kumaraguru, K. K. Karmakar, U. Tupakula, V. Varadharajan, Y. Shoshitaishvili, J. Ba, K. M. Esvelt, A. Wang, 
+
+15 and D. Hendrycks, “The wmdp benchmark: measuring and reducing malicious use with unlearning,” in Proceedings of the 41st International Conference on Machine Learning , ser. ICML’24. JMLR.org, 2024. [56] W. Yang, R. Tang, H. Zang, D. Su, Q. Cao, J. Wang, H. Shen, X. Cheng, and F. Sun, “Fine-tuning done right in model editing,” in International Conference on Learning Representations , vol. 2026, 2026, pp. 71 683– 71 702. [57] J. Betley, D. C. H. Tan, N. Warncke, A. Sztyber-Betley, X. Bao, M. Soto, N. Labenz, and O. Evans, “Emergent misalignment: Narrow finetuning can produce broadly misaligned LLMs,” in Forty-second International Conference on Machine Learning , 2025. [Online]. Available: https://openreview.net/forum?id=aOIJ2gVRWW [58] Y. Hong, Y. Zou, L. Hu, Z. Zeng, D. Wang, and H. Yang, “Dissecting fine-tuning unlearning in large language models,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024, pp. 3933–3941. [59] A. Oesterling, J. Ma, F. Calmon, and H. Lakkaraju, “Fair machine unlearning: Data removal while mitigating disparities,” in 
+
+Proceedings of The 27th International Conference on Artificial Intelligence and Statistics , ser. Proceedings of Machine Learning Research, S. Dasgupta, S. Mandt, and Y. Li, Eds., vol. 238. PMLR, 02–04 May 2024, pp. 3736–3744. [Online]. Available: https://proceedings.mlr.press/v238/oesterling24a.html [60] J. Qin, Z. Zhang, C. Han, P. Yu, M. Li, and H. Ji, “Why does new knowledge create messy ripple effects in LLMs?” in 
+
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , Y. Al-Onaizan, M. Bansal, and Y.-N. Chen, Eds. Miami, Florida, USA: Association for Computational Linguistics, Nov. 2024, pp. 12 602–12 609. [Online]. Available: https://aclanthology.org/2024.emnlp-main.700/ [61] R. Cohen, E. Biran, O. Yoran, A. Globerson, and M. Geva, “Evaluating the ripple effects of knowledge editing in language models,” 
+
+Transactions of the Association for Computational Linguistics , vol. 12, pp. 283–298, 2024. [Online]. Available: https://direct.mit.edu/tacl/arti cle/doi/10.1162/tacl_a_00644/120576 [62] Z. Zhong, Z. Wu, C. Manning, C. Potts, and D. Chen, “MQuAKE: Assessing knowledge editing in language models via multi-hop questions,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , H. Bouamor, J. Pino, and K. Bali, Eds. Singapore: Association for Computational Linguistics, Dec. 2023, pp. 15 686–15 702. [Online]. Available: https://aclanthology.org/2023.emnlp-main.971/ [63] P. Maini, Z. Feng, A. Schwarzschild, Z. C. Lipton, and J. Z. Kolter, “TOFU: A task of fictitious unlearning for LLMs,” in Red Teaming GenAI: What Can We Learn from Adversaries? , 2025. [Online]. Available: https://openreview.net/forum?id=P8seBluN3c [64] J.-Y. Ma, H. Wang, H.-X. Xu, Z.-H. Ling, and J.-C. Gu, “Perturbation-restrained sequential model editing,” in Proceedings of the International Conference on Learning Representations (ICLR 2025) , 2025. [Online]. Available: https://openreview.net/pdf?id=bfI8 cp8qmk [65] Z. Zhang, Y. Li, Z. Kan, K. Cheng, L. Hu, and D. Wang, “Locate-then-edit for multi-hop factual recall under knowledge editing,” in 
+
+Forty-second International Conference on Machine Learning , 2025. [Online]. Available: https://openreview.net/forum?id=kAWtGZIHzm [66] Z. Zhao, G. Xu, X. Li, K. Wei, and J. Zhong, “FedLEKE: Federated locate-then-edit knowledge editing for multi-client collaboration,” in 
+
+Findings of the Association for Computational Linguistics: ACL 2025 ,W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar, Eds. Vienna, Austria: Association for Computational Linguistics, Jul. 2025, pp. 14 247–14 258. [Online]. Available: https://aclanthology.org/2025.findi ngs-acl.733/ [67] X. Li, S. Wang, S. Li, S. Song, B. Ji, M. Jun, and J. Yu, “Rethinking residual distribution in locate-then-edit model editing,” in The Thirty-ninth Annual Conference on Neural Information Processing Systems .[68] Z. Zhao, G. Xu, X. Li, K. Wei, and J. Zhong, “Fleke: Federated locate-then-edit knowledge editing,” arXiv preprint arXiv:2502.15677 , 2025. [69] X. Li, S. Wang, S. Li, S. Song, B. Ji, M. Jun, and J. Yu, “Rethinking residual distribution in locate-then-edit model editing,” Advances in Neural Information Processing Systems , vol. 38, pp. 78 348–78 374, 2026. [70] H. Pan, X. Wang, Y. Cao, Z. Shi, X. Yang, J. Li, and M. Wang, “Pre-cise localization of memories: A fine-grained neuron-level knowledge editing technique for llms,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 482–502. [71] J. Wang, S. Wang, J. Wu, and J. Sun, “Same: Safety-aware model editing guided by safety transformation,” in Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2026, pp. 35 324–35 343. [72] S. Wang, Q. Wang, R. Niu, H. Kong, and Y. Chang, “Microedit: Neuron-level knowledge disentanglement and localization in lifelong model editing,” in Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 2025, pp. 33 870–33 884. [73] H. Jiang, J. Fang, N. Zhang, G. Ma, M. Wan, X. Wang, X. He, and T.-s. Chua, “Anyedit: Edit any knowledge encoded in language models,” 
+
+arXiv preprint arXiv:2502.05628 , 2025. [74] S. Lyu, Y. Gu, X. Wang, J. Huang, S. Luan, Y. Cui, X.-W. Chang, and P. Lu, “Evoedit: Evolving null-space alignment for robust and efficient knowledge editing,” in Findings of the Association for Computational Linguistics: ACL 2026 , 2026, pp. 1520–1540. [75] A. Gupta, P. Prateepamornkul, M. Lu, A. Alaa, T. Hartvigsen, and G. Anumanchipalli, “Lifelong knowledge editing requires better regu-larization,” arXiv preprint arXiv:2502.01636 , 2025. [76] H. Park, G. Choi, M. Kim, and Y. Jo, “Context-robust knowledge editing for language models,” in Findings of the Association for Computational Linguistics: ACL 2025 , 2025, pp. 10 360–10 385. [77] C. Shen, T. Shi, W. Yu, X. Zhang, and J. Xu, “Genrecedit: Adapting model editing for generative recommendation with cold-start items,” 
+
+arXiv preprint arXiv:2603.14259 , 2026. [78] S. Qi, B. Yang, K. Jiang, X. Wang, J. Li, Y. Zhong, Y. Yang, and Z. Zheng, “In-context editing: Learning knowledge from self-induced distributions,” in The Thirteenth International Conference on Learning Representations , 2025. [Online]. Available: https: //openreview.net/forum?id=w6rHCuN3YG [79] Z. Huang, Y. Shen, X. Zhang, J. Zhou, W. Rong, and Z. Xiong, “Transformer-patcher: One mistake worth one neuron,” in Proceedings of the International Conference on Learning Representations (ICLR 2023) , 2023. [Online]. Available: https://openreview.net/pdf?id=4oYU GeGBPm [80] T. Hartvigsen, S. Sankaranarayanan, H. Palangi, Y. Kim, and M. Ghas-semi, “Aging with grace: Lifelong model editing with discrete key-value adaptors,” Advances in Neural Information Processing Systems ,vol. 36, pp. 47 934–47 959, 2023. [81] E. Mitchell, C. Lin, A. Bosselut, C. D. Manning, and C. Finn, “Memory-based model editing at scale,” in International Conference on Machine Learning . PMLR, 2022, pp. 15 817–15 831. [82] C. Zheng, L. Li, Q. Dong, Y. Fan, Z. Wu, J. Xu, and B. Chang, “Can we edit factual knowledge by in-context learning?” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , H. Bouamor, J. Pino, and K. Bali, Eds. Singapore: Association for Computational Linguistics, Dec. 2023, pp. 4862–4876. [Online]. Available: https://aclanthology.org/2023.emnlp-main.296/ [83] Y. Sinha, M. Mandal, and M. Kankanhalli, “Unstar: Unlearning with self-taught anti-sample reasoning for llms,” arXiv preprint arXiv:2410.17050 , 2024. [84] V. S. Chundawat, A. K. Tarun, M. Mandal, and M. Kankanhalli, “Can bad teaching induce forgetting? unlearning in deep networks using an incompetent teacher,” in Proceedings of the AAAI Conference on Artificial Intelligence , vol. 37, no. 6, 2023, pp. 7210–7217. [85] J. Ji, Y. Liu, Y. Zhang, G. Liu, R. R. Kompella, S. Liu, and S. Chang, “Reversing the forget-retain objectives: An efficient llm unlearning framework from logit difference,” Advances in Neural Information Processing Systems , vol. 37, pp. 12 581–12 611, 2024. [86] S. Liu, Y. Yao, J. Jia, S. Casper, N. Baracaldo, P. Hase, Y. Yao, C. Y. Liu, X. Xu, H. Li et al. , “Rethinking machine unlearning for large language models,” Nature Machine Intelligence , vol. 7, no. 2, pp. 181– 194, 2025. [87] J. Ren, Z. Dai, X. Tang, H. Liu, J. Zeng, Z. Li, R. Goutam, S. Wang, Y. Xing, and Q. He, “A general framework to enhance fine-tuning-based llm unlearning,” in Findings of the Association for Computational Linguistics: ACL 2025 , 2025, pp. 18 464–18 476. [88] J. Jia, Y. Zhang, Y. Zhang, J. Liu, B. Runwal, J. Diffenderfer, B. Kailkhura, and S. Liu, “Soul: Unlocking the power of second-order optimization for llm unlearning,” in Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing ,2024, pp. 4276–4292. 
+
+16 [89] B. An, S. Zhang, and M. Dredze, “RAG LLMs are not safer: A safety analysis of retrieval-augmented generation for large language models,” in Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , L. Chiruzzo, A. Ritter, and L. Wang, Eds. Albuquerque, New Mexico: Association for Computational Linguistics, Apr. 2025, pp. 5444–5474. [Online]. Available: https://aclanthology.org/2025.naacl-long.281/ [90] S. Cho, S. Jeong, J. Seo, T. Hwang, and J. C. Park, “Typos that broke the rag’s back: Genetic attack on rag pipeline by simulating documents in the wild via low-level perturbations,” in Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024, pp. 2826–2844. [91] A. Akyürek, E. Pan, G. Kuwanto, and D. Wijaya, “DUnE: Dataset for unified editing,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , H. Bouamor, J. Pino, and K. Bali, Eds. Singapore: Association for Computational Linguistics, Dec. 2023, pp. 1847–1861. [Online]. Available: https: //aclanthology.org/2023.emnlp-main.114/ [92] J. Hoelscher-Obermaier, J. Persson, E. Kran, I. Konstas, and F. Barez, “Detecting edit failures in large language models: An improved specificity benchmark,” in Findings of the Association for Computational Linguistics: ACL 2023 , A. Rogers, J. Boyd-Graber, and N. Okazaki, Eds. Toronto, Canada: Association for Computational Linguistics, Jul. 2023, pp. 11 548–11 559. [Online]. Available: https://aclanthology.org/2023.findings-acl.733/ [93] R. Rinberg, U. Bhalla, I. Shilov, and R. Gandikota, “Ripplebench: Capturing ripple effects by leveraging existing knowledge repositories,” in Mechanistic Interpretability Workshop at NeurIPS 2025 , 2025. [94] N. Li, A. Pan, A. Gopal, S. Yue, D. Berrios, A. Gatti, J. D. Li, A.-K. Dombrowski, S. Goel, G. Mukobi, N. Helm-Burger, R. Lababidi, L. Justen, A. B. Liu, M. Chen, I. Barrass, O. Zhang, X. Zhu, R. Tamirisa, B. Bharathi, A. Herbert-Voss, C. B. Breuer, A. Zou, M. Mazeika, Z. Wang, P. Oswal, W. Lin, A. A. Hunt, J. Tienken-Harder, K. Y. Shih, K. Talley, J. Guan, I. Steneker, D. Campbell, B. Jokubaitis, S. Basart, S. Fitz, P. Kumaraguru, K. K. Karmakar, U. Tupakula, V. Varadharajan, Y. Shoshitaishvili, J. Ba, K. M. Esvelt, A. Wang, and D. Hendrycks, “The WMDP benchmark: Measuring and reducing malicious use with unlearning,” in Proceedings of the 41st International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp, Eds., vol. 235. PMLR, 21–27 Jul 2024, pp. 28 525–28 550. [Online]. Available: https://proceedings.mlr.press/v235/li24bc.html [95] Z. Jin, P. Cao, C. Wang, Z. He, H. Yuan, J. Li, Y. Chen, K. Liu, and J. Zhao, “RWKU: Benchmarking real-world knowledge unlearning for large language models,” in The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track , 2024. [Online]. Available: https://openreview.net/forum?id=wOmtZ5FgMH [96] Z. Shi, Y. Zhou, J. Li, Y. Jin, Y. Li, D. He, F. Liu, S. Alharbi, J. Yu, and M. Zhang, “Safety alignment via constrained knowledge unlearning,” in Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar, Eds. Vienna, Austria: Association for Computational Linguistics, Jul. 2025, pp. 25 515–25 529. [Online]. Available: https://aclanthology.org/2025.acl-long.1240/ [97] Y. Wang, F. Weng, S. Yang, Z. Qin, M. Huang, and W. Wang, “DELMAN: Dynamic defense against large language model jailbreaking with model editing,” in Findings of the Association for Computational Linguistics: ACL 2025 , W. Che, J. Nabende, E. Shutova, and M. T. Pilehvar, Eds. Vienna, Austria: Association for Computational Linguistics, Jul. 2025, pp. 11 465–11 481. [Online]. Available: https://aclanthology.org/2025.findings-acl.598/ [98] Z. Zhang, J. Yang, Y. Lu, P. Ke, S. Cui, C. Zheng, H. Wang, and M. Huang, “From theft to bomb-making: The ripple effect of unlearning in defending against jailbreak attacks,” in Socially Responsible and Trustworthy Foundation Models at NeurIPS 2025 ,2025. [Online]. Available: https://openreview.net/forum?id=4opLLO GVav [99] X. Lu, X. Niu, G. K. R. Lau, N. Bui, R. H. L. Sim, J. R. Himawan, F. Wen, C.-S. Foo, S.-K. Ng, and B. K. H. Low, “Waterdrum: Watermark-based data-centric unlearning metric,” in The Fourteenth International Conference on Learning Representations , 2026. [Online]. Available: https://openreview.net/forum?id=5GVfneFvhq [100] I. Shumailov, J. Hayes, E. Triantafillou, G. Ortiz-Jimenez, N. Papernot, M. Jagielski, I. Yona, H. Howard, and E. Bagdasaryan, “Ununlearning: Unlearning is not sufficient for content regulation in advanced gener-ative ai,” arXiv preprint arXiv:2407.00106 , 2024. [101] D. Wang, Y. Li, J. Jiang, Z. Ding, Z. Luo, G. Jiang, J. Liang, and D. Yang, “Tokenization matters! degrading large language models through challenging their tokenization,” arXiv preprint arXiv:2405.17067 , 2024. 
+
+OPEN SCIENCE AND RESPONSIBLE DISCLOSURE 
+
+This paper supports reproducibility while accounting for safety and responsible disclosure concerns. 
+
+Artifacts. We provide an anonymous artifact repository con-taining: (i) the source code for Toketive , (ii) scripts and configuration files for all experiments (RQ-1, RQ-2, and RQ-3), (iii) documentation describing the experimental workflow and environment. 
+
+Access During Review. All artifacts are hosted in an anony-mous repository accessible to the program committee during double-blind review. The repository contains no identifying information and is available at: https://anonymous.4open.scie nce/r/Toketive. 
+
+Reproducibility. All core claims in the paper can be inde-pendently evaluated using the provided artifacts. To support reproducibility, we provide code, detailed documentation and dataset information. 
+
+Models and Datasets. All five models evaluated in this work are publicly available open-weight models accessible via HuggingFace. All datasets are publicly available benchmarks. ACKNOWLEDGMENTS 
+
+This paper was edited for grammar, spelling, and light style polishing using ChatGPT and Claude. APPENDIX AADAPTIVE EDITING AND UNLEARNING AGAINST 
+
+TOKENIZATION -B ASED BYPASSES 
+
+To evaluate whether tokenization-aware editing and unlearn-ing can mitigate the vulnerability exposed by Toketive , we additionally consider an adaptive variant of MEMIT. Unlike the standard setting, where the editing procedure operates only on the canonical tokenization of the target prompt, the adaptive procedure explicitly incorporates bypass tokenizations discov-ered after each editing iteration. This experiment evaluates whether a developer who is aware of the tokenization-based side channel, and can eliminate the residual factual associa-tions exposed by alternative tokenizations. 
+
+Experimental Setup. We conduct the experiment on 
+
+Llama3 using the same highly entangled edit-control fact pairs described in Appendix B. Specifically, we use 1,000 edit-control pairs with representational entanglement greater than 0.9. We evaluate standard MEMIT against adaptive MEMIT under the same unlearning objective and measure both the tokenization bypass rate and the resulting ripple effects. Starting from the canonical prompt, standard MEMIT is first applied to suppress the target fact. We then use Toketive to search for noncanonical tokenizations that continue to recover the original response. When a bypass tokenization is identified, 17 TABLE VI: Expected Calibration Error (ECE) of representational entanglement and edit distance as predictors of tokenization convergence across models and datasets. Lower ECE indicates better calibration. Bold indicates the better signal. 
+
+Model Method Authors CounterFact Known-1000 MQuAKE RippleEdits WorldFacts 
+
+Llama3 Repr. Entanglement 0.174 0.102 0.120 0.089 0.118 0.112 
+
+Edit Distance 0.398 0.283 0.215 0.336 0.235 0.424 
+
+Llama3.1 Repr. Entanglement 0.168 0.121 0.108 0.043 0.133 0.133 
+
+Edit Distance 0.404 0.317 0.324 0.266 0.254 0.461 
+
+OLMo2 Repr. Entanglement 0.180 0.097 0.090 0.037 0.097 0.174 
+
+Edit Distance 0.298 0.197 0.225 0.156 0.200 0.442 
+
+Tulu3.1 Repr. Entanglement 0.233 0.104 0.145 0.051 0.061 0.216 
+
+Edit Distance 0.466 0.288 0.375 0.266 0.346 0.534 
+
+Tulu3 Repr. Entanglement 0.228 0.132 0.133 0.077 0.077 0.192 
+
+Edit Distance 0.439 0.333 0.348 0.306 0.356 0.483 
+
+TABLE VII: Maximum Calibration Error (MCE) of representational entanglement and edit distance as predictors of tokenization convergence across models and datasets. MCE measures the worst-case calibration gap across score bins. Lower MCE indicates better worst-case calibration. Bold indicates the better signal per model-dataset pair. 
+
+Dataset Authors CounterFact Known-1000 MQuAKE RippleEdits WorldFacts Model Method Llama3-8B Repr. Entanglement 0.293 0.214 0.269 0.207 0.202 0.193 
+
+Edit Distance 0.473 0.380 0.373 0.427 0.441 0.498 Llama3.1-8B Repr. Entanglement 0.273 0.340 0.163 0.093 0.190 0.280 
+
+Edit Distance 0.446 0.380 0.504 0.381 0.546 0.577 OLMo2-13B Repr. Entanglement 0.436 0.263 0.166 0.116 0.203 0.252 
+
+Edit Distance 0.330 0.250 0.392 0.201 0.394 0.513 Tulu3.1-8B Repr. Entanglement 0.366 0.258 0.281 0.161 0.095 0.363 
+
+Edit Distance 0.537 0.380 0.539 0.379 0.578 0.681 Tulu3-8B Repr. Entanglement 0.384 0.393 0.295 0.220 0.102 0.329 
+
+Edit Distance 0.495 0.393 0.510 0.363 0.605 0.620 
+
+Algorithm 2 Adaptive MEMIT Unlearning 
+
+Require: Pretrained model M , canonical prompt pc, original response oold , target response onew , maximum iterations 
+
+T
+
+Ensure: Updated model M
+
+1: M ← MEMIT( M, p c → onew )
+
+2: for t = 2 to T do 
+
+3: S ← GenerateNoncanonicalTokenizations( pc)
+
+4: b ← ∅ 
+
+5: for each p ∈ S do 
+
+6: if M (p) contains oold then 
+
+7: b ← p
+
+8: break 
+
+9: end if 
+
+10: end for 
+
+11: if b = ∅ then 
+
+12: break 
+
+13: end if 
+
+14: M ← MEMIT( M, b → onew )
+
+15: end for 
+
+16: return M
+
+it is added as an additional unlearning target and MEMIT is applied again. This process is repeated for up to four adaptive iterations. Thus, each iteration expands the set of tokenizations explicitly covered by the unlearning procedure. 
+
+Adaptive Editing. Algorithm 2 summarizes the adaptive MEMIT 2 3 4 
+
+> Adaptive MEMIT iterations
+> 0% 5% 10% 15% 20% 25% 30% 35%
+> Bypass rate
+> 0.32 0.14 0.09 0.04 Bypass rate Ripple effect
+> 02468
+> Ripple effect ( × MEMIT)
+> 1.0 ×
+> 3.3 ×
+> 6.7 ×
+> 8.6 ×
+
+Fig. 8: Increasing the number of adaptive MEMIT itera-tions progressively reduces the bypass rate, but substantially increases the ripple effect on neighboring knowledge. By-pass rate and ripple effect are measured relative to standard MEMIT. procedure. Given a canonical prompt pc, its original response 
+
+oold , and the desired unlearning response onew , we first per-form standard MEMIT unlearning on pc. At each subsequent iteration, we generate a set of noncanonical tokenizations of 
+
+pc and identify a tokenization whose model response still contains oold . If such a bypass is found, we apply MEMIT to that tokenization using the same unlearning target onew .18 TABLE VIII: Effect of adaptive MEMIT on tokenization-based bypasses and collateral changes. Ripple effects are normalized to standard MEMIT.             
+
+> Method Bypass Rate ↓Ripple Effect ↓
+> MEMIT 0.32 1.0×
+> Adaptive MEMIT (2 iter.) 0.14 3.3×
+> Adaptive MEMIT (3 iter.) 0.09 6.7×
+> Adaptive MEMIT (4 iter.) 0.04 8.6×
+
+The procedure terminates when no bypass is found or when the maximum number of adaptive iterations is reached. 
+
+Results. As shown in Fig. 8, Adaptive MEMIT substantially reduces the effectiveness of tokenization-based bypasses. The bypass rate decreases from 0.32 for standard MEMIT to 0.14 after two adaptive iterations, 0.09 after three iterations, and 0.04 after four iterations. Thus, explicitly incorporating discov-ered bypass tokenizations into subsequent unlearning updates can substantially improve robustness against tokenization-aware adversaries. However, this increased robustness comes at a progressively larger cost to locality. The ripple effect increases from 1.0× for standard MEMIT to 3.3×, 6.7×, and 
+
+8.6× after two, three, and four adaptive iterations, respec-tively. Each additional adaptive iteration therefore reduces the remaining bypasses while simultaneously increasing collateral changes to neighboring knowledge. These results reveal a clear trade-off between tokenization robustness and update locality. While a developer can the mitigate tokenization-based side-channel by explicitly incor-porating discovered bypass tokenizations into the unlearning procedure, doing so progressively expands the region of the model affected by the update. In particular, reducing the bypass rate from 0.32 to 0.04 requires an 8.6× increase in ripple effects relative to standard MEMIT. This suggests that tokenization-aware defenses can improve robustness, but may undermine the locality that motivates targeted editing and unlearning. APPENDIX BFINE -T UNING FOR TARGETED UNLEARNING AND EDITING 
+
+We evaluate vanilla fine-tuning when used for targeted unlearning to examine whether its broader parameter updates provide greater robustness to tokenization-based bypasses. We evaluate fine-tuning in terms of both tokenization bypass rate and collateral changes to neighboring knowledge. We conduct this experiment on Llama3 using 1,000 edit-control fact pairs selected from the factual entanglement artifacts of [41]. We restrict the evaluation to highly entangled pairs, with representational entanglement greater than 0.9, providing a stringent setting in which modifications to the target fact are likely to affect neighboring knowledge. We measure the bypass rate using the same protocol as our main experiments and quantify collateral changes using the original-answer log-probability shift following [41]. 
+
+Results. Fine-tuning substantially reduces the bypass rate, from 0.32 for MEMIT to 0.08, indicating that its broader TABLE IX: Comparison of MEMIT and vanilla fine-tuning for targeted unlearning. Bypass rate measures the fraction of alternative tokenizations that recover the pre-update response. Ripple effect is normalized to MEMIT.         
+
+> Method Bypass Rate ↓Ripple Effect ↓
+> MEMIT 0.32 1.0×
+> Fine-tuning 0.08 5.2×
+
+TABLE X: Configuration of the fine-tuning baseline and the shared evaluation protocol. All values are the defaults in the released code; no per-fact or per-model tuning was performed.                 
+
+> Parameter Value
+> Fine-tuning optimization
+> Trainable parameters All (full model, no freezing) Optimizer SGD, momentum = 0
+> Learning rate 5×10 −5
+> Maximum steps 25 Early-stopping loss 5×10 −2
+> Batch size 1 (single prompt–target pair) Objective Causal-LM cross-entropy Model precision fp32
+> Protocol
+> Model Llama3
+> Editing baseline MEMIT
+
+parameter updates provide greater robustness to alternative tokenizations. However, this increased robustness comes at a substantial cost to locality. Fine-tuning produces a 5.2×
+
+larger ripple effect than MEMIT, indicating that suppressing a broader set of tokenization variants also causes substantially greater changes to neighboring knowledge. Thus, although fine-tuning provides stronger robustness against tokenization-based bypasses, its collateral effects make it less suitable for targeted unlearning and editing, where localized modification is a primary objective. The fine-tuning configuration and evaluation protocol are provided in Table X. APPENDIX CTOKENIZATION SAMPLING PROCEDURE 
+
+To facilitate reproducibility, we provide the complete tokenization sampling procedure used by Toketive .
+
+Toketive does not rely on a formal theory of knowledge localization, nor do we claim that representational entangle-ment or residual computational paths constitute the definitive mechanism by which factual knowledge is stored in LLMs. Al-gorithm 3 specifies the candidate-generation process, adaptive controller update, tokenizer constraints, duplicate handling, and attempt budget used to generate alternative tokenizations. The sampler operates without tokenizer-specific heuristics: candidate segments are retained only when they satisfy the tokenizer round-trip constraint τ −1(τ (c)) = c, ensuring that each sampled tokenization decodes exactly to the original input. The adaptive controller updates α using the cosine similarities of the most recent B scored proposals, while all scored proposals, including those outside the target similarity 19 band, are retained in the history. We use a maximum of 
+
+nM sampling attempts for n requested tokenizations, with 
+
+M = 300 attempts per sample. The sampler uses a fixed budget of M = 300 proposals per requested sample, yielding a maximum of nM attempts for a quota of n: ndet = 20 for detection and nrec = 50 for reconstruction. The loop terminates as soon as the quota is met, so these values represent worst-case rather than typical sampling costs. If the budget is exhausted before the quota is reached, we fill the shortfall using validated but out-of-band proposals in ascending order of their distance to the target band. This maintains a fixed sample size and ensures comparable detection and reconstruction statistics across facts. Thus, the band boundaries serve as sampling targets rather than hard guarantees; if the fallback pool is also insufficient, the procedure returns fewer than n samples. Algorithm 3 (Lines 3 and 15) specifies both behaviors. APPENDIX DCOST AND EFFICIENCY ANALYSIS OF TO K E T I V E 
+
+The dominant cost of Toketive for each edited fact is the number of forward passes through fθ′ . The canonical reference step requires a single forward pass to extract hidden states. The detection and reconstruction samplers each perform at most M · ndet and M · nrec tokenization attempts, respectively, where M is the per-sample attempt budget. Each attempt requires a forward pass to compute hidden representations for the entanglement score (cost O(F )), while each accepted sample additionally incurs an autoregressive generation cost (cost O(G)). The total cost per fact is therefore: 
+
+O(M (ndet + nrec ) · F + ( ndet + nrec ) · G) ,
+
+where F denotes the cost of a single forward pass, and G
+
+denotes the cost of autoregressive generation, which scales with output length and typically satisfies G ≫ F .The random and edit-distance baselines avoid hidden-state extraction, eliminating the F -term associated with scoring. Their cost is dominated by generation: 
+
+O(( ndet + nrec ) · G) ,
+
+with negligible additional overhead from tokenization and edit-distance computation. In the worst case, Toketive performs 
+
+M (ndet + nrec ) forward passes for scoring; in practice, the sampler terminates early once band quotas are satisfied. APPENDIX EHYPERPARAMETER CALIBRATION 
+
+They are selected once using a single development config-uration and are kept fixed for all remaining 179 experiments. No model-, dataset-, or editing-technique-specific retuning is performed. We intentionally avoid per-target tuning to demonstrate that Toketive doesn’t depend on target-specific calibration. 
+
+a) Detection threshold τdet .: The detection threshold τdet 
+
+was calibrated on a single held-out configuration: Llama3 with MEMIT on Known-1000. Fig. 9 shows F1 as a function of 
+
+τdet for this configuration. F1 peaks sharply at τ ∗ = 0 .10 
+
+(F1 = 82 .9% ) and degrades monotonically for larger values. We adopt τdet = 0.10 as a fixed threshold and apply it uniformly across all remaining 179 model-dataset-technique combinations without further tuning. The consistent detection performance reported in Table IV across diverse models and datasets suggests that this threshold generalizes well beyond the calibration setting. 
+
+b) Band boundaries. : Band boundaries for the represen-tational entanglement were determined by sweeping βdet  
+
+> h
+
+(with 
+
+βdet  
+
+> l
+
+= 0 fixed) for detection and βrec  
+
+> l
+
+(with βrec  
+
+> h
+
+= 1 .0 fixed) for reconstruction on the same held-out configuration, using F1 and top-1 accuracy as the respective criteria. The values used are as follows. For the representational entanglement sampler:  
+
+> •
+
+Detection band: [βdet  
+
+> l
+
+, β det  
+
+> h
+
+) = [0 .3, 0.5)  
+
+> •
+
+Reconstruction band: [βrec  
+
+> l
+
+, β rec  
+
+> h
+
+) = [0 .7, 1.0) 
+
+For the edit distance sampler, we utilise the following values:  
+
+> •
+
+Detection band: [βdet  
+
+> l
+
+, β det  
+
+> h
+
+) = [0 .80 , 1.00)  
+
+> •
+
+Reconstruction band: [βrec  
+
+> l
+
+, β rec  
+
+> h
+
+) = [0 .00 , 0.50) 
+
+The detection band for entanglement ( [0 .30 , 0.50) ) captures tokenizations that are meaningfully divergent from canonical internally but retain sufficient semantic signal to produce coherent completions. The reconstruction band ( [0 .70 , 1.00) )targets high-similarity tokenizations that are likely to draw on the same factual subspace as the canonical path while being just divergent enough to escape patched circuits, consistent with the design motivation in Section IV-B1. For edit distance, the detection band ( [0 .80 , 1.00) ) selects highly divergent tokenizations at the lexical level, while the reconstruction band ( [0 .00 , 0.50) ) selects tokenizations that are lexically close to canonical. These choices mirror the en-tanglement band logic but operate on token-sequence surface similarity rather than hidden-state similarity. All band boundaries and τdet are fixed at the calibrated values for all 180 experiments reported in this paper. No per-dataset or per-model tuning was performed. APPENDIX FMEAN SCORE ANALYSIS 
+
+Table XI reports the mean representational entanglement and edit distance scores for convergent and non-convergent noncanonical tokenizations, along with their difference (Conv 
+
+− Non-conv), across all models and datasets. For representational entanglement, convergent tokenizations consistently achieve higher mean scores than non-convergent ones across all model-dataset combinations, with differences ranging from 0.124 to 0.278 . The direction of this difference is stable, as convergent tokenizations are always more similar to the canonical hidden state than non-convergent ones, indicat-ing that representational entanglement scores carry a consistent 20 Algorithm 3 Adaptive tokenization sampler used by Toketive . τ, τ −1 are the tokenizer’s encode/decode maps with special tokens disabled on all calls; v∗ = τ (p) is the canonical tokenization; H IDDEN extracts the subject-final hidden state at probe layer L. Constants: maximum segment length W = 19 characters, attempt budget M = 300 per requested sample, step 
+
+η = 0 .08 , buffer B = 10 , α0 = 0 .5. The round-trip test τ −1(τ (c)) = c is what keeps segments byte- and Unicode-safe without tokenizer-specific rules; D records every scored proposal, including rejected candidates, so the controller adapts using the full observed proposal history. Here s denotes the subject whose final-token position is probed, and h∗ = HIDDEN (fθ′ , v ∗, L, s )
+
+the canonical reference representation against which candidate tokenizations are scored. 
+
+1: procedure SAMPLE (fθ′ , p, s, h ∗, [βl, β h), n )
+
+2: C, F, S ← ∅ ; D ← [ ] ; α ← α0; k ← 0
+
+3: while |C| < n and k < nM do 
+
+4: k ← k + 1 ; α ←UPDATE ALPHA (α, D, β l, β h); u ←GEN TOK (p, α )
+
+5: if u = ⊥ or u ∈ S then continue ▷ invalid or duplicate 
+
+6: S ← S ∪ { u}; e ← cos  HIDDEN (fθ′ , u, L, s ), h ∗; append e to D
+
+7: if βl ≤ e < β h then 
+
+8: C ← C ∪ { u}
+
+9: else 
+
+10: d ← min( |e − βl|, |e − βh|); F ← F ∪ { (u, d )} ▷ distance to band 
+
+11: end if 
+
+12: end while 
+
+13: if |C| < n then move (u, d ) from F into C in ascending d until |C| = n or F = ∅
+
+14: return C
+
+15: end procedure 
+
+16: procedure GEN TOK (p, α )
+
+17: m ← 1 if α < 0.3; 2 if α < 0.5; 3 if α < 0.7; else 4 ▷ max tokens per segment 
+
+18: u ← [ ] ; i ← 0
+
+19: while i < |p| do 
+
+20: A ← (τ (cij ), j ) : cij = p[i:j], 0 < j − i ≤ W, j ≤ | p|, |τ (cij )| ≤ m, τ −1(τ (cij )) = cij 
+
+21: if A = ∅ then 
+
+22: u ← u∥τ (p[i]) ; i ← i + 1 ▷ single-character fallback ensures progress 
+
+23: else 
+
+24: for all (t, j ) ∈ A , with ℓ ← j − i do 
+
+25: if α ≤ 0.5 then w(t, j ) ← ℓ/ 2 ▷ favor longer segments 
+
+26: else w(t, j ) ← 1/ max(1 , ℓ/ 2) , doubled if |t| > 1 ▷ favor short, multi-token splits 
+
+27: end for 
+
+28: sample (t, j ) ∼ A with P (t, j ) = w(t, j )/P
+
+> (t′,j ′)∈A
+
+w(t′, j ′); u ← u∥t; i ← j
+
+29: end if 
+
+30: end while 
+
+31: return ⊥ if u = v∗ or τ −1(u)̸ = p, else u
+
+32: end procedure 
+
+33: procedure UPDATE ALPHA (α, D, β l, β h)
+
+34: if |D| < B then return α
+
+35: ¯s ← mean  D[|D| − B : |D|]
+
+36: if ¯s > β h then return min(0 .95 , α + η)
+
+37: if ¯s < β l then return max(0 .05 , α − η)
+
+38: return clip( α + ε, 0.05 , 0.95) , ε ∼ U (−η/ 2, η/ 2) ▷ in-band jitter avoids stagnation 
+
+39: end procedure 
+
+TABLE XI: Mean representational entanglement and edit distance scores for convergent (Conv) and non-convergent (Non-conv) noncanonical tokenizations, and their difference (Conv − Non-conv), across all models and datasets. Positive differences indicate higher scores for convergent tokenizations. For representational entanglement, a positive difference reflects stronger internal similarity to the canonical hidden state for convergent tokenizations.                                                                                                                                                                                                                  
+
+> Model Method Real Authors CounterFact Known-1000 MQuAKE RippleEdits World Facts Conv Non-conv Diff Conv Non-conv Diff Conv Non-conv Diff Conv Non-conv Diff Conv Non-conv Diff Conv Non-conv Diff
+> Llama3 Repr. Ent. 0.669 0.436 0.233 0.717 0.593 0.124 0.737 0.549 0.188 0.750 0.548 0.202 0.793 0.669 0.124 0.775 0.635 0.140 Edit distance 0.736 0.807 -0.071 0.682 0.752 -0.070 0.708 0.771 -0.064 0.717 0.774 -0.057 0.740 0.772 -0.032 0.739 0.797 -0.058
+> Llama3.1 Repr. Ent. 0.691 0.442 0.249 0.732 0.592 0.141 0.733 0.565 0.169 0.765 0.559 0.206 0.812 0.680 0.132 0.773 0.642 0.131 Edit distance 0.738 0.810 -0.072 0.671 0.758 -0.087 0.724 0.769 -0.045 0.708 0.772 -0.065 0.749 0.768 -0.019 0.746 0.789 -0.043
+> OLMo2 Repr. Ent. 0.598 0.332 0.266 0.677 0.539 0.139 0.675 0.465 0.210 0.731 0.465 0.267 0.754 0.609 0.146 0.737 0.530 0.207 Edit distance 0.728 0.803 -0.075 0.681 0.748 -0.067 0.720 0.756 -0.037 0.673 0.767 -0.094 0.741 0.771 -0.030 0.737 0.811 -0.073
+> Tulu3 Repr. Ent. 0.649 0.371 0.278 0.712 0.566 0.146 0.708 0.533 0.175 0.743 0.508 0.235 0.784 0.655 0.129 0.744 0.574 0.170 Edit distance 0.739 0.805 -0.066 0.699 0.754 -0.056 0.730 0.771 -0.041 0.710 0.776 -0.066 0.748 0.759 -0.011 0.745 0.788 -0.043
+> Tulu3.1 Repr. Ent. 0.648 0.374 0.274 0.703 0.575 0.129 0.715 0.524 0.191 0.745 0.512 0.233 0.788 0.656 0.132 0.750 0.583 0.166 Edit distance 0.738 0.809 -0.071 0.698 0.765 -0.067 0.728 0.771 -0.044 0.711 0.779 -0.068 0.755 0.767 -0.012 0.739 0.780 -0.042
+
+21 0.0 0.2 0.4 0.6 0.8 1.0       
+
+> det
+> 020 40 60 80 100 Rate (%) TPR FPR Precision tau*=0.10 (a) TPR, FPR, and Precision 0.0 0.2 0.4 0.6 0.8 1.0
+> det
+> 020 40 60 80 F1 (%)
+> tau*=0.10 (F1=82.9%) (b) F1 score
+
+Fig. 9: Sensitivity of edit detection performance to the detection threshold τdet , averaged across all models, datasets, and techniques. (a) TPR, FPR, and Precision as a function of τdet . At τ ∗ = 0 .10 , TPR and Precision are both near 83% while FPR remains low, marking the optimal precision-recall balance. (b) F1 score as a function of τdet . F1 peaks sharply at τ ∗ = 0 .10 
+
+(82 .9% ) and degrades monotonically for larger values, confirming this as a robust operating point. The plateau near 67% at 
+
+τdet → 1.0 corresponds to the degenerate case where all facts are labeled edited (TPR = 100% , FPR = 100% , Precision 
+
+≈ 50% ). directional signal about factual retrieval behavior. The largest gaps appear on Real Authors and MQuAKE, where the mean difference exceeds 0.20 for most models, while RippleEdits and CounterFact show smaller but still consistent separations. For edit distance, the pattern is reversed and substantially weaker. Non-convergent tokenizations have slightly higher mean edit distances than convergent ones in all settings, yielding negative differences ranging from −0.011 to −0.094 .The magnitude of this separation is small (typically 0.03 -0.07 )indicating that convergent and non-convergent tokenizations differ only marginally in their lexical distance from the canon-ical sequence. This indicates that while edit distance captures some surface-level variation, it does not reliably separate the two groups, consistent with the low AUC and |rb| values reported in Table II. Taken together, these mean score differences provide ad-ditional support that representational entanglement captures a meaningful internal signal about factual retrieval, while edit distance does not. The consistent positive direction of the entanglement difference across all 5 × 6 = 30 model-dataset combinations, with no exceptions, further validates its use as the routing criterion in Toketive ’s adaptive sampler. APPENDIX GDISTRIBUTIONAL VISUALIZATIONS 
+
+Figures 10-21 present distributional visualizations of repre-sentational entanglement and edit distance as predictors of to-kenization convergence. Figures 22-27 shows ROC curves for all models across all six datasets, illustrating the discrimination advantage of representational entanglement over edit distance at all operating thresholds. Across all combinations, represen-tational entanglement consistently exhibits a rightward shift for convergent tokenizations relative to non-convergent ones, with clearly separated interquartile ranges in most settings. Edit distance distributions overlap substantially between convergent and non-convergent groups across all datasets, with near-identical medians and largely overlapping interquartile ranges. As visible in the violin plots, the edit distance distributions for convergent and non-convergent tokenizations share similar shapes and central tendencies, and representational entangle-ment distributions show a pronounced mass shift toward higher scores for convergent tokenizations. APPENDIX HCALIBRATION ANALYSIS 
+
+Beyond discrimination (AUC) and effect size ( |rb|) reported in Section V-B, we evaluate the calibration of representational entanglement and edit distance as predictors of tokenization convergence. A well-calibrated signal produces confidence scores whose magnitude reliably reflects the actual probability of convergence, not just their relative ordering. We measure calibration using Expected Calibration Error (ECE), computed by partitioning scores into ten equal-width bins and measuring the weighted average gap between mean predicted score and observed convergence rate per bin. Lower ECE indicates better calibration. Table VI reports ECE for representational entanglement and edit distance across all five models and six datasets. Represen-tational entanglement is substantially better calibrated (lower valyes) than edit distance across all settings. The gap is most 22 TABLE XII: Examples of Toketive outcomes on Llama3 edited with AlphaEdit. All responses are generated after editing. The edited target answer is George R.R. Martin , while the pre-edit answer is George Orwell . Alternative tokenizations can therefore recover the suppressed answer even though the canonical tokenization produces the edited response.                    
+
+> Tokenization Token sequence Post-edit response Noncanonical [’T’,’h’,’e’,’ ’,’n’,’ove’,’l’,’ ’,’198’,’4’,...]
+> The novel 1984 was written by George Orwell , a British author, and published in 1949. The book is a . . .
+> Noncanonical [’Th’,’e’,’ ’,’nov’,’el’,’ ’,’198’,’4’,’ ’,...]
+> The novel 1984 was written by Michael Moorcock in 1948. It was a satire . . .
+> Canonical [’The’,’ novel’,’ ’,’198’,’4’,’ was’,’ written’,’ by’]
+> The novel 1984 was written by George R.R. Martin , and it was published in 1979. The novel . . .
+
+pronounced on TOFU-World Facts, where edit distance ECE exceeds 0.4 across all models while representational entan-glement remains below 0.25 . This indicates that edit distance scores are not only less discriminative (as shown by AUC and 
+
+|rb| in Table II) but also poorly calibrated. Representational en-tanglement, by contrast, produces scores whose magnitude is meaningfully aligned with convergence probability, justifying its use as a routing signal in Toketive ’s adaptive sampler rather than merely as a ranking criterion. Table VII reports Maximum Calibration Error (MCE), which measures the worst-case calibration gap across bins rather than the average. MCE is more sensitive to localized miscalibration and complements ECE by identifying settings where a signal fails badly in a specific score range even if its average calibration is acceptable. Representational en-tanglement achieves lower MCE than edit distance in the majority of model-dataset combinations. OLMo2 is a partial exception: edit distance achieves lower MCE on Real Au-thors ( 0.330 vs. 0.436 ) and CounterFact ( 0.250 vs. 0.263 ), suggesting that the worst-case calibration of entanglement scores is slightly degraded for this model on these datasets. However, representational entanglement retains lower MCE on the remaining four datasets for OLMo2 , and its ECE advantage holds uniformly(Table VI). Taken together, ECE and MCE show that representational entanglement produces more reliable confidence estimates than edit distance across the full score range and across all models, further supporting its use as the routing signal in Toketive ’s adaptive sampler. APPENDIX IQUALITATIVE EXAMPLES OF TOKENIZATION -A WARE 
+
+RECOVERY 
+
+Table XII presents three representative outcomes of 
+
+Toketive on Llama3 edited with AlphaEdit. All responses are generated after the editing procedure. In the first case, a noncanonical tokenization recovers the original pre-edit answer, George Orwell , despite the canonical tokenization producing the edited answer, George R.R. Martin . This rep-resents a successful bypass of the edit. In the second case, the noncanonical tokenization produces an incorrect response, 
+
+Michael Moorcock , rather than recovering either the pre-edit or edited answer. This illustrates a failed recovery despite successfully deviating from the edited behavior. Finally, the canonical tokenization produces the intended edited answer, 
+
+George R.R. Martin , demonstrating that the edit remains effective under the representation on which it was originally applied. Together, these examples illustrate that tokenization-aware sampling can separate tokenizations that preserve the original factual association from those that either lose the association or remain affected by the edit. APPENDIX JADDITIONAL ANALYSIS FOR Q2: T OKENIZATION 
+
+INVARIANCE OF EDITING AND UNLEARNING 
+
+Table XIII reports the full breakdown of noncanonical tokenization responses across all five models, six datasets, and six techniques. For each combination, we report the fraction of noncanonical tokenizations that produce the new answer (New%), the pre-update answer (Old%), or neither (Other%). The bypass rate reported in the main paper (Table III) corre-sponds directly to the Old% column here. Several patterns are consistent across all models and datasets. The Old% column shows that a substantial fraction of noncanonical tokenizations recover the pre-update response in every setting, with no technique achieving near-zero bypass rates. The New% column shows that the post-edit answer is produced by a minority of noncanonical tokenizations in most settings, indicating that the edit generalizes poorly beyond the canonical path. The Other% column (tokenizations producing neither the old nor the new answer) is largest for LTU across most settings. 23 TABLE XIII: Full breakdown of noncanonical tokenization responses across models, techniques, and datasets. New (%) reports the fraction producing the post-edit answer o∗; Old (%) reports the fraction recovering the pre-update answer o (bypass rate); Other (%) reports the fraction producing neither. 
+
+Known-1000 CounterFact TOFU-Real Authors MQuAKE RippleEdits TOFU-World Facts Model Technique New Old Other New Old Other New Old Other New Old Other New Old Other New Old Other 
+
+> Llama3
+
+MEMIT 21.5 36.5 42.0 16.8 50.3 32.9 29.7 43.8 26.5 15.6 46.9 37.5 21.0 37.5 41.5 48.0 27.0 25.0 RECT 19.3 39.1 41.5 15.2 51.6 33.2 26.5 46.4 27.1 11.7 49.7 38.5 16.9 42.3 40.8 44.0 30.1 25.9 PRUNE 21.0 35.8 43.2 17.8 49.3 32.9 31.1 42.6 26.3 12.6 49.5 37.9 23.0 37.7 39.3 44.9 28.7 26.4 AlphaEdit 24.6 33.8 41.6 20.7 47.3 32.0 30.0 42.6 27.4 17.1 43.1 39.7 24.9 35.6 39.5 54.3 23.2 22.5 CoME 25.5 32.9 41.6 19.8 48.3 32.0 29.0 44.1 26.9 18.5 42.7 38.8 29.8 33.1 37.1 56.1 21.1 22.8 LTU 4.5 32.1 63.4 6.4 39.1 54.5 1.0 57.1 41.9 1.3 47.5 51.2 1.6 26.9 71.5 12.2 51.8 36.0 
+
+> Llama3.1
+
+MEMIT 21.9 42.0 36.1 19.5 49.1 31.4 30.4 42.1 27.5 15.5 39.7 44.8 25.0 32.3 42.7 49.3 30.9 19.7 RECT 19.6 43.9 36.5 16.0 51.5 32.5 27.0 45.2 27.7 12.7 42.0 45.2 21.3 38.3 40.5 44.5 34.5 20.9 PRUNE 23.1 39.9 37.1 21.2 48.3 30.5 29.3 43.4 27.3 15.4 39.5 45.1 29.1 30.2 40.7 51.3 29.7 18.9 AlphaEdit 28.0 36.9 35.1 26.1 45.8 28.1 31.6 40.5 27.9 21.4 31.2 47.4 31.0 30.2 38.8 59.3 22.1 18.7 CoME 27.0 38.3 34.7 27.0 44.3 28.7 34.8 37.8 27.4 19.7 35.2 45.0 34.3 25.3 40.4 57.3 23.9 18.8 LTU 5.8 42.8 51.4 4.9 46.0 49.1 1.2 56.4 42.4 0.3 42.2 57.5 1.9 27.8 70.3 13.7 48.6 37.6 
+
+> OLMo2
+
+MEMIT 15.1 36.1 48.8 18.7 29.0 52.3 11.4 38.5 50.1 17.3 24.6 58.2 11.5 35.8 52.7 28.1 36.6 35.3 RECT 13.1 38.0 49.0 18.2 30.0 51.8 11.3 38.6 50.1 17.5 24.2 58.3 11.6 36.1 52.3 29.2 35.7 35.2 PRUNE 13.9 36.0 50.1 20.9 27.8 51.3 11.6 38.0 50.3 17.9 24.0 58.1 12.2 35.4 52.4 31.6 32.9 35.4 AlphaEdit 18.0 29.7 52.3 22.2 26.7 51.1 12.7 37.2 50.1 21.6 19.7 58.7 15.1 31.9 53.1 37.7 25.6 36.7 CoME 15.8 33.8 50.4 20.9 27.7 51.4 12.5 37.1 50.4 19.6 21.7 58.7 12.3 35.3 52.4 31.6 32.3 36.1 LTU 6.8 38.7 54.5 5.6 36.5 57.9 6.1 37.5 56.4 6.9 31.9 61.2 5.2 39.6 55.2 13.1 36.9 30.0 
+
+> Tulu3.1
+
+MEMIT 22.4 43.5 34.1 19.0 49.7 31.2 27.4 49.0 23.6 20.1 42.8 37.1 25.9 38.6 35.4 55.6 30.5 13.9 RECT 19.7 46.3 33.9 17.6 50.5 31.9 24.9 51.1 24.0 18.8 44.2 37.0 20.1 43.7 36.2 51.6 35.0 13.4 PRUNE 24.0 43.2 32.8 21.8 47.2 31.0 28.4 47.8 23.8 22.7 40.6 36.7 27.1 37.6 35.2 53.5 32.3 14.2 AlphaEdit 31.7 37.0 31.3 27.5 43.0 29.5 31.1 45.3 23.6 25.9 38.4 35.7 31.8 32.2 36.0 67.6 20.8 11.6 CoME 26.9 40.1 33.0 24.4 45.5 30.1 31.1 45.5 23.4 25.1 39.7 35.2 33.2 30.7 36.1 60.7 26.6 12.7 LTU 2.4 39.6 58.0 6.3 44.0 49.7 2.7 58.9 38.4 5.8 45.1 49.1 5.2 39.0 55.8 13.8 54.0 32.2 
+
+> Tulu3
+
+MEMIT 21.9 39.8 38.2 18.3 45.8 35.9 30.2 37.1 32.7 14.1 42.2 43.7 19.0 45.5 35.4 55.7 32.3 12.0 RECT 19.4 42.1 38.4 16.2 47.3 36.5 27.5 39.8 32.7 13.8 43.1 43.1 16.8 47.4 35.8 51.3 37.4 11.3 PRUNE 21.7 40.3 38.0 18.6 45.5 35.9 30.4 36.8 32.8 15.9 41.4 42.7 22.4 44.8 32.7 55.1 32.4 12.5 AlphaEdit 28.4 33.8 37.8 27.0 39.2 33.8 31.7 35.7 32.6 25.6 33.0 41.4 27.5 35.7 36.8 65.5 23.5 11.0 CoME 24.1 38.0 37.9 23.8 42.1 34.1 33.3 34.6 32.2 22.0 37.2 40.8 24.0 39.8 36.1 61.2 28.0 10.8 LTU 2.0 33.8 64.2 5.4 40.5 54.1 2.3 48.7 49.0 0.1 46.0 54.0 4.2 40.1 55.7 15.9 53.9 30.2 Non-conv. Conv. 0.0 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement 
+
+(a) Llama3 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (e) Tulu3.1 
+
+Fig. 10: Representational entanglement score distributions for Known-1000 across all five models. Convergent tokenizations shown in blue, non-convergent in red. 24 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (e) Tulu3.1 
+
+Fig. 11: Edit distance score distributions for Known-1000 across all five models. Convergent tokenizations shown in blue, non-convergent in red. Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement 
+
+(a) Llama3 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (c) OLMo2 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (e) Tulu3.1 
+
+Fig. 12: Representational entanglement score distributions for CounterFact across all five models. Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance 
+
+(a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (e) Tulu3.1 
+
+Fig. 13: Edit distance score distributions for CounterFact across all five models. Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement 
+
+(a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (e) Tulu3.1 
+
+Fig. 14: Representational entanglement score distributions for Real Authors across all five models. 25 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (e) Tulu3.1 
+
+Fig. 15: Edit distance score distributions for Real Authors across all five models. Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement 
+
+(a) Llama3 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (e) Tulu3.1 
+
+Fig. 16: Representational entanglement score distributions for MQuAKE across all five models. Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance 
+
+(a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (e) Tulu3.1 
+
+Fig. 17: Edit distance score distributions for MQuAKE across all five models. Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement 
+
+(a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Repr. Entanglement (d) Tulu3 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (e) Tulu3.1 
+
+Fig. 18: Representational entanglement score distributions for RippleEdits across all five models. Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance 
+
+(a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (e) Tulu3.1 
+
+Fig. 19: Edit distance score distributions for RippleEdits across all five models. 26 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (a) Llama3 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (b) Llama3.1 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (c) OLMo2 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (d) Tulu3 Non-conv. Conv. 0.4 0.6 0.8 1.0 Repr. Entanglement (e) Tulu3.1 
+
+Fig. 20: Representational entanglement score distributions for World Facts across all five models. Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance 
+
+(a) Llama3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (b) Llama3.1 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (c) OLMo2 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (d) Tulu3 Non-conv. Conv. 0.2 0.4 0.6 0.8 1.0 Edit Distance (e) Tulu3.1 
+
+Fig. 21: Edit distance score distributions for World Facts across all five models. 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.774) Edit distance (AUC=0.621) 
+
+(a) Llama3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.761) Edit distance (AUC=0.580) (b) Llama3.1 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.784) Edit distance (AUC=0.563) (c) OLMo2 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.749) Edit distance (AUC=0.579) (d) Tulu3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.764) Edit distance (AUC=0.583) (e) Tulu3.1 
+
+Fig. 22: ROC curves for Known-1000 across all five models. Representational entanglement (blue) vs. edit distance (red). Dashed line indicates random baseline. 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.688) Edit distance (AUC=0.632) 
+
+(a) Llama3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.721) Edit distance (AUC=0.666) (b) Llama3.1 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.684) Edit distance (AUC=0.634) (c) OLMo2 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.723) Edit distance (AUC=0.611) (d) Tulu3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.704) Edit distance (AUC=0.636) (e) Tulu3.1 
+
+Fig. 23: ROC curves for CounterFact across all five models. 27 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.803) Edit distance (AUC=0.662) (a) Llama3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.828) Edit distance (AUC=0.662) (b) Llama3.1 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.819) Edit distance (AUC=0.669) (c) OLMo2 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.850) Edit distance (AUC=0.647) (d) Tulu3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.845) Edit distance (AUC=0.661) (e) Tulu3.1 
+
+Fig. 24: ROC curves for Real Authors across all five models. 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.797) Edit distance (AUC=0.614) 
+
+(a) Llama3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.800) Edit distance (AUC=0.622) (b) Llama3.1 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.815) Edit distance (AUC=0.674) (c) OLMo2 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.828) Edit distance (AUC=0.629) (d) Tulu3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.827) Edit distance (AUC=0.632) (e) Tulu3.1 
+
+Fig. 25: ROC curves for MQuAKE across all five models. 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.702) Edit distance (AUC=0.565) 
+
+(a) Llama3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.730) Edit distance (AUC=0.533) (b) Llama3.1 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.735) Edit distance (AUC=0.567) (c) OLMo2 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.712) Edit distance (AUC=0.526) (d) Tulu3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.716) Edit distance (AUC=0.528) (e) Tulu3.1 
+
+Fig. 26: ROC curves for RippleEdits across all five models. 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.752) Edit distance (AUC=0.628) 
+
+(a) Llama3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.738) Edit distance (AUC=0.595) (b) Llama3.1 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.799) Edit distance (AUC=0.658) (c) OLMo2 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.769) Edit distance (AUC=0.590) (d) Tulu3 0.0 0.2 0.4 0.6 0.8 1.0 FPR 0.0 0.2 0.4 0.6 0.8 1.0 TPR Repr. ent. (AUC=0.763) Edit distance (AUC=0.588) (e) Tulu3.1 
+
+Fig. 27: ROC curves for World Facts across all five models. 28

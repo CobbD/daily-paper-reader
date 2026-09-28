@@ -1,0 +1,947 @@
+Title: Trusted Model Environment for Private Semantic Computations
+
+URL Source: https://arxiv.org/pdf/2609.30032v1
+
+Published Time: Fri, 25 Sep 2026 01:43:08 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Trusted Model Environment for Private Semantic Computations 
+
+Vasisht Duddu, Xi He 
+
+Vector Institute and University of Waterloo vasisht.duddu@vectorinstitute.ai, xi.he@uwaterloo.ca 
+
+Abstract —A private semantic computation primitive enables parties to privately compute over structured and unstruc-tured data that requires understanding its semantics, context, and relationships. Standard cryptographic primitives (e.g., multiparty computation) do not readily support such com-putation. Generative models are well suited for such tasks but typically process data in plaintext, while cryptographic private inference remains inefficient and difficult to scale. Thus, we need a new primitive for private semantic computation. We introduce trusted model environments (TME), the first such primitive that executes generative models inside trusted execution environments (TEEs) while controlling output leakage. TME is designed to be (i) effective (correctly performs the semantic task); (ii) confidential (protects computation and sensitive inputs); (iii) utility-preserving (retains utility on other tasks); (iv) verifiable (provides tamper-resistant evidence of the computations); (v) efficient (incurs low overhead compared to baseline model computations); and (vi) scalable (supports multiple participating parties). Effectiveness follows from the generative models, while TEEs provide confidential computation. For confidentiality of sensitive inputs, we combine adversarial training to resist verbatim leakage with an information flow control module to suppress semantic leakage. For verifiability, we introduce novel attestations that let parties verify TME operations on their data and queries, along with optimizations (e.g., batching) for efficiency and scalability. We design and evaluate the proof-of-concept for TME across three applications ,showing that it meets all the requirements. 
+
+## 1. Introduction 
+
+The widespread availability of structured (e.g., tabular) and unstructured (e.g., text, images, and graphs) data has spurred semantic computation , which requires interpreting data, context, and relationships to extract insights. Given the potential sensitivity of such data, there is a need for 
+
+private semantic computation primitives that support such computations over sensitive data held by multiple parties. For instance, consider the following motivating examples:  
+
+> •
+
+Alice holds a sensitive document: “ 54-year-old smoker, exertional chest pain radiating to the left arm, relieved by rest; troponin mildly elevated ”. Bob wishes to privately evaluate a function on the document: “ Are the described symptoms consistent with stable angina? ”.  
+
+> •
+
+Alice and Bob each hold a confidential set of flagged bank accounts. Alice’s set includes {shell company rout-ing funds, customer making sub-$10k deposits }; Bob’s set includes {front business with pass-through transfers, account splitting deposits below threshold }. Neither may disclose their individual sets, but they wish to learn the 
+
+types of illicit patterns their lists share (e.g., shell-entity )despite not being an exact match.  
+
+> •
+
+Alice holds a private database of patient notes, and a physician, Bob, asks “ Which record describes exertional chest pain relieved by rest, with mildly elevated troponin? ”. Alice needs to retrieve the relevant record without knowing Bob’s query or leaking the access pattern. The outputs in all these cases are determined by interpreting the data, context, and relationships. Standard cryptographic primitives (e.g., private function computation [1]–[4], private information retrieval [5], obliv-ious RAM [6], [7], and private set intersection [8]–[10]) are designed for structured data types, and do not readily support semantic computations. On the other hand, generative models, such as large language models (LLMs) [11], [12] and vision-language models (VLMs) [13], [14], are effective for semantic computation over structured and unstructured data. However, they operate on the data in plaintext and do not provide any confidentiality guarantees. Moreover, private inference of generative models using cryptographic primitives is expensive in practice [15]–[23]. Thus, we need a new private semantic computation primitive. Trusted execution environments (TEEs) can efficiently run generative models while offering computation confiden-tiality [24]–[28] and verifiability [25], [29]. Thus, TEEs are a promising alternative, but simply running models inside TEEs is insufficient as the models can still leak sensitive inputs through their outputs (§6). We propose trusted model environments (TME), which execute generative models inside TEEs while meeting the following requirements: (i) effective 
+
+(correctly performs the semantic task); (ii) confidential 
+
+(protects computation and sensitive inputs) 1; (iii) utility-p-reserving (retains utility on other tasks); (iv) verifiable 
+
+(provides tamper-resistant evidence of the computations); (v) efficient (incurs low overhead compared to baseline model computations); and (vi) scalable (supports multiple parties). Effectiveness is inherited from the generative models while TEEs provide confidential computation. However, to ensure  
+
+> 1Terminology: We treat computation and sensitive-input confidentiality sepa-rately under a unified “confidentiality” requirement. While other definitions are possible, we define sensitive-input confidentiality as preventing sensitive inputs from appearing in outputs, following prior work on personally identifiable information leakage in LLMs [30]. arXiv:2609.30032v1 [cs.CR] 24 Sep 2026
+
+confidentiality of sensitive inputs, we adapt latent adversarial training (LAT) [31] to suppress verbatim leakage of sensi-tive inputs while preserving the model’s effectiveness and utility. To mitigate semantic leakage caused by paraphrasing sensitive inputs in the output, an information flow control (IFC) module monitors outputs and paraphrases those flagged as containing sensitive information. Additionally, due to the lack of transparency into TME, parties may wish to verify the computations on their data. For this, we build on remote attestation of TEEs and propose novel attestations for various TME operations. We additionally introduce batching and amortization to improve efficiency and support multiple parties. We claim the following contributions: 1) identify the requirements for an ideal private semantic computation primitive, and highlight the limitations of existing approaches; (§3) 2) present trusted model environments (TME), the first design and implementation of such a primitive supporting structured and unstructured data across modalities; (§4) 3) demonstrate TME on the three applications 2, show-ing that TME is effective (close to the base model), 
+
+confidential (negligible verbatim and semantic leakage), 
+
+utility-preserving (drop < 6pp), and efficiently supports 
+
+verifiability across multiple parties (§5 and §6). 
+
+## 2. Background 
+
+Cryptographic Primitives: We describe three cryptographic primitives, which will inform the applications to demonstrate our primitive (§3).  
+
+> •
+
+Private Function Computation: In secure multi-party computation , the parties jointly compute a function f over their private inputs without revealing anything beyond the output [3], [4]. In homomorphic encryption , party-1 encrypts the private input x while party-2 evaluates 
+
+f on the ciphertext, and only party-1 can decrypt the result [2]. In functional encryption , party-2 receives a function-specific secret key that enables it to learn only 
+
+f (x) from party-1’s ciphertext, revealing nothing else about x [1]. These primitives differ in who performs the computation and who learns the output.  
+
+> •
+
+Private Set Intersection: Two parties each hold a private set of elements and wish to jointly compute the intersection such that (at least) one party learns the intersection, while neither party learns anything about the set elements [8]. Private record linkage extends this to structured records by identifying records that refer to the same real-world entity using approximate (fuzzy) matching. Unlike exact set intersection, this tolerates noisy or inconsistently formatted data while revealing only the matched records [9], [10].  
+
+> •
+
+Private Database Retrieval: An untrusted server hosts a private database of documents, and various parties can query the server to retrieve the relevant entries. While encryption hides the records’ contents, the access pattern 
+
+(which entries each query accesses) can still leak sensitive information about both the query and the data. Oblivious 
+
+> 2Code will be open-sourced upon publication.
+
+RAM allows querying the private database without reveal-ing the access pattern of the records being retrieved [6], [7]. This differs from private information retrieval [5], where a client retrieves an entry from a server-held (often public, read-only) database without the server learning which one. 
+
+Trusted Execution Environments (TEEs): TEEs provide an environment in which security-critical code (trusted applications or TAs) can run without outside interference (e.g., untrusted operating system and software). TEEs have three main properties: isolation and protected memory for confidentiality and integrity, and remote attestation [32].  
+
+> •
+
+Isolation is the inability of outside software to read or write a TA. TEEs provide strong isolation between trusted and untrusted components. Thus, code and data in the TEE are protected from external software, and access is limited to well-defined interfaces.  
+
+> •
+
+Protected memory is the encrypted and integrity-protected memory available to TAs, to ensure that sensitive data cannot be read or modified by untrusted components.  
+
+> •
+
+Remote attestation allows a prover to convince a verifier that a specific program is running inside a genuine TEE. The TEE computes a measurement and produces an at-testation σ = Sign sk TEE (Hash (Code ), nonce ), where sk TEE 
+
+is a hardware-protected secret attestation key for signing, and nonce is a fresh random challenge chosen by the verifier for each attestation request, whose inclusion proves the attestation was generated for the current request, and prevents replay of an old one. The verifier checks whether 
+
+Verify pk TEE (σ, Hash (Code ), nonce ) = 1 , where pk TEE is the public key. This ensures authenticity (genuine TEE) and integrity (attests correct code execution). Examples of TEEs include Intel SGX, Intel TDX (supports GPUs), and AMD SEV. Recent advances in TEEs, including hardware acceleration of matrix multiplication for generative models with GPU support, enable efficient execution while retaining TEE guarantees. These capabilities are readily avail-able through major cloud providers such as Google Cloud, Microsoft Azure, and Amazon Web Services. Together, they make it practical to run large generative models inside TEEs. We discuss TEE side-channel attacks in §7. 
+
+Generative Models: A generative model is a function f
+
+that maps an input x to an output y ← f (x). Depending on the model type, both x and y may be text, images, or a combination of the two. We focus on LLMs, which have demonstrated remarkable utility in natural language understanding, reasoning, and text generation by scaling transformer-based architectures and training on massive text corpora. LLMs support efficient modeling of long-range dependencies, while increasing model and data size improves utility on downstream tasks [11], [12]. We use LLMs for our evaluation (§6), and discuss other modalities (§7). 
+
+## 3. Problem Statement 
+
+Our goal is to design a private computation primitive which enables semantic computations on structured and unstructured data. 3.1. Threat Model 
+
+We consider a general setting for semantic computation ,in which multiple parties wish to evaluate semantic functions or queries over privately held data containing sensitive information (e.g., personally identifiable information such as race and occupation) as defined by the data owners, whether supplied directly as one party’s inputs or stored in a database. The goal is to furnish the correct responses to the queries from various parties without revealing sensitive information (e.g., parties’ sensitive inputs containing personally iden-tifiable information such as race or address), even under adversarial queries. The computations are executed on an untrusted server. As the parties do not trust the server or one another, the sensitive inputs, intermediate computation, and outputs must be protected. We assume that the server runs a TEE that is trusted by all parties, while all software outside the TEE (e.g., operating system, hypervisor, and other applications) is untrusted. Through remote attestation, parties can verify that the expected code runs unmodified on genuine TEE hardware, without trusting the server. The parties trust the hardware manufacturer (e.g., Intel or Nvidia), and any attestation signed using their attestation key is trusted. Side-channel attacks against TEEs are outside our scope (discussed in §7). We assume that one or more parties can be (a) an honest-but-curious adversary , who follows the protocol correctly but attempts to infer additional information about other parties’ sensitive inputs from the messages observed during execution; or (b) a malicious adversary , who may deviate from the protocol to compromise privacy or correctness by sending malformed messages or using adversarial queries. We assume that the adversary knows the defense and uses the feedback from the target model to optimize subsequent attacks and queries (or “adaptive adversaries”; see Appendix E). This is a worst-case robustness evaluation as the defenses optimized against such attacks should withstand weaker attacks seen in practice. 
+
+3.2. Illustrative Applications 
+
+We discuss three illustrative applications: (i) computing a semantic function specified by some parties over another party’s private input (PSFC), (ii) computing the semantic intersection of several parties’ private sets (PSSP), and (iii) semantically retrieving records from a private database of documents based on queries (PSDR).  
+
+> •
+
+Private Semantic Function Computation (PSFC): Alice holds a private input x (e.g., a document), part of which includes sensitive inputs, and N mutually distrusting parties each hold a private function fi they wish to evaluate over x. Party i (̸ =Alice) should learn fi(x) and not the sensitive inputs. Private function computation primitives (§2) express f as an arithmetic or Boolean circuit and are thus confined to predicates such as comparison, threshold, or exact match. Here, we instead instantiate each fi
+
+as a free-text reading-comprehension question (semantic, open-ended, and not reducible to such a circuit) while evaluating the effectiveness by comparing the responses with benchmark ground truth answers. 
+
+Example: Alice’s document reads: “ The Old English dialects took shape as the early kingdoms settled. Northum-bria lay south of the Tyne, and Mercia held the midlands, until both were overrun by Vikings in the ninth century. Only Early West Saxon survived as a literary standard, and under it much religious writing was translated from Latin into the vernacular. ”
+
+– Sensitive Inputs: Tyne , Mercia , and Early West Saxon .
+
+– Query : “ From what language was literature translated into West Saxon? ” → “Latin ”. 
+
+– Query : “ In which century did the Viking conquest occur? ” → “Ninth century ”.  
+
+> •
+
+Private Semantic Set Processing (PSSP): Consider N
+
+mutually distrusting parties, each holding a private set 
+
+Si of records (e.g., documents or images). Every party should learn only the semantic categories across the sets and nothing more (without revealing the sets held by the parties). Standard private set intersection primitives (§2) compute the intersection of sets of exact elements or close approximations (fuzzy-intersection primitives), and cannot match records by meaning. Here, the output is inferred from the semantics underlying various set elements, not reducible to exact-element equality. 
+
+Example: Sets include various prescribed drugs, and a query: “ Which drug classes do all parties prescribe that share a bleeding-risk contraindication? ”
+
+– Sets: Alice = {warfarin, aspirin }; Bob = {clopidogrel, naproxen }; Charlie = {heparin, diclofenac }.
+
+– Response: “Anticoagulants and NSAIDs ”.  
+
+> •
+
+Private Semantic Database Retrieval (PSDR): Alice holds a private database of Ndb records (e.g., text passages or images), and N parties each hold a private query qj whose answer lies in some subset of the records. Party j should learn only the answer to qj , and the untrusted server observing the computation should learn nothing more about the private database (i.e., no access pattern leakage) or qj . Private database retrieval primitives (§2) hide the access pattern and the query index, but retrieve records by position or exact keyword/similarity match, and return the records themselves rather than an answer. Here, we instead instantiate each qj as a free-text semantic query answered over the records (open-ended queries whose responses are distilled from the database records, not reducible to an index or similarity lookup). For instance, consider the PSFC example above, where Alice’s document is now one of many records in the database. Given a query, the goal is to identify the closest document and distill the answer from it, without revealing the access pattern or the sensitive inputs in the documents. We want the outputs not to disclose sensitive inputs (i.e., sets) while correctly responding to task-specific queries. 
+
+3.3. Limitations of Related Work 
+
+We discuss some possible primitives to realize private semantic computation, and their limitations. Standard cryptographic primitives operate on structured data covering specific data types (e.g., fixed-length numeric vectors and matrices, integers and finite-field elements for arithmetic circuits, Booleans or keyword sets). Thus, these primitives are not directly applicable to the wide range of semantic computation on unstructured data. Extensions of these primitives that support private computation based on metadata or record similarity have been proposed [33]–[40]. However, their high overheads limit practical deployment, and they cannot directly support the semantic computations required in our applications (§3.2). 
+
+Generative models (e.g., LLMs) are highly effective at semantic computation, powering chatbots [41]–[43], retrieval-augmented generation (RAG) [44], and autonomous agents [45], [46]. However, state-of-the-art open-weight models provide no confidentiality of the computation. Ad-ditionally, by default, the models can be forced to reveal sensitive inputs, requiring defenses tailored to our settings. 
+
+Private inference of generative models (e.g., LLMs) can enable semantic computation with confidentiality, using primitives such as secure multi-party computation, zero-knowledge proofs, and homomorphic encryption [15]–[23], [47]. However, the reported overheads for cryptographic private inference are in the hundreds of seconds per token, which is expensive. Several frameworks use cryptographic primitives for privacy-preserving RAG (a problem similar to PSDR) [48]–[50], but incur a high overhead. 
+
+Other related work includes πCreds [51], which is a privacy-preserving decentralized verifiable credential system that runs LLM inference inside a TEE over authenticated unstructured data to enable semantic claims. It targets a different use case , and does not support the applications we want to explore (PSFC, PSSP, and PSDR; §3.2). Finally, the closest related work is by Shumailov et al. [52], who propose trusted capable model environments by running LLMs inside TEEs and indicate the need for attestation and model robustness. While conceptually similar, their work describes the idea and its potential, but does not specify concrete details for realizing them. We are the first to design and implement the necessary components to realize such a primitive. 
+
+Summary: Existing approaches have several limitations, and cannot directly be used to realize the primitive. 
+
+## 4. Trusted Model Environment 
+
+We propose trusted model environments (TME), a class of private semantic computation primitives. TME runs gen-erative models inside TEEs for computational confidentiality and verifiability, with additional proposed components for sensitive-input confidentiality, and optimizations for efficient, scalable verification across multiple verifiers. We want to design and evaluate TME according to the following requirements: (R1) effective (correctly performs the semantic task); (R2) confidential (protects computation and sensitive inputs); (R3) utility-preserving (retains utility on other tasks); 
+
+(R4) verifiable (provides tamper-resistant evidence of the computations); (R5) efficient (incurs low overhead com-pared to baseline model computations); and (R6) scalable 
+
+(supports multiple parties). The design choices for TME are based on how we can meet all the above requirements, which are specific to our TEE-based implementation. We summarize and compare limitations of various prim-itives in Table 1. We compare cryptographic primitives (“Crypto”), generative models (“Gen. Model”), and private inference using cryptographic primitives or TEEs (“Private Inf.”). Compared to prior mechanisms, TME meets all the requirements. We first present the implementation of TME across three applications as a proof of concept (§4.1), followed by its components (§4.2 and §4.3). TABLE 1: Limitations of Existing Mechanisms: ✓ for satisfied, ✗ for not satisfied, and ∼ for partially satisfied. Only TME satisfies all the requirements.                          
+
+> Mechanism (R1) Effect. (R2) Confid. (R3) Utility (R4) Verif. (R5) Effic. (R6) Scal. Crypto ✗∼✓✓✗✗
+> Gen. Model ✓✗✓✗✓✓
+> Private Inf. ✓∼✓✓✗✗
+> TME ✓✓✓✓✓✓
+
+4.1. Overview: TME for Illustrative Applications 
+
+Figure 1 shows the three example applications and the various components. We describe each of them below:  
+
+> •
+
+PSFC (Figure 1a): ❶ A party submits its private input to TME. ❷ Other parties submit queries specifying the functions to compute on this input. The input is processed by a model trained with LAT to suppress verbatim secret leakage under adversarial queries. ❸ The model output is passed to a monitor that detects residual leakage, and ❹
+
+only the sanitized output is released.  
+
+> •
+
+PSSP (Figure 1b): ❶ A system prompt specifies the semantic query for computing the intersection of multiple parties’ private sets. ❷ Each party submits its text or image set to TME, where the robust model computes the semantic intersection according to the system prompt. ❸ The model output is processed by the monitor and paraphraser to prevent disclosure of sensitive inputs, and ❹ the sanitized output is returned to the parties.  
+
+> •
+
+PSDR (Figure 1c): ❶ A private database within TME stores sensitive documents. ❷ Parties submit queries to retrieve information from relevant records in the database. 
+
+❸, ❹ Instead of retrieving similar records to the query (leaks access patterns), the model processes each record once in a carousel (see §4.3), incrementally updating a query-specific note. Only relevant records contribute to the notes, which the model then uses to generate the final output. ❺ The model output is checked by the monitor for leakage, and ❻ the sanitized output is released. The parties submit their private inputs over encrypted chan-nels; the untrusted server forwards only ciphertexts, which are decrypted inside the enclave. Model (LLM) Monitor + Paraphraser        
+
+> (Information Flow Control Module)
+> Measurer Script Measurer Script
+> Trusted Model Environment (TME)
+> Intel Trust Domain running Guest OS
+> 3TDX Module H100 GPU Untrusted Server Private Input (Party 1)
+> “Each of these dialects was [. . . ] Northumbria south of the
+> Tyne , and Mercia , were overrun by Vikings [. . . ] Early West Saxon [. . . ] translated from Latin.”
+> Sensitive Inputs = [‘Tyne’, ‘Mercia’, ‘Early West Saxon’]
+> 1Private Input
+> From what language was literature translated into West Saxon?
+> Party 2 Parties 3, . . . , N
+
+· · · (may be adversarial)  
+
+> 24
+
+(a) Private Semantic Function Computation       
+
+> Model (LLM) Monitor + Paraphraser
+> (Information Flow Control Module)
+> Trusted Model Environment (TME)
+> Intel Trust Domain running Guest OS
+> Measurer Script Measurer Script
+> 3TDX Module H100 GPU Untrusted Server System Prompt “Which drug classes do all three prescribe that share a bleeding-risk contraindication?”
+> 1
+> {warfarin . . . }
+> Party A
+> {clopidogrel . . . }
+> Party B
+> {heparin . . . }
+> Party C 2
+> intersection = “anticoagulants + NSAIDs”
+> Output (broadcast to all parties) 4
+
+(b) Private Semantic Set Processing       
+
+> Model (LLM) Monitor + Paraphraser
+> (Information Flow Control Module)
+> Private Database
+> (docs w/ sensitive inputs)
+> Carousel
+> Measurer Script
+> 34Trusted Model Environment (TME)
+> Intel Trust Domain running Guest OS
+> Measurer Script Measurer Script
+> 5TDX Module H100 GPU Untrusted Server Private Document
+> “Each of these dialects was [. . . ] Northumbria south of the Tyne ,and Mercia , were overrun by Vikings [. . . ] Early West Saxon
+> [. . . ] translated from Latin.”
+> Sensitive Inputs = [‘Tyne’, ‘Mercia’, ‘Early West Saxon’]
+> 1
+> From what language was literature translated into West Saxon?
+> Party 1 Parties 2, . . . , N
+
+· · · (may be adversarial)  
+
+> 26
+
+(c) Private Semantic Database Retrieval 
+
+Figure 1: Overview of Illustrative Applications: (a) PSFC for privately evaluating functions on sensitive inputs and functions; (b) PSSP for jointly evaluating semantic queries over private sets without revealing individual elements; and (c) 
+
+PSDR for privately querying databases without exposing sensitive records. 
+
+4.2. Components of TME (PSFC and PSSP) 
+
+We discuss the TME components with a focus on realiz-ing PSFC and PSSP, as they share the same components. We then describe the additional components required to realize PSDR in §4.3. Our design builds on TEEs, which support efficient private inference of generative models [24], [26]– [28] and can extend remote attestation to efficiently verify TEE operations at scale [25], [29]. However, TEEs do not prevent sensitive inputs from leaking through model outputs, particularly under adversarial queries. Thus, private inference alone is insufficient for private semantic computation. We use this as the baseline (referred to as “Base Model” in §6) to highlight how TME addresses these limitations and satisfies all requirements. 
+
+(R1) Effective, (R2) Confidential (Inputs), and (R3) Utility: TME inherits its effectiveness from the underlying generative model. However, to protect against adversarial queries, TME includes additional components: 
+
+• Protection against Verbatim Leakage: Given the model 
+
+M, a private input x, and PII (x) the sensitive tokens of x
+
+(determined by the data owner) that the output must not reveal, the adversary seeks a query q⋆(x) that maximizes disclosure of PII (x) in the output, 
+
+q⋆(x) ∈ arg max 
+
+q ∈ Q Ey∼M (·| x,q )
+
+Lleak 
+
+ y, PII (x) ,
+
+where Lleak ∈ [0 , 1] scores how much of PII (x) the output 
+
+y discloses ( 0 if none, 1 if all), and Q is the space of queries that still appear benign to a naive input filter. We instantiate this objective using state-of-the-art adversarial query generation methods such as AutoDAN [53] and many-shot [54], optimizing each query against Lleak to elicit PII (x). This yields a conservative evaluation of TME, as the adversary knows the sensitive spans and optimizes directly for them, making it stronger than an adversary that must first discover them. We use LAT, which trains against worst-case perturbations of the model’s hidden activations to resist adversarial queries [31]. An inner adversary perturbs a hidden state h at a chosen layer by 
+
+δ within an ϵ-ball to elicit PII (x), and the outer objective trains θ to be robust to the worst-case perturbation, 
+
+min 
+
+θ E
+
+h
+
+max 
+
+∥δ∥≤ ϵ − log  1 − Pθ (PII (x) | x, q ; h ← h + δ)i
+
++ β EKL( Pθ ∥Pθ0 )
+
+where Pθ (PII (x) | · ) is the probability the output discloses any of PII (x); the first term suppresses that probability under the worst-case perturbation, and the KL term an-chors the model to its base behavior θ0 for utility. We train only lightweight adapters (e.g., LoRA), leaving the base weights frozen, and perform extensive grid-search-based hyperparameter tuning to balance confidentiality, effectiveness, and utility. 
+
+• Protection against Semantic Leakage: Despite suppress-ing verbatim leakage, an adversary may force the model to paraphrase secrets indirectly and evade LAT. To address this, the Information Flow Control (IFC) module checks every M output using two LLMs: a monitor Mmon that detects residual leakage and a paraphraser Mpara that removes it. If the monitor finds no leakage, the output is released unchanged; otherwise, Mpara rewrites the original output by removing the protected item, indirect descriptions, relationships, and other unnecessary content while preserving the answer. Both effectiveness (R1) and confidentiality (R2) trade off against utility (R3) : LAT modifies the model, and the paraphraser rewrites flagged outputs. We contain the former through the KL loss term, which minimizes the difference from the base model, and the latter by releasing unflagged outputs unchanged and preserving the answer otherwise. 
+
+(R2) Confidential (Computation): TME inherits its compu-tation confidentiality from the TEE: the model, inputs, and outputs reside inside the enclave, whose memory encryption and isolation ensure that the untrusted server cannot read its contents. However, there is a potential timing side channel as the autoregressive decoding time in LLMs grows with the number of emitted tokens, so the length of a response is observable via timing and can leak properties of the private inputs (e.g., size of the intersection in PSSP). We close this channel by having every task inference decode a fixed token budget: the model emits its answer and then pads to the fixed length, so the decoding time is independent of the answer. The padding is removed before the answers are scored and thus does not impact effectiveness or utility. However, TEE-specific side channels are possible (see §7). 
+
+(R4) Verifiable: TME relies on the TEE’s integrity guar-antees and remote attestation to support verifiability. For TME operations, attestations bind their inputs and outputs: 
+
+σ = Sign sk TEE 
+
+ Hash (·), nonce . Private inputs/outputs are included as hashes and their plaintext never leaves the enclave. We define the following attestations, whose complete descriptions are in Appendix C:  
+
+> •
+
+Model Measurement: TME hashes the model weights and emits σM = Sign sk TEE (Hash (weights ), nonce ), certifying which model (the base model along with the robust adapter) was executed inside TME.  
+
+> •
+
+Input Commitment: Each private input is committed as σin = Sign sk TEE (Hash (input ), nonce ), fixing the exact private input that was used during the computation while keeping its content hidden. Committing memory-mapped data introduces no time-of-check-to-time-of-use gap: the hash is computed over the copy of the input residing in enclave-protected memory. Similar to prior work [25], data too large to be resident is instead verified against the committed digest at access time, so post-commitment modification is detected on use.  
+
+> •
+
+Proof of Inference: For M’s inference, we bind the input queries and the output to M: σinf =
+
+Sign sk TEE (Hash (π, σ in , σ M, output ), nonce ). This attesta-tion certifies that the committed model, on the committed inputs under a system prompt π, produced this output. Additionally, the IFC module contains two LLMs: a monitor Mmon , and a paraphraser Mpara , whose infer-ences are attested separately. For Mmon ’s prediction of whether M’s output contains sensitive inputs, we have 
+
+σmon = Sign sk TEE (Hash (Mmon , σ inf , verdict ), nonce ). For 
+
+Mpara ’s rewrite of the flagged text from Mmon , we have 
+
+σpar = Sign sk TEE (Hash (Mpara , σ inf , rewrite ), nonce ). Each IFC module inference is separately attested, binding each model to its inputs and outputs. Each TME computation is attested by the same measurement script: after the computation completes, it hashes the compu-tation’s inputs and outputs inside the enclave and signs them. The attestations thus differ only in the values they bind, not in the mechanism. 
+
+Verification: A verifier (either the parties or an external veri-fier such as a regulator) checks the signature and recomputes the hashes to confirm that the attested model weights, inputs, and IFC policy produced the claimed output. Specifically, a verifier can check the attestation signature against the platform certificate chain (rooted in Intel DCAP and NVIDIA NRAS), confirm that the nonce matches the verifier-issued session nonce to prevent replay, and recompute and compare the hashes. For inputs accessible to the verifier, such as its query and released output, hashes can be recomputed and compared with the attestation to confirm its execution inside TME. For private inputs, such as the system prompt π or database, we assume the owner publishes a commitment against which the attested hashes can be checked. 
+
+(R5) Efficient and (R6) Scalable: The various components for TME incur an additional overhead compared to the baseline of a base model running inside TEEs (without any input confidentiality). In addition to the overhead to run these additional components, we also incur a cost for attestations. Naively, attestation is expensive: a hardware attestation is a system call, and issuing one per party, per record, and per inference would dominate the overhead and scale poorly with the number of parties. TME reduces this cost with the following optimizations (see Appendix F for overheads):  
+
+> •
+
+Merkle-tree Batching: The expensive step is the hard-ware attestation, so issuing one per party scales poorly. Instead, each party’s (function , output ) is hashed into a 
+
+leaf , and the leaves form a Merkle tree whose root is covered by a single hardware attestation. For example, with four parties and leaves LA, L B , L C , L D, where Li
+
+hashes party i’s function and output, the enclave signs 
+
+root = Hash (Hash (LA, L B ), Hash (LC , L D )) with one attestation. Party C receives LC , LD , and Hash (LA, L B ),allowing it to recompute and verify the signed root without learning the other parties’ inputs or outputs. Thus, one attes-tation covers the entire batch, reducing per-party attestation cost as the batch grows. This amortizes the attestation 
+
+cost and complements the batch-level optimization below, which amortizes the computation cost. Confidentiality is preserved as a party sees only the O(log N ) sibling digests on its authentication path, which are opaque and, with salted leaves, reveal nothing about the committed values; the full tree is never disclosed, and only the root enters the hardware attestation.  
+
+> •
+
+Batch-level Amortization: Batching queries amortizes expensive attestations across parties: a single inference and IFC module run attests all queries in a batch, while only lightweight per-party input commitments scale with the number of parties. Thus, per-party overhead decreases with batch size.  
+
+> •
+
+In-TEE Signing Key: Instead of generating an expensive hardware attestation each time, we generate an in-memory signing key pair inside the TEE and attest it once. Each subsequent attestation can use that key instead of the hardware attestation, which is significantly cheaper (§6).  
+
+> •
+
+One-time Model Measurement: The model weights are hashed once at startup and reused across all inferences rather than re-measured per query. Also, the attestation stack is initialized before processing the queries to ensure that the first request does not incur a high overhead. 
+
+4.3. Additional TME Components for PSDR 
+
+In addition to the components described in §4.2, PSDR requires additional components to prevent access-pattern leakage during private database retrieval, described below. 
+
+(R2) Confidential (Access Pattern): We need an additional component to minimize access-pattern leakage when re-trieving different data records from the private database. Simply retrieving the top-k similar records, as done in RAG pipelines [44], reveals the access pattern. One option is to use oblivious RAM (ORAM) [6], [7], which hides memory-access patterns from an untrusted server but incurs poly-logarithmic overhead: Ω(log Ndb ) per access is inher-ent [6], while Path ORAM incurs O(log Ndb ) bandwidth overhead per access [7], making the N parties’ lookups cost O(N log Ndb ). Instead, inspired by Carousel [55], we continuously scan the dictionary (or a compact representa-tion) inside the TEE, giving every lookup the same data-independent trace. Each scan answers the N pending queries in O(Ndb +N ) time, or amortized O(Ndb /N ) per query. This trades per-query overhead for batch throughput and achieves 
+
+∼3.7K queries/s on a 226 -entry ( ≈67M) dictionary in Intel SGX, outperforming Path ORAM on the same hardware [55]. Thus, database membership checks reveal no access patterns. We adapt Carousel to TME for PSDR by scanning the 
+
+entire database in a fixed order, making the access pattern independent of which records are relevant. For each record, the model writes a short note containing only query-relevant information, from which the final answer is generated after the scan. Unlike the original Carousel design, our adaptation uses these notes to support private semantic retrieval. A malicious server cannot skip records because the entire private dataset resides in tamper-resistant TEE memory. 
+
+(R4) Verifiable: We present proof of oblivious access for the carousel by generating an attestation σobl =
+
+Sign sk TEE (Hash (scanned-records ), nonce ). This certifies that every database record was parsed, and the access pattern is data-independent. 
+
+## 5. Experiment Setup 
+
+We present an overview of the datasets, models, and metrics used for evaluation. For all the experiments, we report the mean and standard deviation across five runs. 
+
+Hardware Setup: We configure the Intel TDX with 32 vCPUs and 128 GB of memory, running Ubuntu 24.04.1 LTS with kernel version 6.8.0-86-generic. The host system is equipped with an Intel Xeon Silver 4514Y CPU, 512 GB of RAM, and an NVIDIA H100 NVL 94 GB GPU operating in confidential-computing mode. TME’s measurement and attestation components are implemented in Python. The implementation uses PyTorch, Intel Data Center Attestation Primitives (DCAP) for CPU attestation, and NVIDIA Remote Attestation Service (NRAS) for GPU attestation. 
+
+Datasets: We describe the datasets and splits across ap-plications (summarized in Table 2), and describe dataset construction in Appendix A.  
+
+> •
+
+(R1) Effectiveness / (R2) Confidentiality: We evaluate effectiveness and confidentiality on application-specific datasets. For PSFC, we use SQuADv2 [56], a reading-comprehension benchmark where each party submits a free-text question over a shared document ( 250 documents, 
+
+1,250 questions). For PSSP, we use DBpedia14 [57], where 250 Wikipedia abstracts labeled into 14 ontology classes serve as the parties’ private set elements. For PSDR, we use HotpotQA [58], a multi-hop question-answer benchmark in which the passages form the database and each party submits a free-text query ( 1,000 passages, 250 
+
+queries). Each dataset is split into 100 /50 /100 for train, validation (for hyperparameter tuning), and test splits. TABLE 2: Summary of datasets across the applications, and train-validation-test splits.                                                      
+
+> Requirement App. Dataset Records Split (tr. / val / te.) (R1) Effective (R2) Confidential
+> PSFC SQuADv2 [56] 250 documents (1250 questions) 100 /50 /100
+> PSSP DBpedia14 [57] 250 documents (14 classes) 100 /50 /100
+> PSDR HotpotQA [58] 1,000 passages (250 queries) 100 /50 /100
+> (R3) Utility All MMLU [59] 200 questions 100 /-/100
+> CSQA [60] 200 questions 100 /-/100
+> •
+
+(R3) Utility: We measure utility on two standard multiple-choice benchmarks that are shared across all three ap-plications: MMLU [59] covering academic/professional knowledge questions with four options per question; and 
+
+CommonsenseQA (CSQA) [60] covering commonsense reasoning questions with five options per question. We use 100 records during LAT to improve utility, and 100 
+
+records for testing. For confidentiality of sensitive inputs (R2) , since none of the datasets provides annotations of sensitive inputs, we use Microsoft Presidio to extract entities as ground-truth 
+
+PII (x) (Appendix A). We assume these sensitive inputs are predefined as part of the information-flow policy. Runtime extraction of sensitive inputs is future work, and can be sup-ported by integrating an additional name-entity recognition model into TME, and attesting its inference. 
+
+Models: All applications run open-weight, instruction-tuned language models locally inside the TEE. We evaluate three models of comparable scale ( 7–9B) drawn from three differ-ent vendors and architecture families: Ministral-8B [61], 
+
+gemma-2-9b [62], and OLMo-2-7B [63]. The IFC mod-ule’s monitor and paraphraser are instantiated with a sep-arate model, Qwen3-8B [64], running in reasoning mode. 
+
+Qwen3-8B is deliberately drawn from a different vendor and architecture family than the three models it supervises, to prevent any evaluation bias. Additionally, we use an LLM as a detector since it is better at parsing and reasoning about text compared to traditional rule-based or language model-based classifiers. We discuss the extension to larger models in §7, and discuss the hyperparameters in Appendix B. 
+
+Evaluation Metrics: We define metrics for each requirement:  
+
+> •
+
+(R1) Effectiveness: Task accuracy against ground truth is scored deterministically. For PSFC and PSDR the output is free text, so we report the token-level F1 score, which is the harmonic mean of precision and recall over the bag of tokens shared between the predicted and gold answers, after normalizing case, punctuation, and articles. F1 scores better capture small but acceptable differences between the output and ground truth that exact-match metrics may miss. For PSSP, we report set-level F1 between the predicted and the true intersection, after mapping each predicted free-text category to its nearest ontology label so that matching is semantic rather than exact-string. All metrics lie in [0 , 1] ,with 1 indicating a ground-truth match and 0 a refusal.  
+
+> •
+
+(R2) Confidentiality (Computation): For PSDR, we measure access-pattern leakage, i.e., how much an observer can infer about the records relevant to a query from the records accessed. Specifically, we ask if an observer sees only the accessed records, how likely are they to correctly identify a relevant (target) record? We estimate this by guessing among the accessed records and report the fraction of guesses that correspond to target records. The metric ranges from 0 to 1, where 0 means no useful information is revealed and 1 means the access pattern reveals the target exactly. We compare a standard top-k
+
+retrieval baseline, which accesses k most similar records, with our carousel, which scans the entire database in the same order for every query. For PSDR, we consider timing and access-pattern leakage, following ORAM literature, but other side channels, such as per-record note lengths, may remain. These can be mitigated with padding, similar to our fixed-output padding for content-dependent timing (§4.2); these are left as future work. 
+
+(R2) Confidentiality (Sensitive Inputs): We quantify this using the attack success rate (ASR): the fraction of released outputs that disclose sensitive inputs. ASR ranges from 0
+
+(no leakage) to 1 (complete leak); lower is better . ASR-Verbatim counts literal reproduction of sensitive inputs via string matching, while ASR-Semantic counts both literal and indirect disclosures (e.g., paraphrases, descriptions, or character-level encodings). For ASR-Semantic, we use a separate Qwen3-8B LLM judge that receives the query, output, and sensitive spans and returns YES/NO on whether the output reveals any sensitive inputs, including paraphrases, summaries, partial statements, translations, or light obfuscation. We use a different model family from those running the computation, to avoid evaluation bias. We evaluate both metrics under three conditions: 
+
+– Benign: We measure incidental leakage by ASR-Verbatim/-Semantic on standard task queries without adversarial content. 
+
+– Adversarial: We evaluate this by generating adversarial queries using the state-of-the-art AutoDAN [53] and 
+
+many-shot [54] techniques. 
+
+– Indirect: We evaluate this using queries that disclose sensitive inputs by describing or spelling them out. All metrics are evaluated before LAT, after LAT, and after IFC. While IFC can detect and prevent verbatim leakage, LAT suppresses many such cases upfront, reducing the need to invoke the monitor and paraphraser and thereby lowering IFC overhead (see below under (R5) and (R6) ).  
+
+> •
+
+(R3) Utility: We report the accuracy on two standard multiple-choice benchmarks, MMLU and CSQA , which are unrelated to the application task. Accuracy is from 0 to 
+
+1, with higher values indicating better utility. Random guessing yields 0.25 for MMLU (four options) and 0.20 for 
+
+CSQA (five options).  
+
+> •
+
+(R5) Efficiency and (R6) Scalability: Given the wide range of TEE-enabled machine learning services (e.g., AWS, Microsoft Azure, and Google Cloud), we use a single model inference in a TEE as the baseline and compare its overhead with that of TME. We evaluate and report efficiency and scalability for running different TME components (IFC module and attestations). 
+
+– Inference Overhead: With and without LAT, the in-ference overhead is the same, since the number of parameters and the computation are unchanged. Thus, using a single model inference inside a TEE as the baseline, we measure the additional overhead of IFC, including monitor inference for detecting leakage of sensitive inputs and paraphraser inference (with thinking enabled) for sanitizing flagged outputs. We evaluate the overhead with more parties for scalability. 
+
+– Carousel Overhead (for PSDR): Compared to retriev-ing the top-k most similar records, scanning the entire database adds overhead. We measure the overhead of the carousel relative to standard RAG operations while preventing access-pattern leakage. 
+
+– Attestation Overhead: We decompose the wall-clock time of each attested run as follows: (i) a baseline time 
+
+(TME execution inside the TEE), (ii) a measurement time (hashing inputs, outputs, and the model to bind the computation), and (iii) an attestation time (producing the attestation evidence). We separate measurement into a one-time offline model measurement (a single SHA-256 hash over the weights) that is amortized across all subsequent inferences, and a recurring per-inference overhead , which is the ratio of the measurement and attestation time over the baseline time. We also compare two attestation mechanisms: (i) hardware attestation ,which generates a TDX quote per payload, and (ii) in-TEE attestation , where a single hardware attestation certifies an in-TEE key that signs subsequent payloads (§4.2 under (R5) and (R6) ). We report scalability as the overhead with more parties. Remaining requirements (e.g., effectiveness, utility, and confidentiality) are inde-pendent of the number of participants. 
+
+Note on TEE Overhead: The above costs assume work-loads are already executed inside the TEE, and we report the cost added by TME. The additional overhead inside TEE compared to outside TEE, is not introduced by TME. Prior benchmarks report that these overheads are small, less than 7% [65]–[67], which is negligible compared with the orders-of-magnitude higher costs: MPC-based LLaMA-7B inference achieves only ∼ 3.3 × 10 −3 tokens/s (about five minutes per token) [19]; BumbleBee takes ∼ 8 minutes per LLaMA-7B token on CPUs [17]; THOR requires ∼ 10 
+
+minutes for a single 128-token BERT-base inference on a GPU [21]. Communication is similarly costly, reaching 
+
+∼ 285 GB for Iron and ∼ 60 GB for BOLT [15], [18]. 
+
+## 6. Evaluation 
+
+We evaluate effectiveness (R1) , confidentiality (R2) ,utility (R3) , efficiency (R5) , and scalability (R6) , across three applications: PSFC (§6.1), PSSP (§6.2), and PSDR (§6.3). We provide additional results in Appendix D and E. Across all applications, we expect our proof-of-concept (“+LAT+IFC”) to provide high input confidentiality (R2) relative to the “base model”. However, this comes with trade-offs in utility 
+
+(R3) and effectiveness (R1) , as well as overhead (R5) -(R6) .We therefore do not expect optimal utility, effectiveness, or overhead for various operations, and improving these trade-offs is left as future work. 
+
+6.1. Private Semantic Function Computation 
+
+Recall that in PSFC, TME holds one party’s private input, while other parties submit private queries specifying semantic functions over the input and receive the outputs. 
+
+(R1) Effectiveness and (R3) Utility: Ideally, we expect task effectiveness to remain high when applying the TME pipeline, which includes LAT and the IFC module, compared to using only the pretrained base model. We validate this by reporting token-F1 scores between model predictions and ground-truth responses from SQuADv2 (Table 3). All three base models achieve high effectiveness, which decreases after applying LAT because it degrades response quality and reduce token-F1. However, applying the IFC module, including the paraphraser, largely restores token-F1 to the base model level by removing unnecessary or malformed text. Overall, TME’s effectiveness is close to the base models. For (R3) , applying LAT degrades the utility compared to the base model. We measure this as the combined accuracy on MMLU and CSQA , comparing the base models with LAT and IFC applied (Table 3). We see a small drop in utility: 
+
+Ministral-8B with a 5.3 percentage-point drop (62.5% 
+
+→ 57.2%); gemma-2-9b with a 4.4 percentage-point drop (72.0% → 67.6%); and OLMo-2-7B with a 0.6 percentage-point drop (65.1% → 64.5%). Overall, applying TME retains utility within a few points of the base model. 
+
+(R2) Confidentiality: Ideally, TME should not leak sensitive inputs. We evaluate leakage under three settings: benign 
+
+queries for incidental leakage, adversarial queries generated using AutoDAN [53] and many-shot jailbreak [54], and 
+
+indirect queries designed to induce subtle embedding or paraphrasing of sensitive inputs in the output. We evaluate the impact of LAT against adversarial queries and IFC against residual adversarial and indirect leakage across all three models (Table 4). Under benign queries, leakage is initially small and becomes negligible ( ∼0%) after LAT and IFC. For adversarial queries, LAT substantially reduces leakage, TABLE 3: (PSFC) Effectiveness (R1) and Utility (R3): 
+
+TME, which includes LAT and IFC, maintains effectiveness close to the base model with a small utility drop.                            
+
+> Model Metric Stage Value (R1) Effectiveness
+> Ministral-8B Token-F1 Base Model 0.637 ±0.019 +LAT 0.563 ±0.194 +LAT+IFC 0.624 ±0.149
+> gemma-2-9b Token-F1 Base Model 0.813 ±0.011 +LAT 0.791 ±0.058 +LAT+IFC 0.804 ±0.048
+> OLMo-2-7B Token-F1 Base Model 0.731 ±0.008 +LAT 0.681 ±0.063 +LAT+IFC 0.714 ±0.054
+> (R3) Utility
+> Ministral-8B Accuracy Base Model 0.625 ±0.000 +LAT+IFC 0.572 ±0.095
+> gemma-2-9b Accuracy Base Model 0.720 ±0.000 +LAT+IFC 0.676 ±0.022
+> OLMo-2-7B Accuracy Base Model 0.651 ±0.000 +LAT+IFC 0.645 ±0.019
+
+TABLE 4: (PSFC) Confidentiality (R2): Both ASR-Verbatim and ASR-Semantic decrease with LAT and IFC across benign, adversarial, and indirect.                                                           
+
+> Model Stage Benign Adversarial Indirect ASR-Verbatim
+> Ministral-8B
+> Base Model 0.01 ±0.01 1.00 ±0.00 0.54 ±0.03
+> +LAT 0.09 ±0.08 0.18 ±0.16 0.18 ±0.14
+> +LAT +IFC 0.01 ±0.02 0.01 ±0.02 0.01 ±0.01
+> gemma-2-9b
+> Base Model 0.02 ±0.01 1.00 ±0.00 0.22 ±0.02
+> +LAT 0.05 ±0.03 0.11 ±0.08 0.33 ±0.27
+> +LAT +IFC 0.00 ±0.00 0.01 ±0.01 0.05 ±0.07
+> OLMo-2-7B
+> Base Model 0.00 ±0.00 0.57 ±0.05 0.63 ±0.03
+> +LAT 0.06 ±0.02 0.16 ±0.09 0.14 ±0.09
+> +LAT +IFC 0.00 ±0.00 0.01 ±0.01 0.01 ±0.01
+> ASR-Semantic
+> Ministral-8B
+> Base Model 0.01 ±0.01 1.00 ±0.00 0.64 ±0.02
+> +LAT 0.12 ±0.09 0.20 ±0.15 0.21 ±0.13
+> +LAT +IFC 0.02 ±0.02 0.03 ±0.03 0.02 ±0.01
+> gemma-2-9b
+> Base Model 0.02 ±0.01 1.00 ±0.00 0.49 ±0.05
+> +LAT 0.06 ±0.03 0.12 ±0.09 0.34 ±0.27
+> +LAT +IFC 0.00 ±0.01 0.01 ±0.01 0.05 ±0.07
+> OLMo-2-7B
+> Base Model 0.00 ±0.00 0.59 ±0.05 0.66 ±0.02
+> +LAT 0.09 ±0.03 0.21 ±0.11 0.19 ±0.11
+> +LAT +IFC 0.01 ±0.01 0.02 ±0.02 0.03 ±0.03
+
+with IFC suppressing the remaining leakage to ∼0%. For indirect queries, leakage generally decreases after LAT and IFC, although LAT can occasionally increase it, illustrating an unintended interaction between adversarial robustness and indirect leakage [68]. Here, IFC successfully suppresses this residual leakage. Overall, TME reduces leakage of sensitive inputs to negligible levels. 
+
+(R5) Efficiency and (R6) Scalability: For PSFC, we present the IFC and attestation overheads below: • Inference Overhead: A single model inference for a PSFC query takes 1.9s for Ministral-8B , 3.2s for 
+
+gemma-2-9b , and 2.2s for OLMo-2-7B . The IFC mod-ule additionally checks each answer with the monitor (8.6s) and invokes a paraphraser (29.4s) only when leakage is detected. Thus, clean answers incur 10.5–11.8s per inference, while paraphrasing takes about 40–41s. Batching records from multiple parties improves scalability: base inference latency remains near 2s as the batch size increases from 1 to 8, reducing per-query latency from 1.9s to 262ms. The IFC module’s latency remains near 62s from batch sizes 1 to 4, reducing per-query latency from 60s to 16s. Thus, batching the IFC module’s checks across parties reduces per-party overhead toward 1/N . 
+
+> •
+
+Attestation Overhead: The one-time model measure-ment (Figure 2) scales with model size: 58 .4 ± 2.8s for 
+
+Ministral-8B , 65 .1 ± 5.6s for gemma-2-9b , and 
+
+59 .1 ± 4.6s for OLMo-2-7B . The largest model is the most expensive, while the two smaller models are similar. Hardware attestation adds 0.07 –0.13% overhead and falls 
+
+with N as the batch-level attestations amortize across parties ( 1.4–1.6× from N =2 to 6); the in-TEE attestation adds 0.003 –0.005% , roughly 24 × lower. Figure 2 shows this trend as N grows from 2 to 6: the batch-level Merkle-root attestation and the one-time model measurement are shared across N parties, so the per-party overhead decreases as 1/N and attestation becomes a smaller fraction of the total computation. 0.06 0.08 0.10 0.12 0.14          
+
+> Ministral-8B gemma-2-9b OLMo-2-7B
+> Hardware TDX quote
+> 23456
+> Number of parties N
+> 23456In-TEE signing key ×10 −3
+> Total Per-Inference Overhead (%)
+
+Figure 2: (PSFC) Efficiency (R5) and Scalability (R6): 
+
+Measurement + attestation as % of the baseline vs. N ;hardware (top) and in-TEE attestation (bottom). 
+
+Summary: TME enables PSFC while maintaining effec-tiveness (R1) , negligible leakage (R2) , small utility drop 
+
+(R3) , efficiency (R5) , and scalability (R6) .
+
+6.2. Private Semantic Set Processing 
+
+Recall that in PSSP, multiple parties share their private sets, which a model processes privately to execute a semantic query (specified as a system prompt) and release the output. 
+
+(R1) Effectiveness and (R3) Utility: Ideally, the semantic processing of the parties’ sets inside TME should not be degraded by LAT or the IFC module. We measure set-F1 between the predicted and ground-truth intersections in 
+
+DBpedia14 . As shown in Table 5, applying LAT leads to a small drop in set-F1 score for Ministral-8B and 
+
+OLMo-2-7B , which is recovered after applying the IFC module, whose paraphrasing removes unnecessary or mal-formed text introduced by LAT. However, gemma-2-9b 
+
+has a drop in effectiveness after LAT, which is harder to recover using the IFC module. Overall, we observe that the effectiveness is similar to the base model for two of the three models, with a drop for the third model. For (R3) , we now evaluate the impact on utility for the LLMs when applying the various components of TME, namely, LAT and IFC module. We report MMLU +CSQA 
+
+overall accuracy in Table 5. Relative to the base model, we observe that the utility drops by 2.1–4.7 percentage points across the three models: Ministral-8B with a 4.1 percentage-point drop (63.0% → 58.9%), gemma-2-9b 
+
+with a 4.7 percentage-point drop (72.0% → 67.3%), and 
+
+OLMo-2-7B with a 2.1 percentage-point drop (64.5% →
+
+62.4%). Overall, we observe a trade-off of utility on by applying LAT and IFC for better confidentiality. TABLE 5: (PSSP) Effectiveness (R1) and Utility (R3): 
+
+TME maintains effectiveness close to the base model (except 
+
+gemma-2-9b ), with a small utility drop.                            
+
+> Model Metric Stage Value (R1) Effectiveness
+> Ministral-8B Set-F1 Base Model 0.684 ±0.037 +LAT 0.668 ±0.058 +LAT+IFC 0.671 ±0.065
+> gemma-2-9b Set-F1 Base Model 0.778 ±0.035 +LAT 0.629 ±0.097 +LAT+IFC 0.638 ±0.111
+> OLMo-2-7B Set-F1 Base Model 0.684 ±0.039 +LAT 0.688 ±0.065 +LAT+IFC 0.689 ±0.066
+> (R3) Utility
+> Ministral-8B Accuracy Base Model 0.630 ±0.000 +LAT+IFC 0.589 ±0.068
+> gemma-2-9b Accuracy Base Model 0.720 ±0.000 +LAT+IFC 0.673 ±0.020
+> OLMo-2-7B Accuracy Base Model 0.645 ±0.000 +LAT+IFC 0.624 ±0.007
+
+(R2) Confidentiality: TME should reveal only the shared intersection, not private set elements, even under adversarial or indirect queries. The undefended model is expected to leak private information, while LAT and IFC should reduce residual leakage to near zero. We report ASR (both ASR-Verbatim and ASR-Semantic) in Table 6 over benign, adversarial, and indirect queries. As expected, the undefended model leaks private set elements under adversarial and TABLE 6: (PSSP) Confidentiality (R2): Both ASR-Verbatim and ASR-Semantic decrease with LAT and IFC across benign, adversarial, and indirect.                                                           
+
+> Model Stage Benign Adversarial Indirect ASR-Verbatim
+> Ministral-8B
+> Base Model 0.07 ±0.04 1.00 ±0.00 0.31 ±0.05
+> +LAT 0.09 ±0.05 0.09 ±0.06 0.10 ±0.05
+> +LAT +IFC 0.02 ±0.03 0.02 ±0.03 0.03 ±0.04
+> gemma-2-9b
+> Base Model 0.06 ±0.01 0.99 ±0.03 0.15 ±0.07
+> +LAT 0.09 ±0.02 0.13 ±0.04 0.14 ±0.04
+> +LAT +IFC 0.02 ±0.02 0.04 ±0.03 0.03 ±0.04
+> OLMo-2-7B
+> Base Model 0.21 ±0.05 0.49 ±0.09 0.64 ±0.06
+> +LAT 0.11 ±0.04 0.09 ±0.05 0.11 ±0.03
+> +LAT +IFC 0.04 ±0.05 0.03 ±0.02 0.04 ±0.03
+> ASR-Semantic
+> Ministral-8B
+> Base Model 0.07 ±0.04 1.00 ±0.00 0.31 ±0.05
+> +LAT 0.09 ±0.05 0.09 ±0.06 0.10 ±0.05
+> +LAT +IFC 0.02 ±0.03 0.02 ±0.03 0.03 ±0.04
+> gemma-2-9b
+> Base Model 0.06 ±0.01 0.99 ±0.03 0.15 ±0.07
+> +LAT 0.09 ±0.02 0.13 ±0.04 0.14 ±0.04
+> +LAT +IFC 0.02 ±0.02 0.04 ±0.03 0.03 ±0.04
+> OLMo-2-7B
+> Base Model 0.21 ±0.05 0.49 ±0.09 0.64 ±0.06
+> +LAT 0.11 ±0.04 0.09 ±0.05 0.11 ±0.03
+> +LAT +IFC 0.04 ±0.05 0.03 ±0.02 0.04 ±0.03
+
+indirect queries in all cases. LAT drastically reduces leakage, while IFC further suppresses residual leakage to negligible levels ( ∼0). Thus, TME protects against private-set leakage. 
+
+(R5) Efficiency and (R6) Scalability: We discuss the overheads of various TME components below:  
+
+> •
+
+Inference Overhead: PSSP benefits most from batching because it releases a single shared intersection rather than per-party answers. A single batched generation processes all N parties’ sets, keeping inference nearly flat in N . The IFC module also checks the released intersection only once, adding 8.6 s for monitoring and 29 .4 s for paraphrasing when flagged (same as PSFC). Thus, the total overhead is independent of N and the per-party overhead drops to 
+
+≈ 1/N . For instance, gemma-2-9b drops from 6.0 s at 
+
+N =2 to 2.0 s at N =6 . 
+
+> •
+
+Attestation Overhead: We hypothesize that end-to-end attestation of the batched intersection, including per-party set commitments, model inference, and IFC module, adds negligible overhead relative to computation. Across 
+
+N =2 –6 parties and all three models, hardware attestation adds only 0.05% –0.18% , while the in-TEE attestation adds 0.003% –0.014% (Figure 3), two to three orders of magnitude below computation. The overhead increases with N only because each additional party adds their set commitment, while the baseline costs in the denominator remain independent of N . Furthermore, the one-time model measurement is comparable to that for PSFC. Since the intersection is computed once for all parties, attestation is performed once for the entire batch, and the per-party attestation overhead decreases with more parties in the batch. Across the same N =2 –6 runs, per-party attestation overhead drops from 9.2–10 .9 ms to 6.1–6.6 ms 0.00 0.05 0.10 0.15 0.20 0.25          
+
+> Ministral-8B gemma-2-9b OLMo-2-7B
+> Hardware TDX quote
+> 23456
+> Number of parties N
+> 0510 15 20 In-TEE signing key ×10 −3
+> Total Per-Inference Overhead (%)
+
+Figure 3: (PSSP) Efficiency (R5) and Scalability (R6): 
+
+Measurement + attestation as % of the baseline vs. N ;hardware (top) and in-TEE attestation (bottom). (34–39%), while attestations per party fall from ∼ 2.3ms to ∼ 1.4ms. The in-TEE attestation is another 13 –18 ×
+
+cheaper, at 0.42 –0.62 ms per party. Thus, batching makes attestation progressively cheaper per party, confirming the expected amortization.  
+
+> •
+
+Impact of PSSP Set Size: Since PSSP attestation scales with the number of parties, not their set sizes, increasing a party’s set should add computation but no attestation overhead. We sweep S ∈ { 2, 4, 6, 8} at fixed N =3 across all three models. We find that the per-party attestation over-head using the in-TEE signing key remains small, within 
+
+7.2–8.5 ms, with around two attestations per party. Thus, the attestation overhead stays negligible and independent of the set size across all the models ( 0.06% –0.13% ). 
+
+Summary: TME enables PSSP with high effectiveness for two of three models (R1) , negligible leakage (R2) , and a small utility drop (R3) . Attestation and set-size overheads are minimal and scale well (R5) ; (R6) .
+
+6.3. Private Semantic Database Retrieval 
+
+Recall that in PSDR, TME stores the private database and, for each query, processes all records through the carousel, generating query-specific notes for each record before producing the final response for the requesting party. 
+
+(R1) Effectiveness and (R3) Utility: Ideally, TME should maintain effectiveness for PSDR after applying LAT and IFC. We evaluate this using token-F1 across the base model, LAT, and LAT+IFC on HotpotQA (Table 7). As in PSFC, in some cases, LAT reduces token-F1 due to degraded response quality, while the IFC paraphraser largely restores performance to the base-model level. Overall, TME is effective across different models compared to the base model. For (R3) , applying LAT and the IFC module as part of TME could degrade the utility on standard unrelated tasks. We report the overall accuracy on MMLU and CSQA across the three models (Table 7). We find that there is a small utility drop compared to the base models. Specifically, we see that Ministral-8B incurs a 3.1 percentage-point drop (63.0% → 59.9%), gemma-2-9b a 4.5 percentage-point drop (72.0% → 67.5%), and OLMo-2-7B a 2.4 percentage-point drop (64.5% → 62.1%). Overall, we observe a utility drop of 2.4–4.5 percentage points across the three models. TABLE 7: (PSDR) Effectiveness (R1) and Utility (R3): 
+
+TME, which includes LAT and IFC, maintains effectiveness close to the base model with a small utility drop.                            
+
+> Model Metric Stage Value (R1) Effectiveness
+> Ministral-8B Token-F1 Base Model 0.639 ±0.031 +LAT 0.588 ±0.074 +LAT+IFC 0.623 ±0.043
+> gemma-2-9b Token-F1 Base Model 0.660 ±0.009 +LAT 0.598 ±0.114 +LAT+IFC 0.627 ±0.052
+> OLMo-2-7B Token-F1 Base Model 0.687 ±0.046 +LAT 0.675 ±0.052 +LAT+IFC 0.671 ±0.056
+> (R3) Utility
+> Ministral-8B Accuracy Base Model 0.630 ±0.000 +LAT+IFC 0.599 ±0.069
+> gemma-2-9b Accuracy Base Model 0.720 ±0.000 +LAT+IFC 0.675 ±0.035
+> OLMo-2-7B Accuracy Base Model 0.645 ±0.000 +LAT+IFC 0.621 ±0.027
+
+(R2) Confidentiality: We now evaluate whether TME leaks any sensitive inputs in the outputs against benign, adversarial, and indirect queries. We report ASR-Verbatim and ASR-Semantic in Table 8. Benign queries leak some information, but this is negligible after the IFC module. Under adversarial queries, the base model shows perfect leakage but application of LAT decreases the leakage drastically, and further decreases with IFC to negligible leakage. For indirect queries, we observe high leakage in the undefended base model, but this is negligible after applying LAT and IFC. Similar to PSFC, in some cases, we observe an increase in leakage under indirect queries when applying LAT due to unintended interactions [68]. Overall, TME does not leak any sensitive inputs as part of the outputs. Finally, across all models, the carousel cuts access-pattern recovery from 
+
+0.63 (top-k baseline) to 0.05 (a constant full scan). Thus, the carousel makes the access pattern oblivious, reducing the leakage to random guessing. 
+
+(R5) Efficiency and (R6) Scalability: We report the over-head of running various TME operations and how the overhead scales with more parties and the database size.  
+
+> •
+
+Inference Overhead: The per-inference cost is dominated by the oblivious carousel, not attestation: each query scans all Ndb records, generating one note per record, so the cost scales linearly with Ndb . The time to process each record is small: 1.9s, 3.2s, and 2.2s for Ministral-8B ,TABLE 8: (PSDR) Confidentiality (R2): Both ASR-Verbatim and ASR-Semantic decrease with LAT and IFC across benign, adversarial, and indirect.                                                              
+
+> Model Stage Benign Adversarial Indirect ASR-Verbatim
+> Ministral-8B
+> Base Model 0.07 ±0.03 1.00 ±0.00 0.94 ±0.02
+> +LAT 0.06 ±0.06 0.11 ±0.07 0.23 ±0.19
+> +LAT +IFC 0.01 ±0.01 0.01 ±0.02 0.02 ±0.03
+> gemma-2-9b
+> Base Model 0.00 ±0.00 0.99 ±0.01 0.61 ±0.07
+> +LAT 0.14 ±0.16 0.23 ±0.19 0.89 ±0.07
+> +LAT +IFC 0.00 ±0.00 0.03 ±0.04 0.05 ±0.02
+> OLMo-2-7B
+> Base Model 0.09 ±0.05 0.79 ±0.05 1.00 ±0.00
+> +LAT 0.02 ±0.03 0.03 ±0.02 0.11 ±0.08
+> +LAT +IFC 0.00 ±0.00 0.00 ±0.00 0.01 ±0.03
+> ASR-Semantic
+> Ministral-8B
+> Base Model 0.07 ±0.03 1.00 ±0.00 0.94 ±0.02
+> +LAT 0.06 ±0.06 0.12 ±0.07 0.23 ±0.19
+> +LAT +IFC 0.01 ±0.01 0.03 ±0.02 0.02 ±0.03
+> gemma-2-9b
+> Base Model 0.00 ±0.00 0.99 ±0.01 0.67 ±0.08
+> +LAT 0.14 ±0.16 0.23 ±0.19 0.89 ±0.06
+> +LAT +IFC 0.00 ±0.00 0.03 ±0.04 0.05 ±0.02
+> OLMo-2-7B
+> Base Model 0.09 ±0.05 0.80 ±0.05 1.00 ±0.00
+> +LAT 0.02 ±0.03 0.04 ±0.04 0.13 ±0.09
+> +LAT +IFC 0.00 ±0.00 0.00 ±0.00 0.01 ±0.03
+> Access-pattern leakage
+> top-kretrieval (leaky) 0.63 ±0.01 carousel (oblivious) 0.05 ±0.00
+
+gemma-2-9b , and OLMo-2-7B . Similar to PSFC, the IFC module adds 8.6s for the shared Qwen3-8B monitor and, when flagged, 29 .4s for the paraphraser.  
+
+> •
+
+Attestation Overhead: Measured against standard RAG, per-inference measurement and attestation overheads are negligible: hardware attestation adds only 0.02 –0.03% ,while the in-TEE attestation adds ∼ 0.001% (Figure 4), roughly 20 × less. These costs are essentially independent of the number of parties N : adding parties increases compute but adds negligible per-party attestation overhead. The one-time model measurement for the model, monitor, and paraphraser takes 59 –68 s (like PSFC).  
+
+> •
+
+Carousel Overhead: The carousel dominates TME’s overhead. Standard RAG reads only the top-k retrieved records, revealing the target; the carousel instead scans all 
+
+Ndb records in a fixed order, making the access pattern constant and oblivious. This incurs an Ndb /k -fold increase in retrieval. Relative to RAG, the single-party overhead is substantial and model-dependent: 41% ( OLMo-2-7B ), 92% ( Ministral-8B ), and 132% ( gemma-2-9b ). Cru-cially, the overhead amortizes across parties, as the batched scan reads each record once and serves all N parties, reducing the per-party overhead roughly as 1/N . At 
+
+N = 5 , it reaches around 0.42 of the single-party overhead (16%–50%). Thus, obliviousness is costly for a single party but much cheaper for more parties.  
+
+> •
+
+Impact of Database Size: We sweep the database size 
+
+Ndb ∈ { 10 , 20 , 40 , 80 } for a fixed number of parties. The 2.0 2.5 3.0 3.5 4.0           
+
+> Ministral-8B gemma-2-9b OLMo-2-7B
+> Hardware TDX quote ×10 −2
+> 12345
+> Number of parties N
+> 0.8 1.0 1.2 1.5 1.8 2.0 In-TEE signing key ×10 −3
+> Per-inference overhead (%)
+
+Figure 4: (PSDR) Efficiency (R5) and Scalability (R6): 
+
+Measurement + attestation as % of the standard-RAG baseline vs. the number of parties N .overhead of obliviousness grows linearly with Ndb (233% 
+
+at Ndb =10 rising to 2567% at Ndb =80 ) and the scan time doubles as Ndb doubles. However, any scheme that hides the access pattern over Ndb records must touch all of them, so O(Ndb ) is optimal. We do not claim unqualified scalability: our evaluation covers a limited range, and the carousel’s linear cost in Ndb makes > 10 5 records prohibitive. Unlike ORAM, the carousel uses a single in-enclave scan and outperforms ORAM-based constructions for private membership tests [55]. Thus, TME’s carousel is a cheaper oblivious option for smaller scales. Larger databases may require hybrid designs, such as oblivious cluster-level scans, which we leave as future work. 
+
+Summary: TME enables PSDR with high effectiveness 
+
+(R1) , negligible leakage (R2) , and small utility loss 
+
+(R3) . Attestation overhead is negligible, while the dom-inant carousel cost is reduced through batching (R5) ;
+
+(R6) , though scaling the carousel to substantially larger databases remains an open challenge. 
+
+## 7. Discussion and Summary 
+
+Guarantees of TME: Cryptographic primitives provide theoretical correctness and robustness guarantees, but often at the cost of efficiency and scalability. In contrast, TME targets practical workloads by providing empirical guaran-tees of effectiveness, utility-preservation, and confidentiality. Although frameworks exist for theoretically bounding these properties in generative models [69], [70], such bounds remain underexplored and do not scale to large models. 
+
+Unidentified Sensitive Inputs: All reported leakage and ASR are measured against the sensitive inputs identified using Microsoft Presidio. An unidentified sensitive input is never added to the forbidden set, so LAT does not optimize to withhold it, and the monitor never screens it. Thus, it is never scored, and its disclosure is not registered as a leak. Reported ASR is a lower bound on the true leakage, and measures protection of sensitive inputs identified by the detector, not those it misses. Quantifying this gap requires human-labeled sensitive inputs, which is future work. 
+
+Scaling to Larger Models: We restrict our models to 7–9B parameters to fit the model, monitor, and paraphraser on a single H100 GPU (80GB VRAM). Scaling to larger models is straightforward, and prior work has demonstrated LAT on models with up to 70B parameters [71]. Moreover, we use LoRA-based parameter-efficient fine-tuning, substantially reducing the cost of hardening compared to full-model fine-tuning. Newer H200 GPUs (140GB of VRAM) can accommodate larger models. Furthermore, multiple GPUs can be connected for distributed inference using GPUs and TEEs. These can improve scalability to larger (frontier) models. 
+
+Scaling to Other Modalities: While we focus on text-based semantic computation for tractable evaluation, TME generalizes to other structured and unstructured modalities, including audio, images, and graphs. The LLM used in our implementation can be replaced with modality-specific gen-erative models; for example, VLMs can support multimodal tasks such as visual question answering, captioning, and instruction following [13], [14]. 
+
+Side-Channel Attacks: Several side-channel attacks have been proposed against TEEs [72]. Mitigating them is outside the scope of this work. We assume the TEE is properly configured with appropriate defenses in place to minimize such leakage. Developing and evaluating these defenses is an orthogonal direction, and existing TEE side-channel mitigations can be directly applied to harden the TEE. 
+
+Other Applications: While the three applications illustrate TME, its use of a system prompt for the semantic compu-tation instructions makes it readily reconfigurable to other applications. Shumailov et al. [52] identify applications such as private non-competition checks between research groups ,
+
+confidentiality audits by regulators , and privacy-preserving property monitoring . Other examples where TME can be applied, taking inspiration from cryptographic primitives, include private record linkage , where records are matched based on semantic similarity; searchable encryption , where documents are retrieved by meaning rather than keywords; 
+
+electronic voting , where ambiguous or misspelled ballots are interpreted; and private auctions , where bids are evaluated against qualitative criteria such as credibility. 
+
+Summary: Existing work lacks a practical primitive for pri-vate semantic computation over structured and unstructured data. We present trusted model environments (TME), the first design and implementation of such a primitive, which com-bines generative models for semantic computation with TEEs for computation confidentiality and verifiability. To protect against leakage of sensitive inputs through model outputs under adversarial queries, TME uses models trained with latent adversarial training to suppress verbatim leakage, and an IFC module to detect indirect semantic leakage. Through careful design and empirical evaluation, we demonstrate that TME is (i) effective , (ii) confidential , (iii) utility-preserving ,(iv) verifiable , (v) efficient , and (vi) scalable .Disclosure of AI Tool-Use 
+
+We used Claude Code to assist with selected parts of the implementation, which the authors subsequently verified, and to help create Figure 1 in TikZ based on an author-designed PowerPoint template. The authors independently developed the research ideas, methodology, experiments, and initial manuscript. We used ChatGPT selectively for language editing, primarily to correct English and grammar and improve conciseness. Thus, AI tools were used as assistants for limited implementation and editorial tasks. 
+
+## Acknowledgments 
+
+This work is supported by NSERC (Discovery grant) and the Canada CIFAR AI Chairs program. Resources used in preparing this research were provided, in part, by the Province of Ontario, the Government of Canada through CIFAR, and companies sponsoring the Vector Institute. The authors thank Adam Caulfield and Prach Chantasantitam from University of Waterloo, and Sourav Das (Category Labs) for their feedback on the paper. 
+
+## References 
+
+[1] D. Boneh et al. , “Functional encryption: Definitions and challenges,” in Theory of Cryptography Conference (TCC) , ser. Lecture Notes in Computer Science, vol. 6597. Springer, 2011, pp. 253–273. [Online]. Available: https://doi.org/10.1007/978-3-642-19571-6 16 [2] C. Gentry, “Fully homomorphic encryption using ideal lattices,” in 
+
+ACM Symposium on Theory of Computing (STOC) . ACM, 2009, pp. 169–178. [Online]. Available: https://doi.org/10.1145/1536414. 1536440 [3] O. Goldreich et al. , “How to play any mental game or A completeness theorem for protocols with honest majority,” in ACM Symposium on Theory of Computing (STOC) . ACM, 1987, pp. 218–229. [Online]. Available: https://doi.org/10.1145/28395.28420 [4] A. C. Yao, “How to generate and exchange secrets (extended abstract),” in IEEE Symposium on Foundations of Computer Science (FOCS) . IEEE Computer Society, 1986, pp. 162–167. [Online]. Available: https://doi.org/10.1109/SFCS.1986.25 [5] B. Chor et al. , “Private information retrieval,” Journal of the ACM , vol. 45, no. 6, pp. 965–981, 1998. [Online]. Available: https://doi.org/10.1145/293347.293350 [6] R. Ostrovsky, “Efficient computation on oblivious rams,” in ACM Symposium on Theory of Computing (STOC) . ACM, 1990, pp. 514–523. [Online]. Available: https://doi.org/10.1145/100216.100289 [7] E. Stefanov et al. , “Path ORAM: an extremely simple oblivious RAM protocol,” in ACM SIGSAC Conference on Computer and Communications Security (CCS) . ACM, 2013, pp. 299–310. [Online]. Available: https://doi.org/10.1145/2508859.2516660 [8] M. J. Freedman et al. , “Efficient private matching and set intersection,” in International Conference on the Theory and Applications of Cryptographic Techniques (EUROCRYPT) , ser. Lecture Notes in Computer Science, vol. 3027. Springer, 2004, pp. 1–19. [Online]. Available: https://doi.org/10.1007/978-3-540-24676-3 1 [9] D. Vatsalan et al. , “A taxonomy of privacy-preserving record linkage techniques,” Information Systems , vol. 38, no. 6, pp. 946–969, 2013. [Online]. Available: https://doi.org/10.1016/j.is.2012.11.005 [10] R. Hall and S. E. Fienberg, “Privacy-preserving record linkage,” in 
+
+International Conference Privacy in Statistical Databases (PSD) ,ser. Lecture Notes in Computer Science, vol. 6344. Springer, 2010, pp. 269–283. [Online]. Available: https://doi.org/10.1007/ 978-3-642-15838-4 24 [11] A. Vaswani et al. , “Attention is all you need,” in Neural Information Processing Systems (NeurIPS) , 2017, pp. 5998–6008. [Online]. Available: https://proceedings.neurips.cc/paper/2017/hash/ 3f5ee243547dee91fbd053c1c4a845aa-Abstract.html [12] T. B. Brown et al. , “Language models are few-shot learners,” in Neural Information Processing Systems (NeurIPS) , 2020. [Online]. Available: https://proceedings.neurips.cc/paper/2020/hash/ 1457c0d6bfcb4967418bfb8ac142f64a-Abstract.html [13] A. Radford et al. , “Learning transferable visual models from natural language supervision,” in International Conference on Machine Learning (ICML) . PMLR, 2021, pp. 8748–8763. [Online]. Available: http://proceedings.mlr.press/v139/radford21a.html [14] J. Alayrac et al. , “Flamingo: a visual language model for few-shot learning,” in Neural Information Processing Systems (NeurIPS) , 2022. [Online]. Available: http://papers.nips.cc/paper files/paper/2022/hash/ 960a172bc7fbf0177ccccbb411a7d800-Abstract-Conference.html [15] M. Hao et al. , “Iron: Private inference on transformers,” in Neural Information Processing Systems (NeurIPS) , 2022. [Online]. Available: https://openreview.net/forum?id=deyqjpcTfsG [16] X. Hou et al. , “Ciphergpt: Secure two-party gpt inference,” IEEE Transactions on Dependable and Secure Computing , vol. 23, no. 3, pp. 6748–6762, 2026. [17] W. jie Lu et al. , “Bumblebee: Secure two-party inference framework for large transformers,” IACR Cryptol. ePrint Arch. , vol. 2023, p. 1678, 2023. [Online]. Available: https://api.semanticscholar.org/CorpusID: 265068718 [18] Q. Pang et al. , “Bolt: Privacy-preserving, accurate and efficient inference for transformers,” in IEEE Symposium on Security and Privacy (SP) , 2024, pp. 4753–4771. [19] Y. Dong et al. , “Puma: Secure inference of llama-7b in five minutes,” 
+
+Security and Safety , vol. 4, p. 2025014, 2025. [20] K. Gupta et al. , “SIGMA: Secure GPT inference with function secret sharing,” Cryptology ePrint Archive, Paper 2023/1269, 2023. [Online]. Available: https://eprint.iacr.org/2023/1269 [21] J. Moon et al. , “Thor: Secure transformer inference with homomorphic encryption,” in ACM SIGSAC Conference on Computer and Communications Security (CCS) . New York, NY, USA: Association for Computing Machinery, 2025, p. 3765–3779. [Online]. Available: https://doi.org/10.1145/3719027.3765150 [22] A. Y. L. Kei and S. S. M. Chow, “SHAFT: secure, handy, accurate, and fast transformer inference,” IACR Cryptol. ePrint Arch. , vol. 2025, p. 2324, 2025. [Online]. Available: https://eprint.iacr.org/2025/2324 [23] J. Zhang et al. , “Secure transformer inference made non-interactive,” Cryptology ePrint Archive, Paper 2024/136, 2024. [Online]. Available: https://eprint.iacr.org/2024/136 [24] M. Chrapek et al. , “Fortify your foundations: Practical privacy and security for foundation model deployments in the cloud,” arXiv preprint arXiv:2410.05930 , 2024. [25] P. Chantasantitam et al. , “Pal* m: Property attestation for large generative models,” arXiv preprint arXiv:2601.16199 , 2026. [26] C. Li et al. , “Confidential prompting: Privacy-preserving LLM inference on cloud,” 2024. [Online]. Available: https://arxiv.org/abs/ 2409.19134 [27] C.-j. Huang et al. , “Your inference request will become a black box: Confidential inference for cloud-based large language models,” 2026. [Online]. Available: https://arxiv.org/abs/2603.00196 [28] H. Yu et al. , “Towards confidential and efficient LLM inference with dual privacy protection,” 2025. [Online]. Available: https: //arxiv.org/abs/2509.09091 [29] V. Duddu et al. , “Laminator: Verifiable ml property cards using hardware-assisted attestations,” in ACM Conference on Data and Application Security and Privacy (CODASPY) . New York, NY, USA: Association for Computing Machinery, 2025, p. 317–328. [Online]. Available: https://doi.org/10.1145/3714393.3726492 [30] M. Ponomarenko, S. Abedini, M. Shafieinejad, D. B. Emerson, S. Mohapatra, and X. He, “CAPID: Context-aware PII detection for question-answering systems,” in Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics (Volume 4: Student Research Workshop) , S. Baez Santamaria, S. A. Somayajula, and A. Yamaguchi, Eds. Rabat, Morocco: Association for Computational Linguistics, Mar. 2026, pp. 320–331. [Online]. Available: https://aclanthology.org/2026.eacl-srw.23/ [31] A. Sheshadri et al. , “Latent adversarial training improves robustness to persistent harmful behaviors in llms,” arXiv preprint arXiv:2407.15549 ,2024. [32] L. J. Gunn et al. , Hardware Platform Security for Mo-bile Devices . Springer, 2022, https://ssg.aalto.fi/publications/ hardware-platform-security-for-mobile-devices/. [33] M. Zhou et al. , “Pacmann: Efficient private approximate nearest neighbor search,” in International Conference on Learning Representations (ICLR) , 2025. [Online]. Available: https://openreview. net/forum?id=yQcFniousM [34] H. Chen et al. , “ {SANNS }: Scaling up secure approximate {k-Nearest } neighbors search,” in USENIX Security Symposium , 2020, pp. 2111–2128. [35] H. Asi et al. , “Scalable private search with wally,” arXiv preprint arXiv:2406.06761 , 2024. [36] B. Chor et al. , “Private information retrieval by keywords,” Cryptology ePrint Archive, Paper 1998/003, 1998. [Online]. Available: https://eprint.iacr.org/1998/003 [37] I. Ahmad et al. , “Coeus: A system for oblivious document ranking and retrieval,” Cryptology ePrint Archive, Paper 2022/154, 2022. [Online]. Available: https://eprint.iacr.org/2022/154 [38] M. Abdalla et al. , “Simple functional encryption schemes for inner products,” Cryptology ePrint Archive, Paper 2015/017, 2015. [Online]. Available: https://eprint.iacr.org/2015/017 [39] M. Hao et al. , “Practical keyword private information retrieval from key-to-index mappings,” Cryptology ePrint Archive, Paper 2025/210, 2025. [Online]. Available: https://eprint.iacr.org/2025/210 [40] R. A. Mahdavi and F. Kerschbaum, “Constant-weight {PIR }: Single-round keyword {PIR } via constant-weight equality operators,” in 
+
+USENIX Security Symposium , 2022, pp. 1723–1740. [41] J. Achiam et al. , “Gpt-4 technical report,” arXiv preprint arXiv:2303.08774 , 2023. [42] G. Team, “Gemini: a family of highly capable multimodal models,” 
+
+arXiv preprint arXiv:2312.11805 , 2023. [43] A. Grattafiori et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [44] P. Lewis et al. , “Retrieval-augmented generation for knowledge-intensive nlp tasks,” Neural Information Processing Systems (NeurIPS) ,vol. 33, pp. 9459–9474, 2020. [45] OpenAI, “Codex,” https://openai.com/codex/, 2026, accessed: 2026-08-20. [46] Anthropic, “Claude,” https://claude.ai, 2026, accessed: 2026-08-20. [47] H. Sun et al. , “zkllm: Zero knowledge proofs for large language models,” in ACM SIGSAC Conference on Computer and Communications Security (CCS) . New York, NY, USA: Association for Computing Machinery, 2024, p. 4405–4419. [Online]. Available: https://doi.org/10.1145/3658644.3670334 [48] B. Wang et al. , “Pir-rag: A system for private information retrieval in retrieval-augmented generation,” arXiv preprint arXiv:2509.21325 ,2025. [49] Z. Li et al. , “Prag: End-to-end privacy-preserving retrieval-augmented generation,” arXiv preprint arXiv:2604.26525 , 2026. [50] P. Zhou et al. , “Provably secure retrieval-augmented generation,” arXiv preprint arXiv:2508.01084 , 2025. [51] S. Breckenridge et al. , “ πcreds: Privately inferred credentials,” arXiv preprint arXiv:2606.03771 , 2026. [52] I. Shumailov et al. , “Trusted machine learning models unlock private inference for problems currently infeasible with cryptography,” arXiv preprint arXiv:2501.08970 , 2025. [53] X. Liu et al. , “AutoDAN: Generating stealthy jailbreak prompts on aligned large language models,” in International Conference on Learning Representations (ICLR) , 2024. [Online]. Available: https://openreview.net/forum?id=7Jwpw4qKkb [54] C. Anil et al. , “Many-shot jailbreaking,” in Neural Information Processing Systems (NeurIPS) , 2024. [Online]. Available: https: //openreview.net/forum?id=cw5mgd71jW [55] S. Tamrakar et al. , “The circle game: Scalable private membership test using trusted hardware,” in ACM Asia Conference on Computer and Communications Security (AsiaCCS) , 2017, p. 31–44. [Online]. Available: https://doi.org/10.1145/3052973.3053006 [56] P. Rajpurkar et al. , “Know what you don’t know: Unanswerable questions for squad,” in Annual Meeting of the Association for Computational Linguistics (ACL) , 2018, pp. 784–789. [57] X. Zhang et al. , “Character-level convolutional networks for text classification,” Neural Information Processing Systems (NeurIPS) ,vol. 28, 2015. [58] Z. Yang et al. , “Hotpotqa: A dataset for diverse, explainable multi-hop question answering,” in Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2018, pp. 2369–2380. [59] D. Hendrycks et al. , “Measuring massive multitask language under-standing,” arXiv preprint arXiv:2009.03300 , 2020. [60] A. Talmor et al. , “CommonsenseQA: A question answering challenge targeting commonsense knowledge,” in Conference of the North American Chapter of the Association for Computational Linguistics (NAACL) . Minneapolis, Minnesota: Association for Computational Linguistics, Jun. 2019, pp. 4149–4158. [Online]. Available: https://aclanthology.org/N19-1421/ [61] Mistral AI team, “Un ministral, des ministraux,” https://mistral.ai/ news/ministraux/, 10 2024, accessed: 2026-07-20. [62] G. Team et al. , “Gemma 2: Improving open language models at a practical size,” arXiv preprint arXiv:2408.00118 , 2024. [63] E. P. Walsh et al. , “2 OLMo 2 furious,” in Conference on Language Modeling (COLM) , 2025. [Online]. Available: https://openreview.net/forum?id=2ezugTT9kU [64] A. Yang et al. , “Qwen3 technical report,” arXiv preprint arXiv:2505.09388 , 2025. [65] M. Chrapek et al. , “Confidential llm inference: Performance and cost across cpu and gpu tees,” in IEEE International Symposium on Workload Characterization (IISWC) . IEEE, 2025, pp. 84–98. [66] J. Zhu et al. , “Confidential computing on nvidia hopper gpus: A performance benchmark study,” arXiv preprint arXiv:2409.03992 ,2024. [67] W. Wang et al. , “Benchmarking confidential gpu inference on nvidia h100 under intel tdx,” arXiv preprint arXiv:2607.19353 , 2026. [68] V. Duddu et al. , “Sok: Unintended interactions among machine learning defenses and risks,” in IEEE Symposium on Security and Privacy (SP) . IEEE, 2024, pp. 2996–3014. [69] S. Lotfi et al. , “Non-vacuous generalization bounds for large language models,” arXiv preprint arXiv:2312.17173 , 2023. [70] Z. Zhang et al. , “Certified robustness for large language models with self-denoising,” arXiv preprint arXiv:2307.07171 , 2023. [71] L. He et al. , “Locket: Robust feature-locking technique for language models,” in Annual Meeting of the Association for Computational Linguistics (ACL) , 2026, pp. 13 770–13 784. [72] S. Van Schaik et al. , “Sok: Sgx.fail: How stuff gets exposed,” in IEEE Symposium on Security and Privacy (SP) , 2024, pp. 4143–4162. Appendix A. Dataset Construction 
+
+All three applications are built from public benchmarks so that ground truth is exact and effectiveness is scored deterministically, while sensitive inputs are identified from the source text. We detect them with Microsoft Presidio (AnalyzerEngine ) across PERSON , LOCATION , DATE -
+
+> TIME
+
+, EMAIL -ADDRESS , and PHONE -NUMBER . We drop records with no sensitive inputs, and questions whose effec-tiveness ground truth overlaps with one (effectiveness does not conflict with confidentiality). 
+
+PSFC ( SQuADv2 ): Each record is a context passage x with five reading-comprehension questions, one per computing party; the ground truth answers come from the benchmark and are scored with token-F1. The pool is 250 records split 
+
+0.4:0 .2:0 .4 by record into train/val/test. 
+
+PSSP ( DBpedia14 ): Each record is a short abstract carry-ing one of 14 ground truth ontology classes; a party’s private set is a group of abstracts, and the true intersection is the set of classes present in every party’s set, computable exactly from the ground truth labels. Records are balanced to within one per class ( 250 records give twelve classes of 18 and two of 17 ) and split by record, stratified by class, to an exact 
+
+100 /50 /100 so that every class, and therefore every semantic domain (people, places, organizations, works), appears in every split with disjoint documents. 
+
+PSDR ( HotpotQA ): The multi-hop passages are the private database, and the questions become queries whose ground truth answers are in specific records. The pool is 1000 records and 250 queries, split 100 /50 /100 by query. 
+
+## Appendix B. Hyperparameters for Evaluation 
+
+Latent Adversarial Training: All three applications share one LAT configuration. We train a LoRA/RSLoRA adapter (rank r = 64 , α = 64 , dropout 0.05 ) on every at-tention and MLP projection of the model ( q, k, v, o and gate/up/down, about 2.1% of parameters), keeping the base model weights frozen. The inner loop is an L2-ball PGD attack on the latent activations at four trans-former blocks placed at roughly {0.2, 0.45 , 0.7, 0.9} of depth: layers {7, 16 , 25 , 32 } for Ministral-8B (36 blocks), 
+
+{8, 19 , 29 , 38 } for gemma-2-9b (42 ), and {6, 14 , 22 , 29 }
+
+for OLMo-2-7B (32 ). The perturbation uses 8 PGD steps with radius ϵ = 2 .0 (in latent L2 norm) and inner learning rate 10 −3; the outer adapter is trained for 60 steps ( 2 model updates per step) with AdamW at learning rate 5 × 10 −5
+
+and sequence length 2048 . The training objective sums four terms with coefficients λtoward = λaway = λsft = 1 .0 and 
+
+λKL = β = 0 .5: a clean “answer-safely” cross-entropy, an “away” term log(1 − P (leak target | perturbed )) that suppresses the leak under the worst-case perturbation, a retain SFT term on benign prompts (perturbation off), and a KL anchor to the frozen base model for utility. Tokens already below a −5.0 log-probability threshold are excluded from the away term. 
+
+Adversarial Prompts: The Manyshot attack prepends 24 
+
+demonstrations ( 32 for OLMo-2-7B), cycled from three distinct shots per channel. The Autodan attack tries up to 3 strategies ( 5 for OLMo) from a fixed set of five (developer-debug override, self-role-play, verbatim-transcription, hypothetical disclosure, and base64 encod-ing), generating each candidate with 256 tokens and re-taining one that elicits a leak. The optional indirect arm (describe /spellout /encode ) uses 12 demonstrations. 
+
+IFC Module: The monitor and paraphraser are a shared 
+
+Qwen3-8B run with chain-of-thought enabled and greedy decoding, each with a 1536 -token budget and a 768 -token non-thinking retry that fails closed (an unparseable verdict is treated as flagged). 
+
+Decoding: The served model answers under constant-work output padding: the number of new tokens is fixed at 32+16 k
+
+for a batch of k queries (equal minimum and maximum, so decode time is content-independent), with sampling enabled to give run-to-run variance across the reported replicates. All helper models (monitor, paraphraser, oracle) decode greedily so their verdicts and rewrites are deterministic. 
+
+## Appendix C. Attestation Descriptions 
+
+We write Sign att (‘Tag’ , ·) for Sign sk TEE over the listed values and a verifier-supplied nonce, where ‘Tag’ identifies the attestation type; h(·) is SHA-256; and MR( ·) is a Merkle root over the SHA-256 hashes of the listed items (§5). Hashes of private values reveal nothing about their plaintext, which never leaves the enclave. 
+
+Model Measurement: This attestation pins down which model ran. Here, θ denotes the model weights, comprising the frozen base model and the robust adapter from LAT (§4.2), and hM their digest. θ is hashed once at startup and hM is reused across all inferences (§4.2), so a verifier comparing hM against the expected digest confirms that every subsequent attestation refers to this exact M.
+
+Attestation 1: Model Measurement Input: model weights θ (base model and robust adapter); 
+
+Computation: hM ← h(θ) (once at startup); 
+
+Output: σM = Sign att (‘ModelAtt’ , h M);
+
+Assertion: the M executing inside TME is exactly the model with digest hM;
+
+Input Commitment: This attestation fixes the private inputs before computation. Here, xi is the private input submitted by party i and hi its digest. Since only hi appears in the evidence, xi is bound without being revealed; later attestations reference σin , so a party can confirm that the computation consumed exactly what was committed. 
+
+Proof of Inference: This attestation binds the model, the inputs, and the system prompt to the produced output. Here, 
+
+π is the fixed system prompt, y the model output, and σin 
+
+and σM the previously issued commitments, whose inclusion Attestation 2: Input Commitment Input: private input xi of party i;
+
+Computation: hi ← h(xi);
+
+Output: σin = Sign att (‘InputAtt’ , h i);
+
+Assertion: the computation consumed exactly the committed input xi, without revealing its content; chains the attestations together: tampering with M or any 
+
+xi invalidates σinf and everything derived from it. 
+
+Attestation 3: Proof of Inference Input: system prompt π, committed inputs ( σin ), attested model ( σM); 
+
+Computation: y ← M (π, x 1, . . . , x N );
+
+Output: y,
+
+σinf = Sign att (‘InfAtt’ , h(π, σ in , σ M, y )) ;
+
+Assertion: the committed model, on the committed inputs under π, produced y;
+
+Monitor Inference: This attestation covers the IFC module’s leakage check. Here, Mmon is the monitor LLM and verdict 
+
+its prediction of whether the attested output y leaks sensitive inputs. Binding Mmon and σinf inside the signed hash certifies both that verdict came from Mmon and that it judged the attested y.
+
+Attestation 4: Monitor Inference Input: attested output ( σinf ), monitor Mmon ;
+
+Computation: verdict ← M mon (y);
+
+Output: σmon =Sign att (‘MonAtt’ , h(Mmon , σ inf , verdict )) ;
+
+Assertion: verdict is Mmon ’s prediction of whether the attested y leaks sensitive inputs; 
+
+Paraphraser Inference: This attestation covers sanitization of flagged outputs. Here, Mpara is the paraphraser LLM and rewrite its sanitized version of the flagged output y. The evidence binds Mpara and σinf inside the signed hash, so the released text is certified to be Mpara ’s rewrite of the attested y rather than an arbitrary substitution. 
+
+Attestation 5: Paraphraser Inference 
+
+Input: attested flagged output ( σinf , σmon ), paraphraser Mpara ;
+
+Computation: rewrite ← M para (y);
+
+Output: rewrite , σpar =Sign att (‘ParaAtt’ , h(Mpara , σ inf , rewrite )) ;
+
+Assertion: rewrite is Mpara ’s sanitization of the attested flagged y;
+
+Proof of Oblivious Access: This attestation certifies the carousel scan for PSDR. Here, r1, . . . , r Ndb are the database records, q the query, and hdb the Merkle root over their per-record hashes h(ri), committed once by the data owner (record contents stay secret; only hashes enter the root). The carousel visits all Ndb records in a fixed order and binds the number accessed. A verifier checks that the number accessed equals Ndb and that hdb matches the owner’s published commitment, so no record was skipped or substituted and the access pattern reveals nothing about which records are relevant. 
+
+Attestation 6: Proof of Oblivious Access Input: database records r1, . . . , r Ndb committed as 
+
+hdb ← MR( h(r1), . . . , h(rNdb )) , query q;
+
+Computation: scan all records in fixed order, updating a note per record; count the records accessed, nacc ← Ndb ;
+
+Output: 
+
+σobl = Sign att (‘OblAtt’ , h(hdb , N db , n acc )) ;
+
+Assertion: all Ndb records of the committed database were parsed for q (nacc = Ndb ), so the access pattern is independent of which records are relevant; 
+
+## Appendix D. Monitor Results 
+
+We report some additional results to clarify the success of the monitor by reporting the following: false positive (benign non-leaking response that the monitor incorrectly flags); false negative (response that truly leaks a protected item yet is not flagged); precision (fraction of the monitor’s alarms that correspond to real leaks); and recall (fraction of all real leaks that the monitor catches). We report these numbers in Table 9. We see that the overall precision and recall are high, while false positives and false negatives are low, across the 200 samples in the test dataset. TABLE 9: Monitor Detection Results: We report false positives, false negatives, precision, and recall on the test split with 200 data records.                                          
+
+> Appl. Model FP FN Precision Recall PSFC
+> Ministral-8B 120.99 0.98
+> gemma-2-9b 021.00 0.98
+> OLMo-2-7B 110.93 0.93
+> PSDR
+> Ministral-8B 10 11 0.91 0.90
+> gemma-2-9b 920.68 0.90
+> OLMo-2-7B 19 12 0.80 0.87
+> PSSP
+> Ministral-8B 160.99 0.95
+> gemma-2-9b 213 0.98 0.87
+> OLMo-2-7B 613 0.87 0.75
+
+## Appendix E. IFC-aware Adversary 
+
+We have considered an adversary who generates adver-sarial queries to force the model to reveal sensitive inputs TABLE 10: IFC-aware Adversary: We report Leak (frac-tion with a leak from model); Evade (fraction where that disclosure also evades the monitor).                                           
+
+> Base Model w/ LAT Appl. Model Leak Evade Leak Evade PSFC
+> Ministral-8B 1.00 0.18 0.03 0.00
+> gemma-2-9b 1.00 0.03 0.43 0.03
+> OLMo-2-7B 0.90 0.15 0.28 0.00
+> PSSP
+> Ministral-8B 1.00 0.23 0.05 0.03
+> gemma-2-9b 0.98 0.33 0.13 0.03
+> OLMo-2-7B 0.93 0.43 0.08 0.05
+> PSDR
+> Ministral-8B 1.00 0.60 0.13 0.03
+> gemma-2-9b 1.00 0.65 0.85 0.30
+> OLMo-2-7B 1.00 0.58 0.00 0.00
+
+as part of the output. We now consider an adversary that generates queries to elicit them while also evading the IFC monitor and avoiding paraphrasing. We evaluate whether such adaptive attacks succeed and report ASR-Verbatim across all applications and models in Table 10. We see that the new adversarial examples, optimized against both the model and the monitor, are not effective after applying LAT. Overall, TME can resist an IFC-aware adversary that can optimize its adversarial examples against the entire pipeline. 
+
+## Appendix F. Asymptotic Cost 
+
+TME adds no super-linear overhead. The only input-dependent attestation cost is hashing: SHA-256 commitments over the inputs, outputs, and Merkle leaves are linear in their byte length, O(|x|). The dominant cost is the model inference itself, which follows the served model’s own complexity in sequence length (attention O(L2), feed-forward O(L)); attes-tation contributes only the linear hashing term on top. Across 
+
+N parties, TME performs one batched inference and issues a single hardware quote over the Merkle root of the batch, so the fixed evidence (the quote and the one-time weights digest) is amortized: the per-party attestation overhead is the O(log N ) Merkle authentication path and decreases as 
+
+N grows, while total cost stays linear O(N ). There is no polynomial or poly-logarithmic per-access penalty, in contrast to ORAM ( Ω(log Ndb ) per access) or MPC/HE (orders-of-magnitude constant factors). For PSFC, the N parties yield N per-party outputs, so inference and IFC screening are O(N ) and each party’s membership proof is O(log N ); the batch proof amortizes to a decreasing per-party overhead. For PSSP, the N parties produce a single shared intersection: set commitments are 
+
+O(N ) (folded under one quote) but the IFC module screens only that one released output, so its cost is O(1) in N . For PSDR, a single carousel cycle serves a batch of N parties over an Ndb -record database in O(Ndb + N ), an amortized 
+
+O(Ndb /N ) per party, matching the scan-based throughput regime of Carousel [55]; cost is linear in both the database size and the number of parties.
