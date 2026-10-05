@@ -1,0 +1,251 @@
+Title: pikit: A Composable Toolkit for Indirect Prompt Injection Research and Evaluation
+
+URL Source: https://arxiv.org/pdf/2609.36817v1
+
+Published Time: Wed, 30 Sep 2026 01:04:46 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+2026-9-30 
+
+# pikit: A Composable Toolkit for Indirect Prompt Injection Research and Evaluation 
+
+Tencent Zhuque Lab 
+
+Zonghao Ying Xiangfan Wu Bo Yang Huiyu Wu Xing Zheng Huangsheng Cheng Xiaorong Shi Jing Guo 
+
+Abstract 
+
+Indirect prompt injection embeds malicious instructions within external content retrieved by LLM-based agents, altering target behavior without user authorization. We introduce 
+
+pikit , a research toolkit designed to systematically evaluate these threats across three core dimensions: attacks (13 methods), channels (16 carriers across text and file modes), and defenses (9 prevention strategies and 3 offline detection baselines). Built on a decorator-based registry, pikit 
+
+enables seamless extension of custom components without modifying core code, while a unified 
+
+craft() API composes arbitrary attacks and channels in a single call. We evaluated the toolkit on the pi coding agent powered by an anonymized LLM in a production-like environment. Benchmarking 9 prevention strategies against high-risk attacks yields a 71.8% relative reduction in attack success rate, with few_shot_warning and instruction_hierarchy providing the strongest protection. Offline detection baselines achieve perfect precision but low recall, demonstrating that heuristic detectors complement rather than replace prompt-level defenses. To ensure reproducibility, each run automatically logs full prompts, agent event traces, session transcripts, and verdict records. Our code is available at https://github.com/Tencent/A I-Infra-Guard/tree/main/Research/pikit .
+
+Figure 1 | pikit evaluation pipeline. The craft() workflow applies an attack transform to the trusted task, embeds the result in an untrusted artifact via a channel , optionally wraps it in a defense , and submits it to the target agent. Outcomes are classified by the RuleJudge into F U L L , P A RT I A L , or N O T RE A C H E D ;per-run traces and aggregate metrics are persisted for audit. arXiv:2609.36817v1 [cs.CR] 29 Sep 2026 1. Introduction 
+
+Indirect prompt injection occurs when a malicious payload is embedded within external content retrieved by a language-model agent during routine execution, such as web pages, documents, emails, or system logs. Unlike direct prompt injection, which requires explicit user-attacker interaction with the model, indirect injection exploits the agent’s automated retrieval and ingestion pipelines. By compromising the external environment, an attacker forces the agent to autonomously fetch and execute untrusted payloads [4]. This threat vector is particularly severe in autonomous agents operating under the “lethal trifecta” condition: simultaneous access to untrusted data, sensitive context, and external communication channels [10]. Recent security incidents highlight this vulnerability. For instance, EchoLeak (CVE-2025-32711) demonstrated a zero-click attack on Microsoft 365 Copilot, where a crafted email induced unauthorized file exfiltration while bypassing internal prompt-injection classifiers [8]. Similarly, recent studies on agentic coding assistants report attack success rates as high as 84% for arbitrary command execution via tainted repositories [6]. Modern coding and tool-use frameworks—such as the DeepSeek harness [2], pi [3], and OpenClaw [7]—fall precisely into this threat model as they process untrusted repositories while wielding full system, filesystem, and network privileges. Existing evaluation suites, including AgentDojo [1] and InjecAgent [14], provide static bench-marks for tool-calling agents. However, they lack a composable framework that enables researchers to independently vary attack phrasing, delivery carriers, and defense strategies. Such de-coupling is critical because real-world security efficacy depends not merely on the payload design, but on the complex interaction between its transport mechanism and the target system’s defensive controls. To bridge this gap, we present pikit , an open-research toolkit for systematic evaluation of indirect prompt injection. pikit decouples the attack lifecycle into three independent axes: the attack (payload wording), the channel (the carrier through which tainted artifacts enter the context), and the defense (input sanitization or monitoring strategies). Researchers can plug in custom components along any axis via a decorator-based registry without modifying core logic. A unified craft() API dynamically composes arbitrary attacks with carriers, while a MatrixRunner automates full combinatorial evaluations over arbitrary datasets while preserving audit traces for complete reproducibility. We evaluate pikit on the pi coding agent [3] powered by an anonymized LLM under realistic operational conditions. Building upon preliminary threat modeling in prior work [13], this work focuses on the architecture of pikit and systematic defense regression. On a high-risk benchmark subset, our evaluated prevention pipeline achieves a 71.8% relative reduction in attack success rate, validating the toolkit’s capability to assess multi-layered security controls on real-world coding agents. 
+
+Contributions. 
+
+1. Modular Evaluation Framework. We introduce pikit , a composable toolkit featuring a decorator-based registry, a unified craft() synthesis API, and a MatrixRunner for automated combinatorial benchmarking across attacks, channels, and defenses. 2. Extensible Axis Abstraction. We define a lightweight three-method interface ( inject ,
+
+taint , apply ) that allows researchers to integrate new attack techniques, carriers, or defense mechanisms without modifying core infrastructure. 
+
+23. Empirical Defense Regression. We execute an end-to-end evaluation of 9 prevention defenses on the pi coding agent, establishing a 71.8% relative reduction in attack success rate under high-risk threat scenarios. 4. Detection Baselines. We construct a balanced 630-sample detection dataset and evaluate three heuristic detection baselines, offering insights into the complementary trade-offs between static detectors and prompt-level defenses. 
+
+## 2. Background 
+
+2.1. Indirect Prompt Injection 
+
+Unlike direct prompt injection, where malicious payloads are explicitly submitted through user-facing input channels, indirect prompt injection targets external data sources that an LLM-based agent implicitly trusts during execution [4, 12]. Because current transformer architectures process prompts and retrieved content within a unified context window, agents struggle to delineate system/user instructions from raw retrieved data. Consequently, an adversary ca-pable of poisoning external artifacts, including files, web pages, emails, or system logs, can silently hijack the agent’s control flow. While static evaluation suites like AgentDojo [1] and InjecAgent [14] assess this threat vector, and defenses such as instruction hierarchies [9] and spotlighting [5] attempt mitigation, existing approaches remain fragmented. pikit integrates these disparate attack vectors, carriers, and defensive primitives into a unified, composable evaluation framework. 
+
+2.2. Threat Model 
+
+We model an adversary whose goal is to redirect an LLM agent’s execution by exploiting external ingestion pipelines. 
+
+Adversary Capabilities. The attacker controls the payload phrasing (the attack ) and its carrier artifact format (the channel ). Tainted artifacts are placed in external environments (e.g., reposito-ries or filesystems) and are fetched automatically when the agent executes routine, user-initiated tasks. 
+
+Adversary Constraints. The adversary operates in a black-box setting. They possess no visibility into the agent’s internal reasoning traces and cannot adapt payloads interactively within a single session. Furthermore, the attacker cannot tamper with or bypass defensive transformation pipelines (e.g., sanitizers, spotlighters, or offline detectors) deployed between external artifacts and the agent’s context window. 
+
+## 3. The pikit Toolkit 
+
+pikit is built around an end-to-end composition pipeline, formalized as: Task −→ Attack −→ Channel −→ Defense −→ Agent −→ Judge, as depicted in Figure 1. Here, defense represents the security mechanism wrapped around the agent rather than a static positioning step; different defenses may inspect, sanitize, or transform prompts, system instructions, or context structures. Each stage is an independently registered, pluggable module, obviating the need for custom glue code across combinatorial experiments. 
+
+33.1. Core Abstractions 
+
+Three abstract base classes in pikit.base govern the interface specification across all toolkit components. 
+
+Attack. An Attack modifies the wording or structure of an injected instruction. It exposes a unified method contract: 
+
+class Attack ( ABC ) : name : str = " attack " @abstractmethod 
+
+def inject ( self , prompt : str , injected_task : str ) -> str :" " " Embeds injected_task within the given prompt context . " " " ... 
+
+The inject method accepts the raw prompt context alongside the attacker’s payload and returns the synthesized string. This simple string-to-string abstraction ensures complete orthog-onality with delivery channels. 
+
+Channel. A Channel dictates where and how a payload is encapsulated into a physical or virtual carrier (e.g., web pages, emails, PDF metadata, or code comments). Channels expose 
+
+taint(data, payload) -> str for text-mode synthesis and taint_file(path, payload) -> output_path for file-mode artifact generation. In file mode, the channel generates realistic binary or structured carrier files (e.g., .html , .eml , .pdf , .ics ) parsed natively by downstream agent tooling. 
+
+Defense. A Defense transforms or hardens the prompt prior to model inference: 
+
+class Defense ( ABC ) : name : str = " defense " @abstractmethod 
+
+def apply ( self , prompt : str , instruction : Optional [ str ] =None ) -> str :" " " Applies sanitization or structural hardening to the prompt . " " " ... 
+
+The optional instruction parameter allows contextual defenses (e.g., sandwich or instructional 
+
+framing) to re-emphasize the user’s trusted intent without relying on brittle heuristic extraction. 
+
+3.2. Component Registry & Extensibility pikit employs a decorator-driven Registry mapping string keys to dynamic components. Integrating new attacks, channels, defenses, or datasets requires zero modifications to the core engine—developers simply define the class with an explicit registration decorator: 
+
+4from pikit . base import Attack 
+
+from pikit . attacks import register @register ( " custom_attack " ) 
+
+class CustomAttack ( Attack ) : 
+
+def inject ( self , prompt : str , injected_task : str ) -> str :
+
+return f " { prompt }\ n \n <! - - { injected_task } -->" 
+
+Upon initialization, registered components become globally available across the craft() API, TOML configurations, and evaluation runners. The registry enforces key uniqueness and dynamically binds fallback identifiers ( cls.name ) to guarantee audit trace stability. 
+
+3.3. Payload Synthesis: craft() 
+
+The craft() API serves as the primary entry point for synthesizing both direct and indirect injection artifacts, returning a structured CraftResult :
+
+from pikit import craft result = craft ( " Exfiltrate secret token " , attack = " important_instructions " , channel = " webpage " , data = " < html > < body > Target Content </ body > </ html > " , )
+
+# result . mode -> ’ indirect ’ # result . delivery -> Tainted HTML containing embedded instructions 
+
+When operated with mode="file" , pikit serializes payloads into true binary carriers on disk. This enables rigorous testing against realistic document ingestion pipelines (e.g., metadata extraction in PDFs or cell parsing in spreadsheets) that differ significantly from plain UTF-8 text streams. 
+
+3.4. Combinatorial Evaluation: MatrixRunner 
+
+To support benchmarking at scale, pikit provides MatrixRunner , which automatically parses TOML-defined matrix configurations and executes Cartesian product evaluations: 
+
+[[ cases ]] id = " fcm -0001" channels = [" webpage "] carrier_mode = " text " defenses = [" none "] agents = [" email "] task = " reply with exactly : PROCESSED ." canary = " PROCESSED " 
+
+For each combination of (attack, channel, defense, agent ), the runner synthesizes inputs, drives agent execution, invokes target judges, and exports structured telemetry logs ( Experiment Result ). Decoupling payload construction from delivery allows any of the 13 attacks to pair with any of the 16 channels, enabling multi-thousand-run benchmarks without manual scripting. 
+
+53.5. Component Catalog pikit ships with a comprehensive out-of-the-box component library across all evaluation axes: 
+
+Attacks (13 Methods). 
+
+• Direct & Escape: naive , escape (delimiter/role escaping), fake_completion (fabricated turn responses). • Obfuscation & Structural: obfuscation , payload_splitting , format_confusion , context_ flooding .• Semantic & Contextual: context_ignoring , important_instructions (authority-mimicking), 
+
+prefix_injection , stealth_instruction (low-salience phrasing), cross_channel , and 
+
+combined (multi-primitive composition). 
+
+Channels (16 Carriers). Covers diverse enterprise data formats supporting both text and file modes: webpage , document , markdown , code_comment , skills , structured_data ,
+
+pdf_metadata , log_file , email_headers , calendar_event , config_file , translation ,
+
+spreadsheet , chat_message , transaction_record , and unicode_hidden . For example, 
+
+email_headers injects payloads into raw MIME headers immediately preceding the separator: 
+
+def taint ( self , data : str , payload : str ) -> str :lines = data . splitlines () header_end = next (( i for i , l in enumerate ( lines ) if 
+
+l . strip () == " " ) , len ( lines ) ) one_line = " " . join ( payload . splitlines () ) lines . insert ( header_end , f " { self . _header_name () }: { one_line } " ) 
+
+return " \ n " . join ( lines ) 
+
+Prevention Defenses (9 Strategies). Includes delimiters , few_shot_warning , instruction_ hierarchy , instructional , random_sequence_enclosure , retokenization , sandwich , self_ reminder , and spotlighting .
+
+Detection Defenses (3 Baselines). Out-of-band detectors evaluating raw content without mod-ifying prompts: PatternDetector (regex signature matching), LengthDetector (flagging content > 2,000 chars), and RepetitionDetector (flagging unique character ratios < 0.1 as a proxy for context flooding). 
+
+3.6. Target Adapters and Automated Evaluation pikit provides modular target adapters across six common agent architectures: chat, tool-calling, email triage, RAG, browser automation, and software engineering agents (supporting LangChain, OpenAI SDK, and PydanticAI). Each run is evaluated via automated judges mapping interaction traces to a standardized execution outcome: • FULL : The attack successfully achieved its intended objective (e.g., canary string emitted as unquoted output or sensitive tool function invoked with attacker parameters). 
+
+6• PARTIAL : Observable non-fatal effect (e.g., agent discussing or quoting the payload, or tool call with incorrect parameters). • FAILURE / NOT_REACHED : Successful agent execution on the primary task, explicit policy refusal, or zero payload effect. Formally, we define the Attack Success Rate (ASR) over valid runs 𝑁 valid (excluding system timeouts and execution errors) as: ASR = 𝑁 FULL 
+
+> 𝑁 valid
+
+× 100% (1) where 𝑁 FULL represents the count of runs assigned a FULL outcome by the deterministic 
+
+RuleJudge or optional LLMJudge .
+
+## 4. Validation: Empirical Evaluation on the pi Agent 
+
+To evaluate pikit in a realistic deployment environment, we integrated the full pipeline with 
+
+pi [3], an open-source autonomous coding agent. 
+
+Prior Threat Characterization. Prior work on comparable coding harnesses (e.g., DeepSeek har-ness [13]) evaluated a complete matrix of 13 attacks × 16 channels × 2 carrier modes × 35 payloads. Those empirical findings revealed that overall Attack Success Rate (ASR) is concentrated within a localized subset of high-vulnerability attack-channel pairs. Accordingly, our defense regression focuses specifically on these empirical high-risk vectors. 
+
+4.1. Defense Regression Analysis 
+
+To measure defensive efficacy, we selected the high-risk subset comprising the top 9 attack-channel-mode combinations identified during baseline screening. We systematically evaluated all 35 payload cases across these 9 combinations against each of the 9 registered prevention defenses. Each defended run is linked directly to its exact baseline run via a unique baseline_run_id .Across 2,835 planned matched evaluation pairs, 2,832 completed successfully (a 99.89% run completion rate). Table 1 | Matched defense regression results on the high-risk evaluation subset. Baseline ASR is computed over the exact matched run IDs paired with each defense variant.    
+
+> Defense Strategy Sample Count ( 𝑛 )Baseline ASR Defended ASR
+
+few_shot_warning 315 6.03% 0.32% 
+
+instruction_hierarchy 315 6.03% 0.32% 
+
+spotlighting 314 6.05% 0.96% 
+
+self_reminder 314 5.73% 1.27% 
+
+instructional 315 6.03% 1.90% 
+
+delimiters 315 6.03% 1.90% 
+
+retokenization 315 6.03% 2.22% 
+
+sandwich 315 6.03% 3.17% 
+
+random_sequence_enclosure 314 6.05% 3.18%    
+
+> All Defenses 2,817 6.00% 1.69%
+
+As detailed in Table 1 and Figure 2, prompt prevention defenses significantly decrease at-tack success on high-risk targets. Across all evaluated strategies, pooled ASR dropped from 
+
+76.00% to 1.69%, representing a 71.8% relative reduction . Specifically, few_shot_warning 
+
+and instruction_hierarchy provided the strongest mitigation (reducing ASR to 0.32%), whereas structural boundaries like sandwich and random_sequence_enclosure yielded more modest security gains on this subset. 0 1 2 3 4 5 6 7 8Attack success rate (ASR, %)  
+
+> random_sequence_enclosure sandwich retokenization delimiters instructional self_reminder spotlighting few_shot_warning instruction_hierarchy
+> 6.05% 3.18% 6.03% 3.17% 6.03% 2.22% 6.03% 1.90% 6.03% 1.90% 5.73% 1.27% 6.05% 0.96% 6.03% 0.32% 6.03% 0.32% Matched baseline (no defense) With prevention defense
+
+Figure 2 | Matched baseline (grey) vs. defended (blue) ASR for each prevention defense, sorted by defended ASR in ascending order. 
+
+Finding 1 
+
+All 9 evaluated prevention defenses decrease ASR on the matched high-risk subset, achiev-ing a pooled relative ASR reduction of 71.8% (6.00% → 1.69%). However, no single de-fense achieves zero attack success. Defenses that explicitly codify instruction priority (e.g., few_shot_warning and instruction_hierarchy ) consistently outperform pas-sive structural enclosures. 
+
+4.2. Offline Detection Baseline 
+
+We additionally evaluated pikit ’s out-of-band heuristic detectors on a balanced benchmark corpus of 630 samples: 315 tainted artifacts from the high-risk evaluation matrix paired with 315 benign control artifacts. These detectors inspect raw ingestion artifacts prior to model inference without invoking secondary LLMs. Table 2 | Offline detection performance on the balanced 630-sample evaluation corpus (315 positive / 315 negative). FPR = False Positive Rate. 
+
+Detector Module Precision Recall F1 Score FPR 
+
+PatternDetector 0.00% 0.00% 0.00% 0.00% 
+
+LengthDetector 100.00% 11.11% 20.00% 0.00% 
+
+RepetitionDetector 100.00% 17.78% 30.19% 0.00% 
+
+Table 2 and Figure 3 summarize detection performance. All three baseline heuristics maintain zero false positives (0.00% FPR). PatternDetector failed to trigger on any tainted sample 
+
+8(0.00% Recall), demonstrating that naive string signatures fail against paraphrased or obfuscated attack variants. Meanwhile, LengthDetector and RepetitionDetector achieved modest recall rates of 11.11% and 17.78%, correctly flagging 35 and 56 sophisticated payload instances, respectively. PatternDetector LengthDetector RepetitionDetector  
+
+> 020 40 60 80 100 Score (%)
+> 0.0 100.0 100.0 0.0 11.1 17.8 0.0 20.0 30.2
+> Precision Recall F1
+
+Figure 3 | Precision, Recall, and F1 score breakdown across offline heuristic detectors on the balanced 630-sample corpus. 
+
+Finding 2 
+
+Static offline heuristic detectors exhibit high precision (0.00% FPR) but severely limited recall ( ≤17.78%) against adversarial indirect injections. While useful for filtering naive high-volume attacks, static signatures are insufficient as sole defensive perimeters and require dynamic, LLM-aware monitoring. 
+
+## 5. Discussion 
+
+5.1. Composability as a Research Primitive pikit decouples attacks, channels, and defenses into independent registries, combining them dy-namically through the craft() interface. Consequently, new components can be benchmarked against existing implementations without altering the composition pipeline logic. For example, registering a seventeenth channel automatically forms test combinations across the 13 attacks, 2 carrier modes, and 9 prevention defenses already available in the catalog. Prior empirical findings indicate that FULL outcomes are sparse across the attack-by-channel design space, with the majority of combinations yielding no successful injections. This sparsity underscores the necessity of broad combinatorial evaluation: testing individual attacks or delivery channels in isolation risks missing successful exploit vectors that emerge strictly from their interaction. 
+
+5.2. Defense Effectiveness 
+
+On the matched high-risk evaluation subset, the nine prevention defenses achieved a 71.8% rela-tive reduction in ASR; however, no defense reduced ASR to 0%. Thus, while these mechanisms mitigate attack vectors, they do not eliminate them completely. 
+
+9The observed performance variance aligns with the structural design of each defense. Specifi-cally, few_shot_warning and instruction_hierarchy achieved lower defended ASR than structural boundaries like sandwich and random_sequence_enclosure on this subset. This indicates that explicitly re-asserting instruction priority is more effective against these attack wordings than relying solely on syntactic markers. We note that these observations are bound to the evaluated agent architecture, target model, payload formulations, and high-risk combina-tions. 
+
+## 6. Conclusion 
+
+We presented pikit , a composable toolkit for evaluating indirect prompt injection across attacks, channels, defenses, and detection strategies. Its decorator-based registries, craft() API, and 
+
+MatrixRunner enable researchers to integrate custom components and evaluate their combi-nations without modifying the core codebase. In our evaluation on the pi coding agent, the nine prevention defenses achieved a relative ASR reduction of 71.8% on a matched high-risk subset, though no single defense completely eliminated attack success. Additionally, three offline heuristic detectors maintained a 0.00% FPR but achieved a maximum recall of 17.78% on the evaluated corpus, demonstrating their utility as auxiliary signals rather than standalone defenses. We hope pikit serves as a practical foundation to facilitate further research and advance the security of LLM agents [11]. 
+
+## References 
+
+[1] E. Debenedetti, J. Zhang, M. Balunovic, L. Beurer-Kellner, M. Fischer, and F. Tramèr. Agentdojo: A dynamic environment to evaluate prompt injection attacks and defenses for llm agents. Advances in neural information processing systems , 37:82895–82920, 2024. [2] DeepSeek-AI. Deepseek harness: Everything is a plugin. https://github.com/deeps eek-ai/deepseek-harness , 2026. [3] Earendil Works. Pi agent harness. https://github.com/earendil-works/pi , 2026. [4] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz. Not what you’ve signed up for: Compromising real-world llm-integrated applications with indirect prompt injection. In Proceedings of the 16th ACM workshop on artificial intelligence and security , pages 79–90, 2023. [5] K. Hines, G. Lopez, M. Hall, F. Zarfati, Y. Zunger, and E. Kiciman. Defending against indirect prompt injection attacks with spotlighting, 2024. URL https://arxiv.org/ab s/2403.14720 .[6] Y. Liu, Y. Zhao, Y. Lyu, T. Zhang, H. Wang, and D. Lo. "your ai, my shell": Demystifying prompt injection attacks on agentic ai coding editors, 2026. URL https://arxiv.org/ abs/2509.22040 .[7] OpenClaw Foundation. Openclaw. https://github.com/openclaw/openclaw , 2026. [8] P. Reddy and A. S. Gujral. Echoleak: The first real-world zero-click prompt injection exploit in a production llm system, 2025. URL https://arxiv.org/abs/2509.10540 .
+
+10 [9] E. Wallace, K. Xiao, R. Leike, L. Weng, J. Heidecke, and A. Beutel. The instruction hierarchy: Training llms to prioritize privileged instructions, 2024. URL https://arxiv.org/abs/ 2404.13208 .[10] S. Willison. The lethal trifecta for AI agents: Private data, untrusted content, and external communication. https://simonwillison.net/2025/Jun/16/the-lethal-trife cta/ , 2025. [11] Y. Yang, X. Zheng, H. Wu, H. Cheng, X. Shi, J. Guo, B. Yang, Y. Zhou, X. Wu, and Z. Ying. Securing the ai agent: A unified framework for multi-layer agent red teaming. arXiv preprint arXiv:2606.31227 , 2026. [12] Z. Ying, H. Wang, J. Liu, Q. Zou, A. Liu, J. Yang, Y. Yang, and X. Liu. Agentvisor: De-fending llm agents against prompt injection via semantic virtualization. arXiv preprint arXiv:2604.24118 , 2026. [13] Z. Ying, X. Wu, H. Wu, X. Zheng, H. Cheng, X. Shi, and J. Guo. Security assessment of deepseek harness with aig: Evaluating resistance to indirect prompt injection. arXiv preprint arXiv:2608.16393 , 2026. [14] Q. Zhan, Z. Liang, Z. Ying, and D. Kang. Injecagent: Benchmarking indirect prompt injections in tool-integrated large language model agents, 2024. URL https://arxiv.or g/abs/2403.02691 .
+
+11

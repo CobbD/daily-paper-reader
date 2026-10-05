@@ -1,0 +1,531 @@
+Title: SparLeak: Privacy Leakage from Sparse Attention in LLM Inference on Shared GPUs
+
+URL Source: https://arxiv.org/pdf/2609.38830v1
+
+Published Time: Thu, 01 Oct 2026 00:54:37 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# SpaRLeaK: Privacy Leakage from Sparse Attention in LLM Inference on Shared GPUs 
+
+Fahao Chen 
+
+chenfh@ieee.org Shandong University China 
+
+Linkang Du 
+
+Xi’an Jiaotong University China linkangd@xjtu.edu.cn 
+
+Jinhao Zhou 
+
+Waseda University Japan jinhao@suou.waseda.jp 
+
+Peng Li 
+
+Xi’an Jiaotong University China pengli@xjtu.edu.cn 
+
+Zhou Su 
+
+Xi’an Jiaotong University China zhousu@ieee.org 
+
+Abstract 
+
+Sparse attention is widely used to accelerate long-context inference in modern large language models (LLMs), but its input-dependent execution behavior introduces previously unexplored privacy risks. We identify a new GPU micro-architectural side channel, termed Sparsity-Induced Mem-ory Access (SIMA), which arises from secret-dependent key-value cache access patterns induced by sparse attention. Based on this observation, we present SpaRLeaK, a phase-aware side-channel attack that extracts SIMA traces dur-ing LLM inference and enables two practical privacy extrac-tions: query attribute inference from prefill-phase traces and autoregressive response reconstruction from decoding-phase traces. By reconstructing approximate token-level sparsity profiles from page-level observations and applying profiling-based learning, SpaRLeaK accurately recovers sensitive in-formation, including user-query attributes and private LLM response content. Extensive evaluation across three LLM ar-chitectures, three sparse attention mechanisms, and three privacy-sensitive datasets shows that SpaRLeaK achieves av-erage attack success rates of 90.9% for attribute inference and 87.3% for response reconstruction under real-world LLM serving settings, highlighting the significance to account for SIMA leakage when deploying sparse-attention-based LLM systems. We provide anonymized SIMA traces, trained at-tack models, evaluation scripts, and documentation as arti-facts at https://anonymous.4open.science/r/SparLeak_artifacts/. 
+
+Keywords: Large Language Models, Sparse Attention, Pri-vacy 
+
+1 Introduction 
+
+The widespread deployment of large language models (LLMs) [41, 42] has driven the use of increasingly long context to improve generation quality and reduce hallucinations. How-ever, the quadratic cost of attention makes long-context in-ference computationally expensive. To mitigate this over-head, modern LLM systems increasingly adopt sparse atten-tion mechanisms [5, 40, 60], which approximate full atten-tion by selectively attending to a subset of tokens. This trend is reflected in long-context serving systems such as SGLang [62] and vLLM [18], and is likely to intensify as model scales and context lengths grow. The tokens involved in sparse atten-tion computation are typically identified using activation-based saliency [5, 10, 53, 60], block-level scoring [40], or learned predictors [12, 43, 52]. By pruning irrelevant tokens, sparse attention significantly reduces both prefill-phase and decoding-phase costs. While designed for efficiency, sparse attention poses a new privacy threat in LLM inference. We find that sparse attention induces secret-dependent memory accesses in the GPU memory hierarchy by dynamically selecting and re-trieving Key-Value (KV) tensors based on semantic relevance. These accesses occur internally during GPU execution and are not directly exposed through the LLM service interface. However, they induce observable contention in shared GPU micro-architectural components, such as caches and TLBs. From a security perspective, this effect gives rise to a new side-channel surface rooted in sparsity-induced memory ac-cess (SIMA) behavior, which has not been explored by ex-isting works. The SIMA side channel captures how sparse attention externalizes semantic information through data-dependent interactions with the GPU memory hierarchy. Compared to prior side channels (in Table 1) for exploring privacy leakage during LLM inference based on timing [37, 50, 57, 63], network traffic [28, 48], or embedding cache be-havior [1, 13], we find that SIMA side-channel surface is model-intrinsic and spans both prefill and decoding phases, thereby enabling broader and more persistent privacy leak-age. These properties reveal an emerging privacy risk inher-ent to sparse attention mechanisms and motivate timely in-vestigation in modern LLM deployments [38]. 
+
+Challenges. While the SIMA side channel exposes a promis-ing and principled attack surface, translating this leakage into practical, end-to-end attacks is non-trivial. Successfully exploiting SIMA in real LLM deployments requires overcom-ing several critical technical challenges. First, SIMA behav-ior is not directly observable. An attacker cannot see KV accesses or sparsity decisions, and must instead infer them                                                           
+
+> 1arXiv:2609.38830v1 [cs.LG] 30 Sep 2026 Side-Channel Attacks Threat Surface Extracted Info. Prefill-Phase Attack Decoding-Phase Attack Mitigation Prevention Detection
+> Time Will Tell [57] Timing (response time) Response length 4888
+> Early Bird [37] Serving order KV Cache hit/miss 48[6, 26] [6] PromptPeek [50] Timing (time-to-first-token) KV Cache hit/miss 48[6, 26] [6] InputSnatch [63] Timing (time-to-first-token) KV Cache hit/miss&hit ratio 48[6, 26] [6] What Was Your Prompt [48] Network traffic Token-length sequence 44[30, 61] 8
+> Whisper Leak [28] Network traffic&timing Token-length sequence&timing sequence 48[30, 61] 8
+> Spill The Beans [1] CPU shared cache (embedding table) Embedding access hits 84[47] [19] I Know What You Said [13] CPU shared cache (embedding table) Embedding access hits&access order 44[47] [19]
+> This work Sparsity-induced memory access Sparsity patterns 4488
+
+Table 1. Comparison of representative side-channel attacks that expose privacy leakage in LLM serving. Prefill-Phase At-tack and Decoding-Phase Attack indicate whether an attack can infer sensitive query information or recover generated outputs, respectively. Mitigation summarizes existing defense efforts: entries with citations indicate that prior prevention or detection mechanisms have been proposed and can be applied to mitigate the corresponding attack, while 8 denotes that no effective mitigation has been reported to date. indirectly from noisy GPU micro-architectural signals. Com-pounding this difficulty, LLM inference consists of two exe-cution phases, prefill and decoding, with fundamentally dif-ferent parallelism and access patterns: the prefill phase pro-cesses tokens in parallel and thus exposes a cumulative sig-nal, whereas the decoding phase proceeds token by token and exposes a step-wise signal [34, 64]. These phases pro-duce SIMA traces with distinct temporal structures and leak-age characteristics, making it necessary to design phase-specific extraction methods. Second, even when micro-architectural leakage can be captured, it is spatially coarse. KV tensors are managed at virtual-memory page granularity [18], and each observed page access aggregates the KV states of many to-kens. Consequently, the attacker only observes page-level SIMA traces that collapse multiple token-level accesses into a single event, obscuring fine-grained sparsity structure and discarding much of the information needed to distinguish individual tokens or prompt regions. Third, sparse attention traces encode computational importance rather than explicit lexical content. Recovering meaningful private information therefore requires reconstructing latent access structure and learning the statistical relationship between SIMA traces and high-level semantics or token identities. 
+
+Solutions. We present SpaRLeaK, the first phase-aware side-channel framework that exploits SIMA behavior during LLM inference. SpaRLeaK observes GPU micro-architectural sig-nals and abstracts them into SIMA traces that reflect the input-dependent KV access behavior in prefill and decoding phases, respectively. SpaRLeaK then converts these traces into approximate sparsity patterns and uses them as a struc-tural signal to infer sensitive information without accessing the victim’s KV contents. To enable practical exploitation of SIMA leakage, SpaRLeaK incorporates the following de-signs. First, SpaRLeaK introduces two GPU side-channel primi-tives to extract SIMA traces. It distinguishes prefill and de-coding phases solely from GPU execution dynamics: the pre-fill phase performs highly parallel computation over the in-put context, whereas the decoding phase proceeds sequen-tially, generating one token at a time. Exploiting this transi-tion, SpaRLeaK recovers cumulative SIMA traces during the prefill phase using an L2-cache–based Invalidate+CompaRe primitive, and extracts step-wise SIMA traces during the de-coding phase using a TLB-based Evict+Reload primitive. Second, to overcome spatial aggregation at page granular-ity, SpaRLeaK performs trace reconstruction to infer approx-imate token-level sparsity profiles. Rather than attempting exact recovery, SpaRLeaK exploits spatial locality and distri-butional regularities in sparse attention. By enforcing statis-tical consistency with observed SIMA traces, it reconstructs latent access structure sufficient to restore discriminative power for downstream inference. Finally, SpaRLeaK treats reconstructed SIMA traces as a latent structural signal and leverages their statistical corre-lation with semantic attributes and token identities. Specifi-cally, SpaRLeaK learns a model that maps from reconstructed traces to private information through offline profiling. Based on this principle, SpaRLeaK realizes two end-to-end infer-ence attacks: Query Attribute Inference (QAI), which infers high-level semantic properties of user prompts from prefill-phase traces, and Autoregressive Token Recovery (ATR), which reconstructs generated tokens from decoding-phase traces. In both cases, the adversary applies a learned mapping at runtime without access to the victim’s model, prompts, or outputs. 
+
+Evaluation. We conduct an extensive evaluation of SpaR-LeaK across multiple widely-adopted LLMs, sparse atten-tion mechanisms, and privacy-sensitive datasets. The results demonstrate that SIMA constitutes a powerful side channel, enabling accurate attack of both query attributes and gen-erated responses. Across a broad range of configurations, SpaRLeaK achieves average attack success rates of 90.9% for query attribute inference and 87.3% for autoregressive token 
+
+> 2
+
+recovery. Notably, even under realistic system noise and model evolution, SpaRLeaK retains over 90% of its original attack effectiveness. We further evaluate a potential mitiga-tion by injecting input-independent randomness into spar-sity patterns. While this approach reduces attack effective-ness, it does so at the cost of degraded inference quality. 
+
+2 Background and Motivation 
+
+In this section, we first give background about LLM infer-ence with sparse attention, followed by the motivation of privacy leakage in sparse attention. 
+
+2.1 Large Language Models Inference Attention Mechanism. Modern LLMs are primarily built on the Transformer architecture [45], whose core compo-nent is multi-head self-attention. During inference, LLM ex-ecution consists of two phases: prefill and decoding . In the prefill phase, the model processes the entire input sequence in parallel, with computation and memory cost scaling with input length. In the decoding phase, each newly generated token attends to all previously processed tokens. To avoid re-dundant computation, modern inference engines maintain a key-value (KV) cache that stores the 𝐾 and 𝑉 representa-tions of past tokens and reuses them across decoding steps [18, 20]. 
+
+Sparse attention. To improve inference efficiency, recent work proposes sparse attention mechanisms [10, 40, 43, 53, 60], motivated by the observation that only a small subset of tokens contributes substantially to attention outputs. Rather than attending to all tokens, sparse attention selectively re-stricts attention computation to a subset of tokens chosen based on the current query or decoding token, reducing com-putation and memory overhead in both prefill and decoding phases. Existing sparse attention approaches mainly focus on iden-tifying important tokens without explicitly computing full attention scores. They can be broadly categorized into three classes: (1) activation-based saliency methods that infer im-portance from model activations or residual norms [5, 40, 53, 60]; (2) block-level scoring methods that approximate at-tention at the block or page level and retain tokens from high-scoring blocks [10]; and (3) learned predictors that use lightweight models to directly predict important tokens [12, 43, 52]. 
+
+GPU memory access behavior. As shown in Figure 1, the KV cache of tokens is stored in GPU high-bandwidth mem-ory (HBM) and managed by the GPU virtual memory sys-tem, which operates at page granularity [3, 31]. On con-temporary NVIDIA GPUs, virtual memory is managed us-ing fixed-size pages that span 64 KB to 2 MB in contigu-ous virtual address space [3]. In contrast, prior work shows that the KV tensors associated with a single token occupies Multi-Head Attention Add & Norm Feed-Forward Network Add & Norm Prompt Tokens Query Response Tokens Sparse Attention Mechanism Sparsity Selector Attention Output 
+
+… …
+
+> Selected Tokens Skipped Tokens
+> KV Cache of Prompt Tokens
+> Query/output token
+> Nx
+> GPU High Bandwidth Memory (HBM)
+> GPU Memory
+> Shared Multi-Level Cache (L1/L2 Cache)
+
+…   
+
+> SM SM SM SM
+
+…Virtual Memory Pages (save tokens’ KVs) 
+
+Figure 1. The illustration of sparse attention mechanism in LLM inference and its associated GPU memory access. 00                              
+
+>  0          
+>     
+> 
+>    
+>     
+>    
+>     
+>    
+>        
+
+Figure 2. Sparsity pattern in prefill phase. Activation fre-quency denotes how often a given token is selected by sparse attention during the prefill phase. only a few kilobytes per layer, typically in the range of 10-30 KB [18]. As a result, a single GPU memory page typically co-locates the KV tensors of multiple tokens. Under sparse attention, the model first identifies a subset of important tokens for a given token. This selection is ul-timately realized at page granularity by the GPU memory subsystem: when a token is selected, the virtual memory pages containing its KV tensors are fetched from HBM into the on-chip cache hierarchy [7]. The fetched KV tensors are then consumed by streaming multiprocessors (SMs) for at-tention computation, while tokens that are not selected do not trigger page accesses. Consequently, sparse attention induces data-dependent page-level memory access patterns that implicitly aggregate the activities of multiple tokens co-located within each page. 
+
+2.2 Motivation 
+
+In this section, we characterize sparsity patterns induced by sparse attention during LLM inference. These patterns dif-fer between the prefill and decoding phases, revealing sen-sitive information about user queries and LLM generated responses, which motivates the SIMA side channel. 
+
+Motivation 1: Sparse attention induces distinctive ac-cess patterns in the prefill and decoding phases. 
+
+> 3
+
+Sparse attention mechanisms [5, 40, 60] fundamentally al-ter the execution behavior of LLM inference. By selectively computing attention over only a subset of tokens, sparse attention induces structured, input-dependent selection of key-value (KV) states, in contrast to dense attention where all tokens are uniformly accessed. While these selection de-cisions are made at the model level, they directly determine which KV tensors are accessed during inference and how frequently they are reused. From an execution perspective, such non-uniform KV access behavior inevitably translates into data-dependent interactions with the GPU memory hi-erarchy. Therefore, we characterize the sparsity patterns pro-duced by sparse attention in the prefill and decoding phases, and show that they exhibit qualitatively different structures across the two phases. These differences motivate a phase-aware view of sparsity-induced leakage and SIMA-based side-channel attacks. We use the LLaMA3-8B [14] model with sparse attention enabled. In our setting, each inference request is formed by concatenating a fixed system prompt and a user-provided query. Unless otherwise stated, the prompt is identical across all motivation experiments and is constructed from an open-source healthcare dataset [35]. All inputs are issued under a fixed system prompt built from an open-source healthcare dataset, with a total prompt length of approximately 2K to-kens. During the prefill phase, sparse attention selects the top 10% of prompt tokens for each query token based on approximate attention scores [10]. 
+
+Prefill-phase sparsity pattern. During the prefill phase, LLM processes entire input context in parallel under sparse attention. Rather than attending uniformly to all context to-kens, sparse attention selectively activates a subset of to-kens whose KV states contribute to the attention compu-tation. As prefill proceeds, these selective activations form a characteristic sparsity pattern over the input context, re-flecting how attention is distributed across different parts of the input. We visualize this sparsity pattern for an example input in Figure 2. Two observations stand out. First, attention acti-vation is highly skewed: a small subset of tokens is consis-tently emphasized, while most tokens receive little or no at-tention. Second, sparsity patterns vary substantially across attention layers and heads. As shown in Figure 2, different layers and heads focus on different parts of the input, sug-gesting that sparse attention captures complementary se-mantic information across model components. 
+
+Decoding-phase sparsity pattern. In contrast to the pre-fill phase, decoding phase proceeds autoregressively. At each decoding step, sparse attention selectively activates only a limited subset of context tokens when computing the next-token representation. Consequently, the sparsity pattern ob-served at a given step reflects which parts of the input con-text are selectively attended at that moment. L   L   L                  
+
+>    
+> L  
+>    
+> L  
+>    
+> L  
+>        
+
+Figure 3. Sparsity pattern at a selected decoding step. Acti-vation indicator is a binary value indicating whether a token is selected by sparse attention at the given decoding step. Query : A 74 year old Female with blood type B+ is dealing with [illness] . Her insurance provider is Aetna, and the treatment expenses totaled $27,554. What care options should be considered?  
+
+> (a) Cumulative sparsity intensity of inputs with different ‘ illness '. (b) Cumulative sparsity intensity differences.
+
+Figure 4. Sparsity patterns of user queries with different attributes. In this example, we change the illness categories in different queries. We illustrate this behavior by plotting the sparsity pattern at a representative decoding step in Figure 3. As shown, each decoding step activates only a small fraction of the context, confirming that decoding-phase sparsity is highly selective and fine-grained. Similar to the prefill phase, the activated tokens differ markedly across layers and heads, resulting in heterogeneous yet structured sparsity patterns across the LLM. 
+
+Motivation 2: Prefill- and decoding-phase sparsity patterns correlate with sensitive query and responses. 
+
+Building on our analysis of attention sparsity patterns, we first examine whether the sparsity induced during the prefill phase correlates with high-level semantic attributes of user inputs. This question is motivated by prior work showing that side-channel signals derived from model execution can support attribute-level inference even without reconstruct-ing the exact input content [17, 23, 24]. Figure 4 compares prefill-phase sparsity patterns for two inputs that differ only in a single semantic attribute, namely the illness category (e.g., Obesity versus Asthma ), while all other attributes and the system prompt remain identical. As shown in Figure 4(a), the two inputs induce noticeably dif-ferent sparsity distributions over the same prompt. Certain parts of the prompt are consistently emphasized under one illness category but not the other. To further characterize this effect, Figure 4(b) visualizes the difference between the two sparsity patterns, revealing systematic and non-negligible deviations across the prompt.      
+
+> 4Response : If the patient is overweight, losing weight may help improve his health . A healthcare provider can recommend appropriate dietary changes and physical activities to achieve a healthy weight loss.
+> (a) Sparsity patterns on decoding tokens: ‘ his ’ vs ‘ health ’. (b) Sparsity patterns on decoding tokens: ‘ health ’ vs ‘ healthy ’.
+
+Figure 5. Sparsity patterns of different decoding tokens, in-cluding “his”, “health”, and “healthy”. These results indicate that prefill-phase sparsity patterns are sensitive to high-level semantic attributes of the input. Even when the overall prompt structure and length are fixed, modifying a single semantic attribute reshapes which parts of the prompt are repeatedly attended and how strongly. This observation motivates our Query Attribute Inference at-tack: if an adversary can recover sparsity information corre-sponding to the prefill phase, it may infer sensitive semantic properties of the user input without reconstructing the ex-act prompt text. We then examine whether sparsity patterns during the de-coding phase encode information about generated responses. Using the same LLM, prompt, and sparsity configuration, we analyze the attention sparsity pattern at each decoding step. At a given step, the pattern reflects which parts of the prompt are attended when computing the next output token. Figure 5 visualizes representative decoding-phase sparsity patterns induced by different output tokens. As shown in Figure 5(a), distinct tokens (e.g., “his” versus “health” ) lead to clearly different sparsity patterns over the prompt. No-tably, even semantically related tokens (e.g., “health” and 
+
+“healthy” ) can induce distinguishable sparsity patterns, as illustrated in Figure 5(b). This arises because sparse atten-tion is conditioned not only on the current token but also on the previously generated context, which evolves over the decoding phase and reshapes the attention distribution. Taken together, these observations show that decoding-phase sparsity patterns are strongly token-dependent. Each generated token induces a distinctive attention footprint shaped jointly by its semantic content and its position in the re-sponse sequence. This property underpins our Autoregres-sive Token Recovery attack: if an adversary can infer spar-sity patterns across decoding steps, it may progressively dis-tinguish candidate tokens and reconstruct the generated re-sponse. 
+
+3 Attack Overview 
+
+This section presents the threat model, SIMA leakage mech-anism, and end-to-end attack workflow. Sparsity Patterns 
+
+> SIMA Traces Side-Channel
+> Co-located SCA Attacker
+> ……………
+> …cancer …
+> To access a…
+> Query attribute LLM response
+
+… 
+
+> Memory pages Privacy Leakage
+
+Shared Physical GPUs 
+
+> LLM Infer.
+> MLA Add&Norm FFN Add&Norm Input Output
+
+Figure 6. The illustration of the threat model. 
+
+3.1 Threat Model 
+
+As shown in Figure 6, we consider a realistic LLM serving de-ployment in which a victim runs sparse-attention-enabled inference on a modern GPU. Specifically, we target a service-style setting in which the victim application uses a public and fixed system-prompt template across requests, while the user query and generated response remain private, as in open-source RAG and agent applications that expose and reuse standardized templates, often with prefix caching. This setting reflects current practice in long-context LLM serv-ing, where sparse attention is increasingly adopted to re-duce overhead [10, 40, 53, 60]. 
+
+Adversary and attack goal. We consider an unprivileged adversary that runs a co-resident spy process on the same physical GPU as the victim, following the standard co-residency threat model in GPU side-channel attacks [44, 63]. The spy process issues GPU probing operations to observe micro-architectural effects induced by the victim’s sparse-attention computation. The adversary’s goal is to infer sensitive information about both the user query and the LLM’s response via the SIMA side channel. Concretely, the adversary (i) performs Query Attribute Inference (QAI) by exploiting cumulative SIMA be-havior during the prefill phase, and (ii) conducts Autoregres-sive Token Recovery (ATR) by leveraging step-wise SIMA ob-servations during the decoding phase. 
+
+Adversary capabilities. Consistent with prior work [13, 44], we consider an unprivileged adversary co-resident with the victim on the same physical GPU. This setting can arise when a local user runs a CUDA workload on a shared GPU or when a remote tenant’s job is co-scheduled on the same non-partitioned GPU. The adversary requires only user-level CUDA access and monitors memory-related micro-architectural effects, including L2 cache activity and TLB residency across context switches, by measuring the latency of its own probes. This requires no privileged counters, driver modifications, or access to victim memory. The resulting observations ex-pose secret-dependent access patterns induced by sparse at-tention without directly revealing KV contents or exact vic-tim addresses. In addition, the adversary has no control over GPU sched-uling or exact execution timing. Under the fixed-template serving setting and a fixed model and runtime configuration, 
+
+> 5
+
+we further assume that the adversary can calibrate contention-based probe mappings for the corresponding prompt-side KV pages offline and reuse them across victim invocations, without accessing KV contents or recovering exact runtime addresses. 
+
+Threat surface and practicality. Data-dependent KV ac-cesses induced by sparse attention create the observable GPU memory effects exploited by SpaRLeaK. We consider co-resident execution alongside deployed LLM services during normal, uninterrupted operation [62]. Such services maintain long-lived model processes to avoid repeated initialization and continuously serve incoming requests. In this setting, the monitored prompt-side KV allocations are reused across re-quests, allowing offline page-probe mappings to remain ap-plicable. 
+
+3.2 Attack Workflow 
+
+As shown in Figure 7, SpaRLeaK follows a three-stage attack pipeline that progressively transforms low-level GPU micro-architectural observations into high-level privacy leakage. 
+
+¿ ¿ First, it extracts phase-aware SIMA traces from L2 cache and TLB activity, using the KV-cache layout and calibrated probe mappings to distinguish access features across layers and KV heads. It exploits the distinct execution characteris-tics of prefill and decoding to obtain cumulative traces for the prefill phase and step-wise traces for the decoding phase. 
+
+¡ Second, it reconstructs approximate token-level sparsity patterns from coarse page-level SIMA traces by leveraging the locality and statistical regularity inherent in sparse at-tention, enabling probabilistic refinement despite page-level aggregation. ¬ Finally, it performs sparsity-guided inference attacks that incorporate phase-specific leakage semantics, by training lightweight MLP-based classifiers on the recon-structed sparsity patterns, enabling query attribute infer-ence during the prefill phase and autoregressive token re-covery during the decoding phase. 
+
+4 Phase-Aware SIMA Trace Extraction 
+
+In this section, we first describe how to distinguish the pre-fill and decoding phases, and then introduce two primitives for SIMA trace extraction in the prefill and decoding phases, respectively. 
+
+4.1 Prefill and Decoding Distinction 
+
+We distinguish the prefill and decoding phases based on their distinct GPU execution patterns. During the prefill phase, the model processes the entire input context in a single for-ward pass, triggering intensive matrix computations over the full context length. Consequently, the prefill phase ex-hibits a short but concentrated burst of compute-heavy GPU kernels, resulting in high kernel-time density. Here, a kernel refers to a computation routine executed on the GPU, such as matrix multiplication or attention computation. In con-trast, the decoding phase generates tokens iteratively, with each token requiring an incremental forward pass. This pro-duces a long execution trace with a near-periodic structure corresponding to successive token generations. To locate the transition between these temporal patterns, one feasible approach uses the kernel timeline from Nsight Systems [32] as an independent boundary reference. Nsight was accessible without root privileges in our setup. Using this timeline, GPU activity can be quantified by a kernel-time-based utilization proxy: util (𝑤) = 𝜏 |𝑤| , where 𝜏 denotes the cumulative kernel execution time within a fixed window 
+
+𝑤 , and |𝑤| is the window length. Focusing on GEMM kernels provides a cleaner and more stable signal, as they dominate LLM computation. The same transition from concentrated activity to near-periodic execution can also be inferred di-rectly from the intensity and periodicity of the collected L2/TLB traces. 
+
+4.2 SIMA Trace Extraction 4.2.1 Prefill-Phase SIMA Trace Extraction. During this phase, the LLM processes the prompt and user query in par-allel. Under sparse attention, query tokens selectively ac-cess KV states associated with prompt tokens. We define the prefill-phase leakage as a cumulative SIMA trace , denoted by 
+
+{𝑐 1, 𝑐 2, … , 𝑐 𝑁 }, where 𝑁 is the number of monitored prompt-side KV pages. Each 𝑐 𝑖 estimates how frequently page 𝑝 𝑖 is accessed across query-token attention computation during the prefill phase. 
+
+Attack Implementation. SpaRLeaK leverages the observa-tion that repeated sparse accesses to prompt-side KV pages create measurable replacement pressure in the shared GPU L2 cache. Although the exact GPU L2 replacement policy is undocumented, prior work shows that cache contention produces stable eviction behavior [59]. During offline cali-bration, for each monitored page 𝑝 𝑖 , the attacker constructs a small set of cache-line-aligned probe addresses 𝑠 𝑖 whose L2 eviction behavior is correlated with accesses to 𝑝 𝑖 , following the methodology of [59]. As illustrated in Figure 8, at runtime the spy invokes WRITE_CACHE( 𝑠 𝑖 )
+
+to populate the calibrated probe lines in L2 and applies READ_CACHE( 𝑠 𝑖 )
+
+with the Invalidate+CompaRe primitive while the victim executes the prefill phase under default GPU scheduling. Ac-cesses to page 𝑝 𝑖 introduce competing cache lines. More fre-quent accesses therefore produce larger eviction footprints on 𝑠 𝑖 . By accumulating these footprints over the prefill phase, SpaRLeaK estimates 𝑐 𝑖 for each monitored page and recov-ers the cumulative SIMA trace, without recovering page con-tents or exact runtime addresses. While this measurement does not reveal exact access counts, it reliably captures rela-tive page-level sparsity induced by sparse attention, which is sufficient for downstream sparsity reconstruction and in-ference attacks.   
+
+> 6KV Page 1 KV Page 2 KV Page N
+> Feed-Forward Network (FFN) Feed-Forward Network (FFN)
+
+① Phase-Aware SIMA Trace Extraction 
+
+> xL
+> Generate token
+
+…       
+
+> Sparse attention in prefill
+> What causes fever and cough ?Flu
+> KV Page 1 KV Page 2 KV Page N
+
+…
+
+> Sparse attention in decoding
+> xL
+
+② Sparsity Pattern Reconstruction 
+
+1 1 0 0 1 
+
+> Long-tail distribution Uniform distribution
+
+1 1 1 0 1 0 1 0 0 1 0 0 0 0
+
+> Less activations More activations
+> High-frequency pages Low-frequency pages Dense-activated pages Sparse-activated pages
+> Token-level sparsity pattern in decoding Token-level sparsity pattern in prefill
+
+③ Sparsity-guided inference attacks  
+
+> Shared L2 Cache
+> Cumulative SIMA
+> TLB
+
+1 1 0 0 1
+
+> Step-wise SIMA
+
+1 1 1 0 1 0 1 … 0 0 1 0 0 0 0 Autoregressive token recovery (ATR)                   
+
+> is Flu acommon viral illness
+> Query attribute inference (QAI)
+> Prefill sparsity pattern Attribute predictor
+> Concat. Norm.
+> Decoding sparsity pattern Token predictor
+> Reduc. Seq.
+> 1110101 … 0010000
+> Attribute Probability
+> Asthma Diabetes Flu Cancer Arthritis
+> Token Probability
+> Is a…/n It
+> Id
+> 123…1758
+> Illness: Flu | Age: 40 | Blood: A | Gender: Male
+> Prefill-Phase Decoding-Phase
+
+Figure 7. The overview of the attack workflow. SpaRLeaK proceeds in three stages: (1) phase-aware extraction of SIMA traces for prefill and decoding phases using different side-channel primitives, (2) reconstruction of token-level sparsity patterns from page-level SIMA traces, and (3) sparsity-guided inference for query attribute inference and autoregressive token recovery. L2 Cache Lines          
+
+> Probe set 𝑠 !
+> (proxy for page 𝑝 !)
+> Prime cache: populate probe lines, WRITE_CACHE(S i)
+> Invalidate+Compare: extract evictions, READ_CACHE(S i)
+> Victim Prefill
+> Read lines Control lines Eviction footprint # eviction probe lines in
+
+𝑠 ! 
+
+> Estimated trace Cumulative SIMA trace
+
+𝑐 ! 
+
+> SIMA Side Channel SIMA Trace Extraction
+
+Figure 8. Spy process for estimating page-level access fre-quency during the prefill phase by repeatedly measuring cache replacement effects induced by sparse-attention KV accesses. 
+
+4.2.2 Decoding-Phase SIMA Trace Extraction. During the decoding phase, the LLM generates the response autore-gressively, producing one token per decoding step. At step 
+
+𝑡 , LLM computes attention between the newly generated token and a subset of prompt tokens. We characterize the decoding-phase sparsity as a step-wise SIMA trace {𝑏 𝑡 1, 𝑏 𝑡 2, … , 𝑏 𝑡 𝑁 },where 𝑏 𝑡 𝑖 ∈ {0, 1} indicates whether the KV residing in the page 𝑝 𝑖 are accessed by sparse attention at step 𝑡 . Unlike the cumulative trace in the prefill phase, this binary trace captures per-step page participation and evolves across de-coding steps. 
+
+Attack Implementation. SpaRLeaK exploits the GPU Trans-lation Lookaside Buffer (TLB), which caches virtual-to-physical page translations and exposes page-level access footprints under contention. Our design utilizes the GPU TLB Evict + Reload primitive demonstrated in prior work [58]. The key idea is to infer whether a monitored prompt-side page 
+
+𝑝 𝑖 is accessed during the decoding phase by measuring the translation latency of an attacker-owned probe page 𝑞 𝑖 that conflicts with 𝑝 𝑖 in the TLB, without recovering virtual-page contents or exact victim addresses. Under the fixed model and runtime configuration, the victim pages remain stable Shared TLB Reset state: evict translations,          
+
+> RESET_TRANSLATION_STATE()
+> Probe translations: check latency, PAGE_Translated( 𝒑 𝒊 )
+> Victim Decoding
+> TLB usage Clear state Repeat over decoding steps
+> TLB hit/miss signal TLB hit -> 𝑏 != 0
+> TLB miss -> 𝑏 != 1
+> Sequential SIMA trace
+> {𝑏 ", 𝑏 #, … , 𝑏 $}
+> 𝑝 "𝑝 #𝑝 $…
+> SIMA Side Channel SIMA Trace Extraction
+
+Figure 9. Spy process for recovering the sequential page-level sparsity pattern during the decoding phase. At each de-coding step, the spy detects whether KV data from a prompt page are accessed by checking the persistence of its address translation state. across invocations. The spy therefore calibrates two compo-nents offline: for each monitored page 𝑝 𝑖 , it allocates can-didate pages in its own address space and selects a probe page 𝑞 𝑖 whose translation conflicts with the same or a highly overlapping TLB set as 𝑝 𝑖 , following the TLB-set calibra-tion methodology of [58]. The spy also estimates the aver-age decoding-step duration from the periodicity of offline probe traces and sets the probing-window length Δ to ap-proximately cover one generation step. In our implementa-tion, one probing round completes within Δ, enabling step-granularity observation. At runtime, for each window, the spy prepares the cali-brated probe-page translations, allows the victim to execute during the window, and then reloads each 𝑞 𝑖 to measure its translation latency, as shown in Figure 9. If sparse attention accesses 𝑝 𝑖 , the resulting TLB contention may displace the translation entry of 𝑞 𝑖 , causing a high-latency reload. SpaR-LeaK therefore sets 𝑏 𝑡 𝑖 = 1 when the measured latency ex-ceeds a calibrated threshold, and otherwise sets 𝑏 𝑡 𝑖 = 0 . Re-peating this procedure across monitored pages yields an ap-proximate step-wise SIMA trace {𝑏 𝑡 1, … , 𝑏 𝑡 𝑁 }.In practice, a window of length Δ may not perfectly align with a single decoding step due to scheduling jitter or other 
+
+7Figure 10. Illustration of page-level and token-level spar-sity patterns in the prefill phase. noise. To tolerate such misalignment, SpaRLeaK aggregates measurements from adjacent probing windows and applies majority voting to suppress transient noise. 
+
+5 Sparsity Pattern Reconstruction 
+
+This section presents reconstruction methods for refining token-level sparsity from extracted SIMA traces, which pro-vide more fine-grained information for subsequent attacks. 
+
+5.1 Prefill-Phase Sparsity Reconstruction 
+
+Reconstructing token-level sparsity patterns from page-level SIMA traces is challenging because page-level observations compress the activations of multiple tokens into a single value, thereby losing fine-grained intra-page information. A straightforward reconstruction that uniformly distributes the observed accesses across tokens within each page would fail to preserve the highly non-uniform structure of sparse attention. Fortunately, we find that the page-level cumula-tive access frequency is correlated with the latent token-level activation distribution within the page, providing a useful statistical cue for reconstruction. To demonstrate this correlation, Figure 10 presents page-level aggregations of prefill-phase sparsity patterns with a page size of 10 tokens. The bottom panel shows the page-level cumulative SIMA trace, while the top panels show the token-level activation frequencies within two representative pages. A clear correlation emerges: pages with higher cumu-lative frequency tend to exhibit more skewed, long-tailed token-level activation patterns, whereas low-frequency pages show flatter and more uniform activation across tokens. For example, the 27-th page (top-left) lies in a high-frequency region and contains a small number of tokens that domi-nate activation, while 156-th page (top-right) lies in a low-frequency region and displays an even activation distribu-tion. This correlation is consistent with how sparse attention selects tokens during the prefill phase. For all query tokens, sparse attention repeatedly reuses only a small subset of highly relevant prompt tokens, while most prompt tokens are selected rarely [51, 65]. Such repeated selection yields a long-tailed distribution of token-level activation frequen-cies. Since page-level frequency is computed by summing token-level activations within each page, pages that contain 
+
+Figure 11. Illustration of page-level and token-level spar-sity patterns in the decoding phase. one or more frequently selected tokens naturally accumu-late higher total frequency and appear more concentrated at the token level. Conversely, pages dominated by infre-quently selected tokens accumulate lower frequency and consequently appear flatter. Motivated by this observation, SpaRLeaK performs distri-butional reconstruction to reconstruct an approximate token-level sparsity from page-level SIMA traces. Concretely, SpaR-LeaK treats each page’s observed frequency as a control sig-nal that determines how concentrated the token-level spar-sity distribution should be: higher-frequency pages are mod-eled with more skewed token participation, while lower-frequency pages are modeled with flatter participation. The reconstructed token-level sparsity is generated in a way that preserves consistency with observed page-level frequency. 
+
+5.2 Decoding-Phase Sparsity Reconstruction 
+
+The decoding phase introduces a distinct reconstruction chal-lenge. Unlike the cumulative prefill-phase trace, the step-wise SIMA trace provides only a binary observation for each page: an activated page indicates that some token within it is accessed, but does not reveal its intra-page activation pat-tern. We therefore examine whether the spatial distribution of activated pages at each decoding step provides additional information for reconstruction. Figure 11 illustrates the relationship between page-level and token-level sparsity during the decoding phase for a rep-resentative decoding step (step 5 in this example). We parti-tion the prompt into pages of 10 contiguous tokens and visu-alize two views: (i) the step-wise page-level SIMA trace ob-served at decoding time (bottom), and (ii) the corresponding ground-truth token-level activations within two selected pages (top), which are shown only for illustration. An empirical correlation can be observed: pages that are densely activated at the page level during the decoding phase tend to contain multiple activated tokens, whereas pages that are sparsely activated typically contain only a small number of active to-kens. For example, the page region around the 156-th page exhibits frequent page-level activation and contains several activated tokens, while the region around the 46-th page is rarely activated and shows only limited token-level activity. Although the exact activation patterns vary across decod-ing steps and individual tokens, the number of active tokens 
+
+> 8
+
+within a page closely follows the local density of the page-level SIMA trace. This behavior is consistent with the locality of sparse at-tention during the decoding phase. At each decoding step, sparse attention selects only a small set of prompt tokens, and these selections are not uniformly distributed across the prompt. Instead, selected tokens tend to cluster within a few contiguous regions, while most regions receive no ac-tivation. The page-level SIMA trace provides a coarse pro-jection of this token-level selection onto page boundaries: clustered token selections lead to dense page-level activa-tion, whereas isolated selections result in sparse page-level signals. Motivated by this observation, SpaRLeaK reconstructs an approximate token-level sparsity pattern by exploiting spa-tial locality in sparse attention. SpaRLeaK uses the local den-sity of page-level activations around a target page as a proxy for the extent of intra-page token participation. Based on this proxy, SpaRLeaK instantiates a representative token-level sparsity pattern that is consistent with the observed page-level SIMA trace, while preserving the spatial struc-ture and step-wise dynamics of sparse attention. 
+
+6 Sparsity-Guided Inference Attack 
+
+In this section, we describe how SpaRLeaK infers sensitive information from both user queries and LLM responses. 
+
+6.1 Query Attribute Inference 
+
+The adversary aims to infer sensitive attributes of a user query, such as health-related semantic categories, consis-tent with prior inference attacks [27, 33]. SpaRLeaK formu-lates this as supervised classification using reconstructed token-level sparsity profiles from the prefill phase (§5), which capture attention allocation across prompt tokens. During offline profiling, the adversary collects sparsity profiles paired with known attribute labels from its own queries. The clas-sifier learns associations between these structural patterns and semantic attributes, enabling online inference without access to the victim’s query text. 
+
+Normalization for scale invariance. Token-level sparsity profiles are affected by query length and the overall amount of attention activity. To prevent these factors from obscur-ing attribute-specific patterns, we normalize each sparsity profile to remove global scale differences. This emphasizes the relative distribution of sparse attention across prompt tokens, allowing the classifier to focus on structural varia-tions that are more indicative of semantic attributes. 
+
+Cross-layer and cross-head feature composition. Sparse attention decisions are made independently across layers and attention heads, and different components may capture complementary aspects of the input. Rather than collapsing these signals prematurely, we retain sparsity features from all layers and heads and concatenate them into a unified rep-resentation. This preserves cross-layer regularities and vari-ability in sparsity behavior, improving the robustness and accuracy of attribute inference. 
+
+6.2 Autoregressive Token Recovery 
+
+SpaRLeaK recovers generated responses token by token us-ing step-wise token-level sparsity profiles reconstructed dur-ing decoding (§4.2.2). We formulate recovery as classifica-tion at each decoding step. During offline profiling, the ad-versary pairs step-wise sparsity profiles with known output tokens from its own queries. Features from the monitored layers and KV heads are concatenated to train a token clas-sifier. Online recovery applies this classifier sequentially to reconstructed profiles without accessing victim outputs. 
+
+Sequential feature augmentation. Although sparsity pro-files at individual decoding steps already contain discrimina-tive information, autoregressive generation exhibits strong temporal dependence. To capture such dependencies with-out increasing feature dimensionality, we augment each step’s feature representation with aggregated sparsity information from preceding decoding steps. This allows the classifier to exploit temporal regularities in how sparsity patterns evolve as decoding progresses. 
+
+Restricted token prediction space. To reduce the com-plexity and class imbalance of full-vocabulary classification, SpaRLeaK constructs a task-specific candidate set from the offline profiling corpus. The set is fixed before online execu-tion and reused within the same task. Online recovery uses SIMA traces to predict tokens within this set, without ac-cessing victim outputs. Supplementary experiments exam-ine whether the gains come from SIMA or the restricted candidate set. 
+
+7 Evaluation 
+
+7.1 Evaluation Setup Models. We evaluate three representative LLMs from dif-ferent model families: LongChat-7B [21], LLaMA3-8B [14], and Qwen3-8B [55]. Each model is configured with three classes of sparse attention mechanisms: (1) activation-based saliency [5, 53, 60], which identifies important tokens by comparing intermediate activations; (2) block-level scoring [10, 40], which groups tokens into blocks or pages and computes approximate attention scores at the block level; and (3) learned predictors [12, 43, 52], which employ lightweight predictors to directly select salient tokens. 
+
+Datasets. We use three widely adopted datasets for privacy-sensitive evaluation: Healthcare [35], Financial QA [36], and Legal QA [11]. In the Healthcare dataset, each sample con-tains only attribute values. We construct LLM inference re-quests by transforming these attributes into unstructured queries using templates generated by a public model. For the Financial QA and Legal QA datasets, we summarize multiple 
+
+> 9
+
+Attribute Signal LongChat-7B [21] LLaMA3-8B [14] Qwen3-8B [55] 
+
+Act. Block Learn. Act. Block Learn. Act. Block Learn. 
+
+Illness (60) O(T) 89.4 ±1.1 83.3 ±0.7 99.8 ±0.1 86.9 ±0.8 92.1 ±1.1 99.5 ±0.4 86.3 ±0.8 86.8 ±0.5 98.4 ±0.3 O(P+R) 87.3 ±0.7 81.7 ±1.1 99.4 ±0.3 84.5 ±0.5 90.9 ±0.6 99.2 ±0.1 84.4 ±1.0 85.2 ±0.2 98.1 ±0.3 R(P) 70.4 ±2.6 66.4 ±1.2 78.7 ±0.7 67.1 ±1.9 66.51 ±1.4 74.4 ±1.2 60.3 ±3.6 62.3 ±1.8 75.3 ±1.0 
+
+R(P+R) 85.3 ±0.4 80.5 ±0.3 98.8 ±0.6 84.1 ±0.6 88.4 ±0.7 98.7 ±0.5 81.8 ±0.4 83.0 ±0.5 94.7 ±0.2 
+
+Age (8) O(T) 86.2 ±0.5 79.7 ±0.3 99.9 ±0.1 68.4 ±1.0 81.3 ±0.8 99.4 ±0.3 99.5 ±0.4 99.1 ±0.2 99.8 ±0.1 O(P+R) 85.3 ±0.2 77.3 ±0.4 99.8 ±0.1 67.3 ±0.5 79.2 ±0.4 98.2 ±0.2 99.4 ±0.1 98.1 ±0.2 99.6 ±0.1 R(P) 68.3 ±1.2 58.0 ±2.0 82.3 ±1.8 45.2 ±3.3 59.7 ±1.4 81.3 ±0.8 79.8 ±1.4 81.5 ±2.2 85.1 ±1.4 
+
+R(P+R) 82.3 ±0.4 74.5 ±0.4 99.8 ±0.1 62.0 ±0.9 77.9 ±0.5 97.1 ±0.3 97.4 ±0.1 97.1 ±0.3 99.4 ±0.1 
+
+Gender (2) O(T) 98.2 ±0.2 99.1 ±0.3 99.8 ±0.1 94.1 ±0.3 99.9 ±0.0 99.7 ±0.2 99.5 ±0.4 99.9 ±0.1 100.0 ±0.0 O(P+R) 97.5 ±0.3 98.7 ±0.3 99.4 ±0.3 91.8 ±0.4 99.8 ±0.2 99.6 ±0.1 99.5 ±0.2 99.6 ±0.3 100.0 ±0.0 R(P) 81.5 ±0.6 82.3 ±0.4 83.5 ±1.3 77.3 ±1.3 80.6 ±1.5 83.6 ±1.6 85.2 ±1.6 84.7 ±2.1 85.4 ±2.8 
+
+R(P+R) 96.4 ±0.2 96.8 ±0.4 99.3 ±0.6 90.6 ±0.4 99.7 ±0.2 99.4 ±0.5 99.3 ±0.3 99.7 ±0.1 100.0 ±0.0 
+
+Blood (8) O(T) 72.3 ±0.6 93.5 ±0.3 99.8 ±0.2 60.4 ±0.6 95.3 ±0.5 99.9 ±0.0 81.4 ±0.6 99.5 ±0.4 97.4 ±0.3 O(P+R) 71.1 ±0.4 92.6 ±0.3 99.8 ±0.1 59.2 ±0.4 93.3 ±0.4 99.9 ±0.1 80.3 ±0.4 99.5 ±0.3 97.2 ±0.2 R(P) 49.3 ±1.1 77.5 ±0.9 82.2 ±1.6 37.6 ±5.5 78.7 ±0.6 85.6 ±2.5 60.5 ±1.5 81.6 ±1.6 80.3 ±1.7 
+
+R(P+R) 67.9 ±0.6 91.5 ±0.3 99.7 ±0.1 55.2 ±0.3 92.0 ±0.3 99.8 ±0.1 77.4 ±0.5 99.1 ±0.4 95.5 ±0.2 
+
+Entity (70) O(T) 86.4 ±0.3 91.3 ±0.2 93.4 ±0.4 84.3 ±0.2 86.1 ±0.5 89.3 ±0.2 91.9 ±0.3 95.4 ±0.3 97.2 ±0.4 O(P+R) 85.0 ±0.3 90.3 ±0.4 92.3 ±0.3 84.0 ±0.2 84.3 ±0.2 88.4 ±0.2 90.7 ±0.2 93.3 ±0.3 96.4 ±0.3 R(P) 68.1 ±1.3 71.4 ±1.1 79.2 ±0.9 66.6 ±1.1 69.4 ±1.0 68.5 ±1.2 70.4 ±1.8 80.4 ±0.5 82.1 ±2.3 
+
+R(P+R) 84.0 ±0.3 88.3 ±0.2 90.3 ±0.4 80.3 ±0.5 82.0 ±0.3 84.9 ±0.3 88.6 ±0.3 92.2 ±0.3 94.8 ±0.4 
+
+Period (4) O(T) 94.0 ±0.4 94.3 ±0.2 97.4 ±0.3 95.9 ±0.4 98.3 ±0.2 99.1 ±0.2 97.7 ±0.3 98.5 ±0.1 99.8 ±0.1 O(P+R) 93.2 ±0.3 92.2 ±0.2 97.0 ±0.3 95.1 ±0.2 97.4 ±0.2 98.3 ±0.3 96.1 ±0.3 97.7 ±0.2 99.7 ±0.1 R(P) 79.6 ±1.1 77.9 ±1.0 81.2 ±1.3 80.5 ±0.8 82.4 ±1.7 83.2 ±1.6 81.4 ±1.5 79.9 ±2.5 84.3 ±1.4 
+
+R(P+R) 92.7 ±0.2 91.5 ±0.4 95.8 ±0.3 93.6 ±0.2 96.6 ±0.2 97.9 ±0.2 95.8 ±0.2 96.5 ±0.3 99.4 ±0.4 
+
+Topic (5) O(T) 93.4 ±0.3 97.3 ±0.2 98.6 ±0.2 91.1 ±0.3 95.3 ±0.4 95.3 ±0.4 89.0 ±0.2 91.8 ±0.3 92.5 ±0.5 O(P+R) 92.6 ±0.3 96.9 ±0.1 96.2 ±0.3 90.1 ±0.3 95.0 ±0.4 94.3 ±0.3 87.3 ±0.2 90.2 ±0.4 91.3 ±0.2 R(P) 76.3 ±1.2 79.5 ±1.3 81.2 ±2.2 72.3 ±1.3 78.2 ±2.1 79.4 ±2.3 75.5 ±2.1 76.3 ±1.6 77.3 ±1.7 
+
+R(P+R) 90.3 ±0.4 94.0 ±0.3 94.8 ±0.4 87.8 ±0.4 92.2 ±0.4 92.4 ±0.3 85.8 ±0.2 88.2 ±0.3 89.8 ±0.2 
+
+Domain (15) O(T) 94.1 ±0.2 94.6 ±0.4 98.5 ±0.2 95.8 ±0.3 97.3 ±0.4 98.8 ±0.2 91.2 ±0.3 91.3 ±0.3 98.4 ±0.2 O(P+R) 93.1 ±0.3 93.3 ±0.3 97.1 ±0.3 94.3 ±0.3 96.0 ±0.3 97.2 ±0.2 90.1 ±0.3 91.1 ±0.3 97.2 ±0.3 R(P) 79.3 ±1.0 80.1 ±1.6 81.3 ±1.5 79.4 ±1.8 80.2 ±1.2 82.1 ±2.2 72.5 ±1.5 71.5 ±1.1 80.2 ±1.9 
+
+R(P+R) 90.2 ±0.6 90.8 ±0.4 95.3 ±0.4 92.3 ±0.4 94.9 ±0.3 95.6 ±0.3 87.6 ±0.4 87.8 ±0.4 95.2 ±0.2 
+
+Role (8) O(T) 97.9 ±0.2 97.4 ±0.4 99.2 ±0.2 99.8 ±0.1 99.3 ±0.2 99.8 ±0.1 95.9 ±0.3 98.3 ±0.3 98.3 ±0.2 O(P+R) 96.3 ±0.2 95.8 ±0.3 98.4 ±0.2 99.3 ±0.0 98.3 ±0.2 99.1 ±0.2 94.3 ±0.2 96.8 ±0.3 97.2 ±0.1 R(P) 79.5 ±1.9 78.4 ±1.7 79.3 ±1.6 79.9 ±1.0 79.1 ±1.4 81.1 ±2.4 75.6 ±2.0 79.9 ±0.7 81.3 ±3.1 
+
+R(P+R) 94.9 ±0.3 94.8 ±0.2 96.8 ±0.3 97.6 ±0.3 96.9 ±0.3 97.8 ±0.4 92.6 ±0.3 95.4 ±0.2 95.1 ±0.3 
+
+Location (20) O(T) 88.8 ±0.1 89.6 ±0.3 92.2 ±0.3 87.7 ±0.2 85.4 ±0.2 89.6 ±0.3 91.8 ±0.2 93.3 ±0.3 95.2 ±0.3 O(P+R) 87.3 ±0.2 87.3 ±0.4 91.4 ±0.2 86.6 ±0.3 84.3 ±0.3 88.0 ±0.2 90.3 ±0.3 92.1 ±0.3 93.9 ±0.3 R(P) 69.3 ±1.6 70.3 ±1.3 71.5 ±2.0 69.8 ±1.2 68.5 ±1.6 71.4 ±1.7 72.5 ±1.8 73.1 ±1.3 75.2 ±1.4 
+
+R(P+R) 85.5 ±0.3 86.9 ±0.4 88.1 ±0.2 84.9 ±0.2 82.3 ±0.4 86.1 ±0.4 88.3 ±0.4 89.7 ±0.3 91.9 ±0.3 Table 2. Query attribute inference PASR (%) on Healthcare [35] (Illness, Age, Gender, Blood), Financial QA [36] (Entity, Period, Topic), and Legal QA [11] (Domain, Role, Location). Each entry report the mean ± 95% confidence interval over 20 runs. attributes within each query to enable attribute inference attacks. All constructed queries are fed into the deployed LLMs to generate responses, which are subsequently used to perform autoregressive token recovery attacks. 
+
+Metrics. We evaluate attack effectiveness separately for the prefill and decoding phases using phase-specific attack suc-cess rates. The prefill-phase attack success rate (PASR) is the fraction of correct attribute predictions among queries con-taining the corresponding attribute. Its denominator may   
+
+> 10 80 90 100 DASR (%) Oracle (T)
+> 92.31 87.36 90.19 89.76 82.96 87.55 92.96 89.28 90.81
+
+Activation   
+
+> LongChat-7B LLaMA3-8B Qwen3-8B
+> 92.55 87.41 90.61 90.32 84.06 87.36 93.47 89.24 92.45
+
+Block    
+
+> LongChat-7B LLaMA3-8B Qwen3-8B
+> 92.78 88.02 92.12 90.89 84.45 88.91 94.77 90.36 93.22
+
+Learning                                   
+
+> LongChat-7B LLaMA3-8B Qwen3-8B
+> 80 90 100 DASR (%) Oracle (P+R)
+> 91.77 86.54 89.33 88.43 82.07 86.53 91.69 88.79 89.57 91.34 86.91 89.46 88.78 83.34 86.89 92.14 88.25 91.44 92.14 87.23 90.78 89.43 83.01 87.44 93.48 89.39 92.51
+> 70 80 90 100 DASR (%) Real (P)
+> 78.32 76.11 76.89 75.44 70.12 74.34 79.36 75.44 77.56 78.34 75.65 75.21 74.26 73.41 74.89 79.54 77.26 76.92 80.12 74.46 79.36 79.78 70.19 77.14 81.33 75.82 78.14
+> Healthcare Financial QA Legal QA
+> 80 90 100 DASR (%) Real (P+R)
+> 89.11 84.78 87.44 86.43 80.86 84.53 90.08 86.03 88.72
+> Healthcare Financial QA Legal QA
+> 89.88 84.99 87.86 87.24 81.28 85.08 90.49 86.84 89.41
+> Healthcare Financial QA Legal QA
+> 91.44 86.91 89.46 88.59 82.35 86.52 92.07 87.39 90.43
+
+Figure 12. Performance of autoregressive token recovery attacks, measured by DASR. therefore vary across attributes. The decoding-phase attack success rate (DASR) is the fraction of correctly reconstructed tokens per response, averaged across queries. Ablation stud-ies additionally report the similarity between extracted SIMA traces and ground-truth sparsity patterns. 
+
+Environment. We evaluate the performance of SpaRLeaK on an NVIDIA L20 GPU (48GB) under Ubuntu 20.04 (Linux 5.15.0), using NVIDIA driver 550.67, CUDA 11.8, PyTorch 2.6.0. 
+
+7.2 Attack Performance 
+
+Table 2 and Figure 12 report PASR and DASR, respectively. The results distinguish token-level oracle patterns (O(T)), re-constructed oracle page patterns (O(P+R)), raw page-level observations (R(P)), and reconstructed real observations (R(P+R)), where R(P+R) represents the complete end-to-end attack. 
+
+Overall effectiveness. In the end-to-end attack, average PASR exceeds 91% across all datasets, while DASR ranges from 84.6% to 89.4%, with every setting exceeding 80%. The high O(T) performance confirms that token-level sparsity patterns inherently encode substantial information about private queries and generated responses. O(P+R) remains within approximately one percentage point of O(T), show-ing limited information loss from page aggregation after reconstruction. End-to-end performance is only about 2.5 points below the token-level oracle, showing that reconstruc-tion recovers most information from noisy page-level traces. 
+
+Impact of attribute complexity. PASR varies across at-tribute types. Attributes with fewer classes, such as Gender 
+
+in Healthcare, achieve near-perfect accuracy (around 97.9%), whereas those with larger label spaces, such as Entity in Fi-nancial QA, yield lower PASR (approximately 87.3%), reflect-ing the difficulty of distinguishing more semantic classes. Decoding DASR is less sensitive to attribute semantics be-cause token recovery reconstructs output sequences. How-ever, Financial QA consistently yields lower DASR than Health-care and Legal QA, reflecting the greater lexical diversity and structural complexity of financial responses. 50 60 70 80 90 100           
+
+> PASR (%)
+> Health
+> w/o recons. w/ recons.
+> Financial
+> w/o recons. w/ recons.
+> Legal
+> w/o recons. w/ recons.
+> 510 15 20
+> # Tokens per Page
+> 50 60 70 80 90 100
+> DASR (%)
+> 510 15 20
+> # Tokens per Page 510 15 20
+> # Tokens per Page
+
+Figure 13. The performance of sparsity reconstruction. 
+
+Impact of sparse attention mechanisms. Sparse atten-tion mechanisms affect attack performance in both phases. Activation-based methods yield lower prefill PASR (approx-imately 86.4%) than block-level scoring and learned predic-tors, with the latter achieving the highest PASR (around 95.5%). Decoding follows a similar trend: activation-based methods yield lower DASR, block-level scoring provides mod-erate improvements, and learned predictors perform best across datasets and model backbones. These results suggest that more accurate sparsity estimation reduces information loss in SIMA traces, benefiting both attribute inference and token recovery. 
+
+Impact of LLM architectures. SpaRLeaK achieves aver-age prefill PASRs of approximately 90.6%, 89.4%, and 92.7% on LongChat-7B, LLaMA3-8B, and Qwen3-8B, respectively. In addition, Qwen3-8B consistently achieves the highest de-coding DASR across datasets (Figure 12). This consistency suggests that its sparsity patterns across layers and heads are more stable and distinctive, yielding cleaner SIMA sig-nals for attribute inference and token recovery. 
+
+7.3 Ablation Study 
+
+We evaluate the proposed reconstruction methods by aggre-gating ground-truth token-level sparsity patterns into pages of 5 to 20 tokens, reflecting practical KV page granularities, and measuring PASR and DASR before and after reconstruc-tion. As shown in Figure 13, coarser page aggregation in-creasingly obscures token-level information and degrades both attacks without reconstruction. At a page size of 20, 
+
+11 Model Attribute Inference Attack Token Recovery Attack                           
+
+> Per-query prefill time #Samples Cost Per-token decode time Avg. length #Samples Cost LongChat-7B [21] 0.62s 5,000 0.86h 0.05s 300 3,000 12.7h LLaMA3-8B [14] 0.58s 5,000 0.82h 0.06s 300 3,000 15.2h Qwen3-8B [55] 0.79s 5,000 1.10h 0.07s 500 2,000 19.5h
+
+Table 3. Offline profiling overhead for query attribute infer-ence and autoregressive token recovery attacks. the Healthcare PASR drops to 57.45% without reconstruc-tion but remains substantially higher when reconstruction is enabled. More ablation studies can be found at the sub-mitted supplementary material. 
+
+7.4 Practicality Analysis 
+
+We further study the feasibility of SpaRLeaK, which depends on (i) whether the offline preparation incurs prohibitive cost, and (ii) whether the online side-channel observations can be conducted unobtrusively in realistic deployment settings with strong stealthiness. 
+
+Profiling settings and overhead. Our primary evaluation assumes that the model checkpoint, tokenizer, sparse-attention implementation, and configuration are public. To isolate SIMA leakage from configuration mismatch, attacker runs an in-strumented replica on controlled inputs to collect ground-truth sparsity patterns and train predictors. This profiling may run on a separate GPU, while page-probe calibration remains target-specific. We use 5,000 QAI queries per model and 3,000/3,000/2,000 ATR responses for LongChat-7B, LLaMA3-8B, and Qwen3-8B, respectively, with an 8:1:1 sample-disjoint split and task-specific 18-/34-layer residual predictors. As summarized in Table 3, LLM inference dominates the profil-ing cost: QAI requires one prefill pass per query, whereas ATR records step-wise patterns throughout decoding and therefore scales with response length. Predictor training adds negligible overhead, and this one-time cost is amortized across attacks using same configuration. When model weights or sparse-attention configurations are unavailable, SpaRLeaK instead performs target-interactive profiling. The attacker submits chosen queries while a co-resident spy records the corresponding real page-level SIMA traces; attacker-known attributes and returned tokens pro-vide the QAI and ATR labels. Training directly on these trace– label pairs achieves average PASR and DASR of 90.97% and 86.65%, with maximum reductions of only 1.28 and 1.54 per-centage points relative to replica-based profiling. Thus, SpaR-LeaK remains effective without model or sparsity access, at the cost of one-time same-GPU chosen-query collection. 
+
+Stealthiness. We assume an adversary co-located with the victim on the same physical GPU that passively collects side-channel signals during LLM inference. For SpaRLeaK to be practical, such measurements must not noticeably perturb the victim’s execution. Our evaluation shows that this re-quirement is satisfied: enabling the spy process introduces only limited overhead, increasing inference latency by 1–3%                                    
+
+> Intensity Baseline 10% 20% 30%
+> ASR (%) Rouge ASR (%) Rouge ASR (%) Rouge ASR (%) Rouge LongChat-7B [21] 89.45 0.43 85.41 0.38 82.09 0.32 76.17 0.21 LLaMA3-8B [14] 90.12 0.48 84.92 0.35 79.85 0.24 72.68 0.16 Qwen3-8B [55] 91.23 0.42 87.28 0.37 81.13 0.35 75.98 0.26
+
+Table 4. Effectiveness of fixed sparsity pattern injection as a mitigation strategy. Mitigation intensity denotes the frac-tion of sparse tokens that are replaced by a random token set. during the prefill phase (via L2-cache-based Invalidate+CompaRe) and 4–6% during the decoding phase (via TLB-based Evict + Reload), with the worst-case slowdown remaining below 8%. These overheads fall well within the normal latency vari-ation of LLM serving environments, where scheduling and resource contention already induce comparable fluctuations. Consequently, the additional delay introduced by SpaRLeaK is indistinguishable from benign system noise, rendering the attack stealthy in realistic deployment scenarios. 
+
+7.5 Possible Mitigation 
+
+In this section, we discuss potential defenses against the sparsity-induced side channels exploited by SpaRLeaK, in-cluding model-level mitigations and general side-channel hardening. Their effectiveness must be considered alongside their impact on generation quality and serving efficiency. A direct mitigation reduces the information exposed by spar-sity patterns through controlled, input-independent random-ness. During inference, an 𝐴% fraction of tokens selected by importance scores is randomly replaced with other tokens in an input-independent manner. This perturbation disrupts the stability of input-dependent sparsity patterns, making SIMA traces less discriminative to an adversary. However, the replacement tokens may be less semantically relevant, weakening the selected context and degrading generation quality, particularly at high perturbation intensities. We evaluate this mitigation on Financial QA with per-turbation intensities ranging from 10% to 30%. We report overall ASR, defined as the average of PASR and DASR, and generation quality measured by ROUGE. Increasing pertur-bation consistently reduces ASR but also degrades gener-ation quality. For example, at 30% perturbation, LLaMA3-8B’s ROUGE score drops from 0.48 to 0.16. These results show that randomizing sparse selection mitigates leakage, but aggressive perturbation compromises the generation qual-ity. Restricting fine-grained timers, monitoring interfaces, and memory-management primitives can hinder SpaRLeaK by reducing trace fidelity without eliminating secret-dependent accesses. Fixed or page-padded schedules and dummy KV accesses reduce input dependence at the cost of sparse-attention efficiency. Tenant isolation and cache/TLB partitioning can prevent cross-tenant observation but require runtime or hard-ware support. Detecting repeated probing or anomalous cache/TLB 
+
+> 12
+
+activity can complement these defenses. Developing low-cost defenses that preserve both model quality and serving efficiency remains future work. 
+
+8 Related Work 
+
+Privacy leakage in LLMs. Prior work has shown that pri-vacy risks in LLMs arise from algorithm- or API-level expo-sure [8, 54], including training-data memorization [2, 22, 46], membership inference [9, 15, 29, 49], and prompt attribute inference [4, 16, 25, 39, 56]. These attacks typically rely on observing model outputs or interacting with the LLM through crafted prompts. In contrast, SpaRLeaK targets inference-time execution behavior and demonstrates that sparse at-tention can externalize sensitive information through SIMA side channels in shared GPU components, without any in-teraction at the API level. 
+
+Side-channel attacks on LLMs. Recent studies have re-vealed that LLM serving systems are vulnerable to various side channels, including timing-based attacks [37, 50, 57, 63], network traffic analysis [28, 48], and CPU cache monitor-ing [1, 13]. These approaches infer information through ex-ternally observable signals such as latency, encrypted traf-fic patterns, or embedding-table accesses. SpaRLeaK differs fundamentally by exploiting memory access behavior intrin-sic to sparse attention. This leakage is amplified by sparsity and manifests consistently across both prefill and decoding phases, enabling a unified framework for query attribute in-ference and autoregressive token recovery. 
+
+9 Conclusion 
+
+We present SpaRLeaK, the first study of micro-architectural privacy leakage in sparse-attention-based LLM serving. Sparse attention produces distinctive sparsity-induced memory ac-cess (SIMA) patterns that expose sensitive information through shared GPU resources. SpaRLeaK exploits phase-specific SIMA traces for query attribute inference during prefill and au-toregressive token recovery during decoding. Evaluations across multiple LLMs, sparse attention mechanisms, and datasets demonstrate its effectiveness and robustness. 
+
+References 
+
+[1] Andrew Adiletta and Berk Sunar. 2025. Spill The Beans: Exploiting CPU Cache Side-Channels to Leak Tokens from Large Language Mod-els. arXiv preprint arXiv:2505.00817 (2025). [2] Atilla Akkus, Masoud Poorghaffar Aghdam, Mingjie Li, Junjie Chu, Michael Backes, Yuyang Zhang, and Sinem Sav. 2025. Generated data with fake privacy: Hidden dangers of fine-tuning large language mod-els on generated data. In 34th USENIX Security Symposium (USENIX Security 25) . 8075–8093. [3] Tyler Allen and Rong Ge. 2021. In-depth analyses of unified virtual memory system for GPU accelerated computing. In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis . 1–15. [4] Bochuan Cao, Changjiang Li, Yuanpu Cao, Yameng Ge, Ting Wang, and Jinghui Chen. 2025. You Can’t Steal Nothing: Mitigating Prompt Leakages in LLMs via System Vectors. In Proceedings of the 2025 ACM SIGSAC Conference on Computer and Communications Security . 4423– 4437. [5] Han Cho, Dongjun Kim, Seung-Eon Hwang, and Jongsun Park. 2024. SpARC: Token Similarity-Aware Sparse Attention Transformer Accel-erator via Row-wise Clustering. In Proceedings of the 61st ACM/IEEE Design Automation Conference . 1–6. [6] Kexin Chu, Zecheng Lin, Dawei Xiang, Zixu Shen, Jianchang Su, Cheng Chu, Yiwei Yang, Wenhui Zhang, Wenfei Wu, and Wei Zhang. 2025. Selective kv-cache sharing to mitigate timing side-channels in llm inference. arXiv preprint arXiv:2508.08438 (2025). [7] Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. Flashattention: Fast and memory-efficient exact attention with io-awareness. Advances in neural information processing systems 35 (2022), 16344–16359. [8] Badhan Chandra Das, M Hadi Amini, and Yanzhao Wu. 2025. Security and privacy challenges of large language models: A survey. Comput. Surveys 57, 6 (2025), 1–39. [9] Debeshee Das, Jie Zhang, and Florian Trantèr. 2025. Blind baselines beat membership inference attacks for foundation models. In 2025 IEEE Security and Privacy Workshops (SPW) . IEEE, 118–125. [10] Aditya Desai, Shuo Yang, Alejandro Cuadron, Matei Zaharia, Joseph E Gonzalez, and Ion Stoica. 2025. HashAttention: Semantic Sparsity for Faster Inference. In Forty-second International Conference on Machine Learning .[11] Hugging Face. 2024. Legal Q&A Dataset v1. https://huggingface.co/ datasets/dzunggg/legal-qa-v1 .[12] Yizhao Gao, Zhichen Zeng, Dayou Du, Shijie Cao, Peiyuan Zhou, Ji-axing Qi, Junjie Lai, Hayden Kwok-Hay So, Ting Cao, Fan Yang, et al. 2024. Seerattention: Learning intrinsic sparse attention in your llms. 
+
+arXiv preprint arXiv:2410.13276 (2024). [13] Zibo Gao, Junjie Hu, Feng Guo, Yixin Zhang, Yinglong Han, Siyuan Liu, Haiyang Li, and Zhiqiang Lv. 2025. I Know What You Said: Unveiling Hardware Cache Side-Channels in Local Large Language Model Inference. 34rd USENIX Security Symposium (USENIX Security 25) (2025). [14] Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 (2024). [15] Yu He, Boheng Li, Liu Liu, Zhongjie Ba, Wei Dong, Yiming Li, Zhan Qin, Kui Ren, and Chun Chen. 2025. Towards label-only member-ship inference attack against pre-trained large language models. In 
+
+USENIX Security .[16] Bo Hui, Haolin Yuan, Neil Gong, Philippe Burlina, and Yinzhi Cao. 2024. Pleak: Prompt leaking attacks against large language model applications. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security . 3600–3614. [17] Siwon Kim, Sangdoo Yun, Hwaran Lee, Martin Gubri, Sungroh Yoon, and Seong Joon Oh. 2023. Propile: Probing privacy leakage in large language models. Advances in Neural Information Processing Systems 
+
+36 (2023), 20750–20762. [18] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th symposium on op-erating systems principles . 611–626. [19] Lukas Lamster, Fabian Rauscher, Martin Unterguggenberger, and Ste-fan Mangard. 2025. WaitWatcher and WaitGuard: Detecting Flush-Based Cache Side-Channels Through Spurious Wakeups. In European Symposium on Research in Computer Security . Springer, 303–322. [20] Wonbeom Lee, Jungi Lee, Junghwan Seo, and Jaewoong Sim. 2024. In-finiGen: Efficient generative inference of large language models with dynamic KV cache management. In 18th USENIX Symposium on Op-erating Systems Design and Implementation (OSDI 24) . 155–172. 
+
+> 13
+
+[21] Dacheng Li, Rulin Shao, Anze Xie, Ying Sheng, Lianmin Zheng, Joseph Gonzalez, Ion Stoica, Xuezhe Ma, and Hao Zhang. 2023. How long can context length of open-source llms truly promise?. In NeurIPS 2023 Workshop on Instruction Tuning and Instruction Following .[22] Ruixuan Liu, Tianhao Wang, Yang Cao, and Li Xiong. 2024. Precu-rious: How innocent pre-trained language models turn into privacy traps. In Proceedings of the 2024 on ACM SIGSAC Conference on Com-puter and Communications Security . 3511–3524. [23] Yupei Liu, Yuqi Jia, Jinyuan Jia, and Neil Zhenqiang Gong. 2025. Eval-uating LLM-based Personal Information Extraction and Countermea-sures. In 34th USENIX Security Symposium (USENIX Security 25) . 1669– 1688. [24] Nils Lukas, Ahmed Salem, Robert Sim, Shruti Tople, Lukas Wutschitz, and Santiago Zanella-Béguelin. 2023. Analyzing leakage of personally identifiable information in language models. In 2023 IEEE Symposium on Security and Privacy (SP) . IEEE, 346–363. [25] Xinjian Luo, Ting Yu, and Xiaokui Xiao. 2025. Prompt inference at-tack on distributed large language model inference frameworks. In 
+
+Proceedings of the 2025 ACM SIGSAC Conference on Computer and Com-munications Security . 1739–1753. [26] Zhifan Luo, Shuo Shao, Su Zhang, Lijing Zhou, Yuke Hu, Chenxu Zhao, Zhihao Liu, and Zhan Qin. 2025. Shadow in the cache: Unveil-ing and mitigating privacy risks of kv-cache in llm inference. arXiv preprint arXiv:2508.09442 (2025). [27] Lingjuan Lyu, Xuanli He, and Yitong Li. 2020. Differentially private representation for NLP: Formal guarantee and an empirical study on privacy and fairness. arXiv preprint arXiv:2010.01285 (2020). [28] Geoff McDonald and Jonathan Bar Or. 2025. Whisper Leak: a side-channel attack on Large Language Models. arXiv preprint arXiv:2511.03675 (2025). [29] Matthieu Meeus, Shubham Jain, Marek Rei, and Yves-Alexandre de Montjoye. 2024. Did the neurons read your book? document-level membership inference for large language models. In 33rd USENIX Se-curity Symposium (USENIX Security 24) . 2369–2385. [30] Aastha Mehta, Mohamed Alzayat, Roberta De Viti, Björn B Branden-burg, Peter Druschel, and Deepak Garg. 2022. Pacer: Comprehensive Network {Side-Channel } Mitigation in the Cloud. In 31st USENIX Se-curity Symposium (USENIX Security 22) . 2819–2838. [31] Nurlan Nazaraliyev, Elaheh Sadredini, and Nael Abu-Ghazaleh. 2024. GPUVM: GPU-driven unified virtual memory. arXiv preprint arXiv:2411.05309 (2024). [32] Nvidia. 2025. Nvidia Nsight. https://developer.nvidia.com/nsight-systems .[33] Xudong Pan, Mi Zhang, Shouling Ji, and Min Yang. 2020. Privacy risks of general-purpose language models. In 2020 IEEE Symposium on Security and Privacy (SP) . IEEE, 1314–1331. [34] Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Íñigo Goiri, Saeed Maleki, and Ricardo Bianchini. 2024. Splitwise: Effi-cient generative llm inference using phase splitting. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA) .IEEE, 118–132. [35] Prasad. 2022. Healthcare Dataset. https://www.kaggle.com/datasets/ prasad22/healthcare-dataset .[36] Yousef Saeedian. 2023. Financial Q&A 10K. https://www.kaggle.com/ datasets/yousefsaeedian/financial-q-and-a-10k .[37] Linke Song, Zixuan Pang, Wenhao Wang, Zihao Wang, XiaoFeng Wang, Hongbo Chen, Wei Song, Yier Jin, Dan Meng, and Rui Hou. 2025. The early bird catches the leak: Unveiling timing side channels in llm serving systems. IEEE Transactions on Information Forensics and Security (2025). [38] Yutao Sun, Zhenyu Li, Yike Zhang, Tengyu Pan, Bowen Dong, Yuyi Guo, and Jianyong Wang. 2025. Efficient attention mechanisms for large language models: A survey. arXiv preprint arXiv:2507.19595 
+
+(2025). [39] Yicong Tan, Xinyue Shen, Yun Shen, Michael Backes, and Yang Zhang. 2025. On the Effectiveness of Prompt Stealing Attacks on In-The-Wild Prompts. In 2025 IEEE Symposium on Security and Privacy (SP) . IEEE, 392–410. [40] Jiaming Tang, Yilong Zhao, Kan Zhu, Guangxuan Xiao, Baris Kasikci, and Song Han. 2024. QUEST: query-aware sparsity for efficient long-context LLM inference. In Proceedings of the 41st International Confer-ence on Machine Learning . 47901–47911. [41] Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, Morgane Rivière, Mi-hir Sanjay Kale, Juliette Love, et al. 2024. Gemma: Open models based on gemini research and technology. arXiv preprint arXiv:2403.08295 
+
+(2024). [42] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al. 2023. Llama: Open and ef-ficient foundation language models. arXiv preprint arXiv:2302.13971 
+
+(2023). [43] Marcos Treviso, António Góis, Patrick Fernandes, Erick Fonseca, and André FT Martins. 2022. Predicting attention sparsity in transformers. In Proceedings of the Sixth Workshop on Structured Prediction for NLP .67–81. [44] Muhammad Umar, Akhilesh Parag Marathe, Monami Dutta Gupta, Shubham Jogprakash Ghosh, G Edward Suh, and Wenjie Xiong. 2025. Efficient Memory Side-Channel Protection for Embedding Genera-tion in Machine Learning. In 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA) . IEEE, 423–441. [45] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. At-tention is all you need. Advances in neural information processing systems 30 (2017). [46] Fei Wang and Baochun Li. 2025. Leaner Training, Lower Leakage: Re-visiting Memorization in LLM Fine-Tuning with LoRA. arXiv preprint arXiv:2506.20856 (2025). [47] Kai Wang, Fengkai Yuan, Rui Hou, Jingqiang Lin, Zhenzhou Ji, and Dan Meng. 2019. Cacheguard: a security-enhanced directory archi-tecture against continuous attacks. In Proceedings of the 16th ACM International Conference on Computing Frontiers . 32–41. [48] Roy Weiss, Daniel Ayzenshteyn, and Yisroel Mirsky. 2024. What was your prompt? a remote keylogging attack on AI assistants. In 33rd USENIX Security Symposium (USENIX Security 24) . 3367–3384. [49] Rui Wen, Zheng Li, Michael Backes, and Yang Zhang. 2024. Mem-bership inference attacks against in-context learning. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communica-tions Security . 3481–3495. [50] Guanlong Wu, Zheng Zhang, Yao Zhang, Weili Wang, Jianyu Niu, Ye Wu, and Yinqian Zhang. 2025. I know what you asked: Prompt leak-age via kv-cache sharing in multi-tenant llm serving. In Proceedings of the 2025 Network and Distributed System Security (NDSS) Symposium. San Diego, CA, USA .[51] Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Shang Yang, Haotian Tang, Yao Fu, Song Han, et al. 2025. DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads. In The Thirteenth International Conference on Learning Representations .[52] Jiaming Xu, Jiayi Pan, Hanzhen Wang, Yongkang Zhou, Jiancai Ye, Yu Wang, and Guohao Dai. 2025. SpeContext: Enabling Efficient Long-context Reasoning with Speculative Context Sparsity in LLMs. arXiv preprint arXiv:2512.00722 (2025). [53] Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han. 2025. Xattention: Block sparse attention with antidiagonal scor-ing. arXiv preprint arXiv:2503.16428 (2025). [54] Biwei Yan, Kun Li, Minghui Xu, Yueyan Dong, Yue Zhang, Zhaochun Ren, and Xiuzhen Cheng. 2024. On protecting the data privacy of large language models (llms): A survey. arXiv preprint arXiv:2403.05156 
+
+> 14
+
+(2024). [55] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 (2025). [56] Yong Yang, Changjiang Li, Qingming Li, Oubo Ma, Haoyu Wang, Zonghui Wang, Yandong Gao, Wenzhi Chen, and Shouling Ji. 2025. PRSA: Prompt Stealing Attacks against Real-World Prompt Services. In 34th USENIX security symposium (USENIX Security 25) . 2283–2302. [57] Tianchen Zhang, Gururaj Saileshwar, and David Lie. 2024. Time will tell: Timing side channels via output token count in large language models. arXiv preprint arXiv:2412.15431 (2024). [58] Zhenkai Zhang, Tyler Allen, Fan Yao, Xing Gao, and Rong Ge. 2023. TunneLs for Bootlegging: Fully Reverse-Engineering GPU TLBs for Challenging Isolation Guarantees of NVIDIA MIG. In Proceedings of the 2023 ACM SIGSAC Conference on Computer and Communications Security . 960–974. [59] Zhenkai Zhang, Kunbei Cai, Yanan Guo, Fan Yao, and Xing Gao. 2024. Invalidate+Compare: A Timer-Free GPU Cache Attack Primitive. In 
+
+33rd USENIX Security Symposium (USENIX Security 24) . 2101–2118. [60] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, et al. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Advances in Neural Information Processing Systems 36 (2023), 34661–34710. [61] Zheng Zhang, Guanlong Wu, Sen Deng, Shuai Wang, and Yinqian Zhang. 2025. NetEcho: From Real-World Streaming Side-Channels to Full LLM Conversation Recovery. arXiv preprint arXiv:2510.25472 
+
+(2025). [62] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. 2024. Sglang: Efficient execution of structured lan-guage model programs. Advances in neural information processing systems 37 (2024), 62557–62583. [63] Xinyao Zheng, Husheng Han, Shangyi Shi, Qiyan Fang, Zidong Du, Xing Hu, and Qi Guo. 2024. Inputsnatch: Stealing input in llm ser-vices via timing side-channel attacks. arXiv preprint arXiv:2411.18191 
+
+(2024). [64] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xu-anzhe Liu, Xin Jin, and Hao Zhang. 2024. DistServe: Disaggregat-ing prefill and decoding for goodput-optimized large language model serving. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . 193–210. [65] Qianchao Zhu, Jiangfei Duan, Chang Chen, Siran Liu, Xiuhong Li, Guanyu Feng, Xin Lv, Xiao Chuanfu, Dahua Lin, and Chao Yang. 2025. Sampleattention: Near-lossless acceleration of long context llm infer-ence with adaptive structured sparse attention. Proceedings of Ma-chine Learning and Systems 7 (2025).

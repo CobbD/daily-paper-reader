@@ -1,0 +1,2841 @@
+Title: Robustifying Asynchronous SGD via Soft Throttling
+
+URL Source: https://arxiv.org/pdf/2609.39357v1
+
+Published Time: Thu, 01 Oct 2026 01:20:47 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+Preprint 
+
+# ROBUSTIFYING ASYNCHRONOUS SGD VIA SOFT 
+
+# THROTTLING 
+
+Kaoru Otsuka ∗
+
+Okinawa Institute of Science and Technology 
+
+kaoru.otsuka@oist.jp 
+
+Maxime Meyer ∗†
+
+National University of Singapore 
+
+maxime.meyer@u.nus.edu 
+
+Yuki Takezawa 
+
+Toyota Motor Corporation 
+
+yuki takezawa@mail.toyota.co.jp 
+
+Makoto Yamada 
+
+Okinawa Institute of Science and Technology 
+
+makoto.yamada@oist.jp 
+
+Anastasia Koloskova 
+
+University of Zurich 
+
+anastasiia.koloskova@uzh.ch 
+
+## ABSTRACT 
+
+Asynchronous SGD is a popular algorithm for distributed learning where each client’s gradient update is applied on arrival. This leads to a speed-up, but also an increased vulnerability to attacks, as fast clients can dominate the total update. We introduce T HROTTLE , a Byzantine-robust generalization of asynchronous SGD where the key idea is to exponentially down-weight updates from faster clients by a factor q. Both asynchronous SGD ( q = 1 ) and synchronous Byzantine-robust SGD ( q → ∞ ) correspond to specific settings of T HROTTLE . We provide a theo-retical analysis of the convergence rate and validate the robustness to attacks both theoretically and empirically. Remarkably, our experiments show that this down-weighting mechanism can also improve performance over standard asynchronous SGD even in the non-Byzantine setting. 
+
+## 1 INTRODUCTION 
+
+Distributed learning trains a shared model faster by spreading the training workload across many clients. It has become essential for large-scale machine learning, and it has been widely studied in recent years as a result (Yang et al., 2019; Verbraeken et al., 2020). Typically, distributed learning consists of a succession of steps. At every step, i) the clients send their local gradients, ii) the central server performs its update once all of them are received, and iii) the updated model is sent to the clients so that the next computation step can start. One clear bottleneck is that this process can only be as fast as the slowest machine. It leads to considerable slowdowns in practice as clients typically compute at very different speeds. This can arise from heterogeneous computational power (Horvath et al., 2021), network latency, faulty devices (Ryabinin et al., 2021), or slow straggler clients in GPU clusters (Chen et al., 2016). A natural remedy is to leverage asynchronous SGD methods (Recht et al., 2011; Mania et al., 2017; Nguyen et al., 2022), where the central server updates the model at each feedback, and the corresponding client starts computing the next gradient immediately. These are the methods we study in this paper. Another limitation of distributed learning is that, while integrating more clients increases the amount of data and compute, it also increases the risk of having malicious or faulty clients (Xie et al., 2020a; Baruch et al., 2019; Kairouz et al., 2021). We refer to those as Byzantine clients (Lamport et al., 2019). This is especially problematic for asynchronous methods, where one malicious client can send an overwhelming number of updates to the server, which we call a flooding attack . Notable works in this area typically rely either on strong assumptions that restrict flooding attacks (Dahan & 
+
+> ∗
+
+Equal contribution. 
+
+> †
+
+Work done during the internship at OIST. 
+
+1arXiv:2609.39357v1 [cs.LG] 30 Sep 2026 Preprint Levy, 2024) or on nearly synchronous algorithms that mitigate the effects of Byzantine clients (Yang & Li, 2021; 2023). In practice, the former may offer limited robustness against Byzantine attacks that violate these assumptions, while the latter may yield smaller speedups than asynchronous SGD because it more closely resembles synchronous algorithms. We aim to bridge this gap through a new algorithm, T HROTTLE . The key idea is to exponentially decrease the stepsize when gradients are repeatedly received from the same client. This limits the influence of any individual client on the global model, thereby preventing a malicious client from dominating the overall update. We present T HROTTLE in Section 3 and analyze its convergence in Section 4. In Theorem 1, we establish its Byzantine robustness and show that it recovers the convergence rate of standard asynchronous SGD up to an additive constant. Our experiments in Section 6 demonstrate robustness to a range of Byzantine attacks and show that T HROTTLE is more robust and faster than the existing methods evaluated. Interestingly, T HROTTLE also outperforms standard asynchronous SGD even in the non-Byzantine setting. 
+
+## 2 PRELIMINARIES 
+
+We consider the following optimization problem: 
+
+f (x) := Eξ∼D [F (x; ξ)] ,
+
+where F : Rd × Ω → R is the loss with respect to a sample ξ ∈ Ω, and D is the given data distribution over the sample space Ω.Let n ∈ N denote the total number of clients, and write [n] := {1, . . . , n } the set of all clients. All clients have access to the loss F and sample from the same dataset D. We assume that it admits an (unknown) partition [n] = G ⊔ B between good and Byzantine clients. Any good client i ∈ G 
+
+follows the protocol given by the algorithm when sending feedback, while a Byzantine client i ∈ B 
+
+is allowed to send arbitrary updates to the server. We let the latter be omniscient, i.e., they have access to all computations made by the rest of the good clients and can send the worst updates possible. We denote the Byzantine ratio by δ = |B| /n , so that |G| = (1 − δ)n. In this paper we develop an algorithm with asynchronous updates that is robust in the Byzantine setting described above. 2.1 ASYNCHRONOUS SGD Synchronous SGD can suffer from substantial delays because each iteration is limited by the slowest client, which motivates the use of asynchronous SGD. In asynchronous SGD, the server applies each stochastic gradient the moment it arrives. The updated model is then sent to the corresponding client so that the client can start computing the next gradient. Let jt be the client whose gradient is applied at time t. For each client i, let prev( t, i ) denote the most recent update before t at which client i returned a gradient, and let next( t, i ) denote the first update at or after t at which client i returns a gradient. After returning this gradient, client i receives the updated model x(prev( t,i )) from the server and starts computing its next gradient from this model. Therefore, when client jt returns its next gradient at update t, that gradient is evaluated at the stale model x(prev( t,j t)) rather than the current model. We call τt := t − prev( t, j t) the delay of this gradient. The update rule of Asynchronous SGD is then written as follows: 
+
+x(t) = x(t−1) − η∇F (x(t−τt); ξ(t−τt) 
+
+> jt
+
+). (1) Thanks to this update rule, the server does not need to wait for a fresh gradient evaluated at the latest model and can instead immediately update the model using a possibly stale gradient evaluated at x(t−τt). Consequently, the optimization process is not bottlenecked by the slowest client, as the server can continue updating the model whenever gradients from other clients arrive. 2.2 BYZANTINE -ROBUST SYNCHRONOUS ALGORITHM 
+
+Because distributed learning involves many participating clients, some of them may be malicious or faulty. This makes robustness against such Byzantine clients an important requirement for reliable 2Preprint distributed learning. In this section, we briefly describe a representative Byzantine-robust method in the synchronous setting. At every round t, each client i computes a stochastic gradient g(t) 
+
+> i
+
+at the same point x(t), and the server updates the parameter as follows: 
+
+x(t+1) = x(t) − ηn
+
+> n
+
+X
+
+> i=1
+
+g(t) 
+
+> i
+
+.
+
+Since the server simply averages the gradients received from the clients, a Byzantine client can arbitrarily manipulate the parameters of the server. Byzantine-robust methods replace this average with a robust aggregator (e.g., the median) (Blanchard et al., 2017; Karimireddy et al., 2021), as is standard in classical robust statistics (Huber, 2005). 
+
+Definition 1 ((δ, c )-robust aggregator) . Suppose that g1, . . . , gn are random vectors of which a subset G ⊂ [n] if size at least |G| > (1 −δ)n and δ < 0.5 and satisfies E ∥gi − gj ∥2 ≤ ρ2, ∀i, j ∈ G .Then, the output ˆg of a Byzantine robust aggregator satisfies: 
+
+E∥ˆg − g∥2 ≤ cδρ 2 where ˆg := Agg ( g1, . . . , gn) and g := 1
+
+|G| 
+
+X
+
+> j∈G
+
+gj .
+
+This definition is quite common in the existing literature (Karimireddy et al., 2021; 2022; Gor-bunov et al., 2023; Yang et al., 2024). Intuitively, the role of a robust aggregator Agg is to esti-mate the average of the non-Byzantine clients g with an error of order O(δ). Karimireddy et al. (2021) first showed that centered clipping satisfies this definition. Karimireddy et al. (2022) later extended this result to classical robust aggregators, namely coordinate-wise median (Chen et al., 2017), Krum (Blanchard et al., 2017), and robust federated averaging (RFA) (Pillutla et al., 2022), when combined with their proposed pre-aggregation technique, 2.3 BYZANTINE -ROBUST ASYNCHRONOUS ALGORITHM 
+
+Combining asynchrony with Byzantine robustness is desirable for distributed learning, as it allows the system to benefit from heterogeneous client speeds while remaining reliable in the presence of malicious or faulty clients. Several Byzantine-robust asynchronous methods have therefore been proposed (Yang & Li, 2023; Dahan & Levy, 2024). However, existing theoretical work on Byzantine-robust asynchronous SGD (Yang & Li, 2023; Dahan & Levy, 2024) tackles this issue by assuming that τt is bounded by a known τmax for most clients, or by directly bounding the propor-tion of Byzantine feedback. These assumptions circumvent the main challenge of the framework, which is precisely that a Byzantine client can make τt arbitrarily large through a flooding attack. We propose a Byzantine-robust asynchronous algorithm T HROTTLE that removes these assumptions. 
+
+## 3 THROTTLE : A SYNCHRONOUS SGD WITH SOFT THROTTLING 
+
+We introduce T HROTTLE , an algorithm consisting of two key components, soft throttling and hard restart , which we describe below. 3.1 SOFT THROTTLING 
+
+The key idea of our approach is to exponentially down-weight repeated updates of the same client by a factor q. More precisely, the first update has a factor 1 
+
+> n
+
+, the second 1 
+
+> q
+
+, the next 1 
+
+> q2
+
+, then 1 
+
+> q3
+
+,
+
+etc . Once every client has sent feedback, we say that the round ends. We then reinitialize all factors to 1 
+
+> n
+
+and start the next round. This way, within any given round, the impact of one client is upper bounded by 1 
+
+> n
+
++ P+∞  
+
+> i=1 1
+> qi
+
+= 1 
+
+> n
+
++ 1 
+
+> q−1
+
+, which prevents flooding. A smaller q → 1 lets fast clients contribute more, while a larger q → ∞ caps their influence more tightly and reduces it to synchronous SGD. We formally quantify this trade-off in Section 4. 
+
+Remark 1 (On the initial 1 
+
+> n
+
+factor) . Adding an initial 1/n factor makes the total update with regards to the model at the start of the round x(Sr ) have weight 1. All subsequent updates within the round have weight at most 1 
+
+> q
+
+. This matches the scale of a robust aggregator’s output, which simplifies the comparison in our analysis. We also observed that it leads to more stable training curves in practice. 3Preprint                                         
+
+> time
+> x(0) x(2) x(4) x(6) x(8) x(10) x(12) x(14)
+> x(1) x(3) x(5) x(7) x(9) x(11) x(13)
+> client A client B client C
+> 1
+> ng(0)
+> A
+> 1
+> qg(3)
+> A
+> 1
+> q2g(5)
+> A1
+> ng(6)
+> A
+> 1
+> qg(8)
+> Ag(10)
+> A
+> 1
+> ng(12)
+> A
+> 1
+> qg(14)
+> A
+> 1
+> ng(0)
+> B
+> 1
+> ng(6)
+> B
+> 1
+> ng(12)
+> B
+> 1
+> ng(0)
+> C
+> 1
+> qg(1)
+> C
+> 1
+> q2g(2)
+> C
+> 1
+> q3g(4)
+> C1
+> ng(6)
+> C
+> 1
+> qg(7)
+> C
+> 1
+> q2g(9)
+> Cg(11)
+> C
+> 1
+> ng(12)
+> C
+> 1
+> qg(13)
+> C
+> S1= 6 S2= 12 S0= 0
+
+Figure 1: Illustration of T HROTTLE with three clients. A block g(t) 
+
+> i
+
+is a gradient computation started at x(t) (its left end), and its coefficient is the weight it receives on arrival, 1/n for a first arrival and 1/q c for a repeated one. Dashed lines mark the synchronous clock Sr , at which in-flight computations are discarded (hatched blocks) and all clients restart from x(Sr ) (green blocks). 3.2 HARD RESTART 
+
+At the end of a round, the server broadcasts the current model to all clients, and discard any gradient computation in progress. This ensures that every round starts with all clients on the same model, which allows to robustly aggregate their updates. At the beginning of a round, all clients start their computation at the same point x(Sr ), and the added factor 1 
+
+> n
+
+averages over the updates. As is standard in Byzantine-robust algorithms, we want to replace this average by a robust aggregator. The one difference from the synchronous setting is that the first arrivals from each clients do not arrive together. We therefore need an aggregator that acts on a single input and whose sum coincide with a robust aggregate over time. 
+
+Definition 2 (Local (c, δ )-robust aggregator) . Let Agg be a (c, δ )-robust aggregator that additionally takes a side information S ∈ S as input. We call Agg local if there exists a map A : Rd × S → Rd
+
+such that, for every S ∈ S and every x1, . . . , xn ∈ Rd,
+
+Agg( x1, . . . , xn; S) = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+A(xi; S).
+
+Example 1 (Centered clipping) . Centered clipping (Karimireddy et al., 2021) clips each input’s offset from an anchor a ∈ Rd to length at most τ > 0 and then averages: 
+
+Agg( x1, . . . , xn; a, τ ) = a + 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+clip τ (xi − a), clip τ (v) := min 
+
+n
+
+1, τ
+
+∥v∥
+
+o
+
+v.
+
+Thus, each input shifts the output by at most τ /n . It is local with side information S = ( a, τ )
+
+and A(v; S) := a + clip τ (v − a). Following Karimireddy et al. (2021), our experiments use the previous round’s first arrivals to set the anchor: ar := Π G
+
+ 1
+
+> n
+
+Pni=1 g(Sr−1)
+
+> i
+
+
+
+, a0 := 0, where ΠG
+
+is the Euclidean projection onto the ball of radius G centered at the origin. Side information is the key to making the decomposition possible. Without side information, no 
+
+(c, δ )-robust aggregator of the form 1
+
+> n
+
+P 
+
+> i
+
+f (xi) exists (Proposition 2). Appendix D gives further examples and a general construction A(v; S) = a + ψ(v − a) with bounded ψ.3.3 THROTTLE 
+
+Combining these two ideas, soft throttling and hard restart, we propose T HROTTLE , as described in Algorithm 1. At time step t, let v(t−τt) 
+
+> jt
+
+denote the gradient received from client jt, and let ηt denote corresponding stepsize. We define 
+
+v(t−τt) 
+
+> jt
+
+:= 
+
+(
+
+∇F (x(t−τt); ξ(t−τt) 
+
+> jt
+
+) if jt ∈ G ,
+
+∗ if jt ∈ B , ηt := 
+
+( ηn if cjt (t) = 0 ,  
+
+> ηqcjt(t)
+
+otherwise , (2) 4Preprint 
+
+Algorithm 1 THROTTLE : Asynchronous SGD with Soft Throttling 
+
+Server: 
+
+1: Send x(0) to every client i ∈ [n] and initialize S0 := 0 and side information S0, ci = 0 , ∀i ∈ [n]
+
+2: for t = 0 , . . . , T − 1 do 
+
+3: Receive update v(t−τt) 
+
+> jt
+
+from some worker jt
+
+4: if cjt = 0 then ▷ If jt returns its update for the first time this round 
+
+5: g(t−τt) 
+
+> jt
+
+= A
+
+
+
+v(t−τt) 
+
+> jt
+
+; Sr(t)
+
+
+
+▷ Apply local (c, δ )-robust aggregator 
+
+6: else ▷ If server has already seen jt in this round 
+
+7: g(t−τt) 
+
+> jt
+
+= clip λt
+
+
+
+v(t−τt)
+
+> jt
+
+
+
+▷ Compute clipped gradient with radius λt
+
+8: ηt := 
+
+( ηn if cjt (t) = 0 ,  
+
+> ηqcjt(t)
+
+otherwise , ▷ Set the soft throttling stepsize (2) 
+
+9: x(t) = x(t−1) − ηtg(t−τt) 
+
+> jt
+
+▷ Perform the update 
+
+10: cjt ← cjt + 1 ▷ Increment the counter 
+
+11: Send x(t) to worker jt
+
+12: if |{ i ∈ [n] | ci ≥ 1}| = n then ▷ If all clients has shown up in the round 
+
+13: Sr+1 = t and set ci ← 0 for all i ∈ [n]. ▷ The next round starts 
+
+14: Update the side information Sr+1 ▷ Depends on the aggregator (cf Ex. 1) 
+
+15: Send x(t) and restart signals to all clients, ci ← 0 ▷ Hard restart 
+
+16: Notify all workers to stop 
+
+Good client i ∈ G :repeat repeat 
+
+Wait until receiving the parameter x(k) for some k ∈ [T ]
+
+Randomly sample ξ(k) 
+
+> i
+
+∼ D and then compute the stochastic gradient ∇F (x(k); ξ(k) 
+
+> i
+
+)
+
+Send the stochastic gradient ∇F (x(k); ξ(k) 
+
+> i
+
+) to the server 
+
+until receive server’s notification to restart with x(r(t)) 
+
+Use restart parameter x(r(t)) to compute ∇F (x(r(t)) ; ξr(t) 
+
+> i
+
+) with the sample ξr(t) 
+
+> i
+
+∼ D 
+
+until receive server’s notification to stop and ci(t) := Pt−1 
+
+> s=r(t)
+
+1{js=i} is the number of gradients that client i has already delivered in the current round. Once the server receives the gradient from client, the server transforms it to g(t−τt)
+
+> jt
+
+using either local (c, δ )-robust aggregator or gradient clipping, and updates the parameters, as shown in line 8 of Algorithm 1. Then, after the server receives the gradient from all clients, the next round starts and all counters are reinitialized to 0. We illustrate the algorithm in Figure 1 and provide a notation list in Appendix A. 
+
+## 4 THEORETICAL ANALYSIS 
+
+Here we list assumptions we use in our theoretical results. 
+
+Assumption 1 (Unbiased and uniformly bounded stochastic gradients) . For each x ∈ Rd, the stochastic gradients from good clients ∇F (x; ξi), i ∈ G , are conditionally i.i.d., unbiased, and have uniformly bounded variance: 
+
+E[∇F (x; ξi) | x] = ∇f (x), E∥∇ F (x; ξi) − ∇ f (x)∥2 ≤ σ2.
+
+Assumption 2 (L-smoothness, lower boundedness) . The objective f : Rd → R is differentiable, lower bounded by f⋆, and L-smooth, i.e., for all x, y ∈ Rd,
+
+f (y) ≤ f (x) + ⟨∇ f (x), y − x⟩ + L
+
+2 ∥y − x∥2.
+
+Assumption 3 (Bounded gradient) . There exists G ≥ 0 such that for each x ∈ Rd and ξ ∈ Ω, the stochastic gradient satisfies 
+
+∥∇ F (x; ξ)∥ ≤ G almost surely .
+
+5Preprint The assumptions on smoothness and stochastic gradients are standard in the optimization litera-ture (Bubeck, 2015; Nesterov, 2018). The bounded gradient assumption is likewise common in the analysis of asynchronous SGD (Mishchenko et al., 2022; Shi et al., 2024), as well as in the analysis of clipped gradient descent (Zhang et al., 2020a;b), which we employ in non-restart rounds. Before we state the main theorem, we need to make an additional weak technical assumption on the local robust aggregator A.
+
+Assumption 4 (Bounded local contributions) . There exists G′ ≥ 0 such that, for every side infor-mation S used by the algorithm and every v ∈ Rd, ∥A(v; S)∥ ≤ G′.
+
+Remark 2 (Centered-clipping example) . Suppose that the side information is S = ( ar , 2G), where the projected anchor in Example 1 satisfies ∥ar ∥ ≤ G. For the centered-clipping map A(v; S) = 
+
+ar + clip 2G(v − ar ), we have ∥A(v; S)∥ ≤ G + 2 G = 3 G for every input, including a Byzantine input, verifying Assumption 4. Moreover, Assumption 3 implies that an honest input satisfies ∥v∥ ≤ 
+
+G, and hence ∥v − ar ∥ ≤ 2G, so centered clipping therefore leaves every honest input unchanged. Similar assumptions are used in (Malinovsky et al., 2024, Assumption 2.3). Now, we present the main theorem of this paper. We analyze the convergence in terms of effec-tive steps, which quantify the number of steps normalized by the decreasing stepsizes. In the syn-chronous setting, that is if every client submits the feedback at the same time, the number of effective steps Teff is exactly the number of feedbacks ( T in the synchronous setting). Moreover, it closely corresponds to the number R of rounds as R ≤ Teff = R + PRr=1 
+
+Pni=1 1−q−(ci,r −1)  
+
+> q−1
+
+.
+
+Theorem 1 (Non-convex convergence rate) . Let T ≥ 2 and q > 1. Suppose that Assumptions 1, 2, and 3, as well as Assumption 4 with G′ ≤ 3G hold, together with the local (c, δ )-robust aggregator 
+
+A, and use 1 λt = G. Then, there exists a small enough stepsize η > 0 (detailed in Appendix C.2) such that, 
+
+E∥∇ f (xout )∥2 = O
+
+
+
+cδσ 2 + G2|B| 2
+
+(q − 1) 2
+
+
+
+θT +
+
+s
+
+Lσ 2∆
+
+Teff 
+
+
+
+1 − θT + θT
+
+|G| 
+
+
+
++
+
+ L∆
+
+Teff 
+
+2/3 
+
+(1 − θT )
+
+
+
+(n − 1) 2G2 + cδσ 2 + G2|B| 2
+
+(q − 1) 2
+
+ 1/3
+
++ L∆
+
+Teff 
+
+!
+
+,
+
+where ∆ := f (x(0) ) − f∗ is the initial distance, Teff := 1 + PT −1 
+
+> t=1
+
+ˆηt/η is the number of effective time steps, NT := 1 + PT −1 
+
+> t=1
+
+1{t=r(t)} is the number of rounds, θT := NT 
+
+> Teff
+
+is the restart ratio, and 
+
+x(out) is the weighted average of x(0) , . . . , x(T −1) defined in (4). 
+
+Remark 3 (Synchronous limit q → ∞ ). As q → ∞ , an effective step corresponds to a round. Thus, Teff → R and θT → 1, where R is the total number of rounds including the initial round. The convergence rate simplifies to 
+
+E∥∇ f (xout )∥2 = O
+
+s
+
+Lσ 2∆
+
+|G| R + L∆
+
+R + cδσ 2
+
+!
+
+,
+
+which recovers the standard rate of synchronous Byzantine-robust SGD. The non-vanishing term 
+
+O(cδσ 2) is known to be unavoidable for any (c, δ )-robust aggregator applied only to the current stochastic gradients, and it can be removed by momentum or variance reduction (Karimireddy et al., 2021; Gorbunov et al., 2023). For finite q, however, the dominant error is the asynchrony-induced term G2|B| 2/(q − 1) 2, which persists even with full gradients ( σ = 0 ). Note also that σ2 ≤ G2
+
+in the non-clipping regime. Hence, momentum or variance reduction alone cannot remove the main source of error in the asynchronous setting, and combining momentum with stale gradients is itself nontrivial (Shi et al., 2024). We leave reducing both terms to future work. 
+
+Remark 4 (Non-Byzantine asynchronous limit |B| = 0 , q → 1). If there are no Byzantine clients and q → 1, then we have Teff → T and the convergence rate simplifies to 
+
+E∥∇ f (xout )∥2 = O
+
+r Lσ 2∆
+
+T +
+
+ L∆
+
+T
+
+2/3 (n − 1) 2G21/3 + L∆
+
+T
+
+!
+
+,            
+
+> 1Under Assumption 3, honest stochastic gradients satisfy ∥∇ F(x;ξ)∥ ≤ Galmost surely. With λt=G,the clipping operator therefore acts as the identity on honest gradients, which simplifies the analysis. The same assumption also gives σ2≤G2. In our experiments, we use a smaller threshold ( λt= 1 ), for which clipping is typically active. Extending the analysis to this regime is left for future work.
+
+6Preprint which is a similar convergence rate (up to the T −1 term due to normalizing rounds gradients by 1/n )to asynchronous SGD without Byzantine clients (Mishchenko et al., 2022, Theorem 2). 
+
+## 5 RELATED WORK 
+
+Asynchronous SGD. Asynchronous optimization has a long history dating back to the 1970s, when Baudet (1978) studied asynchronous fixed-point iterations. Subsequently, Tsitsiklis et al. (1986) established the convergence of asynchronous stochastic gradient methods in distributed set-tings. In the 2010s, attention turned to asynchronous variants of SGD. A notable example is Hog-wild! (Recht et al., 2011), a lock-free scheme that has since been widely adopted. Classical analyses of asynchronous SGD (Agarwal & Duchi, 2012; Lian et al., 2015; Mania et al., 2017; Stich & Karimireddy, 2020) rely on a bounded delay assumption, so their convergence rates depend on the maximum delay and are often overly pessimistic. Koloskova et al. (2022) and Mishchenko et al. (2022) concurrently showed that asynchronous SGD attains convergence rates that do not depend on the maximum delay, significantly improving upon prior analyses. Since then, a growing body of work has built upon these results. For instance, Shi et al. (2024) designed a momentum scheme suited to asynchronous SGD. Islamov et al. (2024) developed a unified framework that covers many asynchronous SGD variants, including FedBuff (Nguyen et al., 2022). More broadly, asynchronous methods have been studied under data, computation, and communication heterogeneity (Tyurin & Richt´ arik, 2023; Tyurin et al., 2024b; Maranjyan et al., 2025), and extended to finite-sum set-tings (Tyurin et al., 2024a). 
+
+Byzantine-robust Learning. Classical Byzantine-robust methods in the synchronous setting re-place mean aggregation with a robust aggregator, such as coordinate-wise median and trimmed mean (Yin et al., 2018), Krum (Blanchard et al., 2017), geometric median (RFA) (Pillutla et al., 2022), MDA (El-Mhamdi et al., 2020), and Bulyan (Mhamdi et al., 2018). However, due to the noise inherent in stochastic gradients, attackers can craft malicious updates that are statistically in-distinguishable from honest ones and yet prevent convergence, as in the ALIE (Baruch et al., 2019) and IPM (Xie et al., 2019) attacks. Another line of work complements robust aggregation with momentum (Karimireddy et al., 2021; Mhamdi et al., 2021; Farhadkhani et al., 2022) or variance reduction (Gorbunov et al., 2023), and the optimality of such approaches has been studied in (Yin et al., 2018; Zhu et al., 2023; Shi et al., 2025). These results, however, assume synchronous updates. Incorporating momentum under asynchrony is nontrivial even in the absence of Byzantine workers, since it accumulates stale gradients (Shi et al., 2024). Byzantine robustness has further been studied under more practical conditions, including data heterogeneity (Karimireddy et al., 2022; Allouah et al., 2023a;b), heterogeneous client participation (Allouah et al., 2024; Malinovsky et al., 2024; Otsuka et al., 2026), and communication compression (Gorbunov et al., 2023; Rammal et al., 2024). 
+
+Asynchronous Byzantine-robust Learning. Combining asynchrony with Byzantine robustness is challenging because asynchronous SGD applies each stochastic gradient immediately upon ar-rival, leaving no natural averaging step to replace with a robust aggregator. One line of work ad-dresses this by partially synchronizing the updates: BASGD and BASGDm (Yang & Li, 2021; 2023) aggregate over server-side buffers, and Dahan & Levy (2024) aggregate each incoming gradient with the latest gradients of the other clients using a weighting scheme that mitigates staleness. Another line of work filters incoming gradients using additional information. Zeno++ (Xie et al., 2020b) and AFLGuard (Fang et al., 2022) rely on a trusted dataset held by the server, an assumption that may undermine the computational efficiency of distributed learning. While Kardam (Damaskinos et al., 2018) filters updates based on an empirical estimate of the smoothness constant, but may reject honest gradients along with malicious ones (Xie et al., 2020b). 
+
+## 6 EXPERIMENTS 
+
+Our experiments show the benefits of T HROTTLE both with and without Byzantine clients. In the Byzantine setting, it remained competitive under most standard attacks and maintains high accu-racy under flooding attacks that severely degrade several existing methods. In the non-Byzantine setting, it achieved lower optimization error than minibatch SGD, asynchronous SGD, and the other evaluated baselines under the same gradient computation budget. 7Preprint 0.0 0.2 0.4 0.6 0.8 1.0              
+
+> RD NG Empire
+> 05000 10000 15000 0.0 0.2 0.4 0.6 0.8 1.0
+> ALIE
+> 05000 10000 15000
+> fixed flood, =30
+> 05000 10000 15000
+> random flood, =30
+> Simulated wall-clock time Test accuracy
+> BASGD
+> Throttle q=1.1
+> BASGDm
+> Throttle q=1.5
+> ²-SGD (CWMed)
+> Kardam ²-SGD (RFA)
+
+Figure 2: Test accuracy on MNIST with n = 25 clients, |B| = 5 Byzantine clients. Standard attacks (RD,NG,Empire,ALIE) under the scheduler based on the codebase 3, in which Byzantine updates are at most 1/3 of all gradients at any time. Flooding attacks under using a fixed vector/random vectors. The higher ρ, the more frequently the Byzantine clients send their updates. THROTTLE 
+
+keeps a higher accuracy overall. Figure 6 also shows the results with other choices of ρ = 1 , 3, 10 .6.1 THROTTLE IS BYZANTINE -ROBUST 
+
+We trained convolutional neural networks using our optimizer and other existing asynchronous SGD algorithms on MNIST with n = 25 clients and |B| = 5 Byzantine clients. We compared T HROTTLE 
+
+against four standard attacks RD (Random Disturbance attack), NG (Negative Gradient attack (Yang & Li, 2023), Empire (Xie et al., 2020a), ALIE (Baruch et al., 2019) and eight flooding attacks (Fig-ure 2 and Figure 6). 2 We compared our proposed method with Kardam (Damaskinos et al., 2018), BASGD and BASGDm (Yang & Li, 2021; 2023), and Asynchronous Robust μ2-SGD (Dahan & Levy, 2024) based on their codebase. 3 Following Dahan & Levy (2024), we simulate asynchronous training as a sequence of updates. For the standard attacks in Figure 2 every third arrival is a Byzan-tine update and the arriving client is drawn with probability proportional to its index for other up-dates, as in Dahan & Levy (2024). In the flooding experiments, client i is an independent Poisson process with rate ri ∝ i and the Byzantine rates are multiplied by ρ, giving a Byzantine fraction of updates ρ/ (2 + ρ) (1/3 to 0.94 for ρ = 1 to 30 ). Appendix E gives additional details including all hyperparameter grids, attack details, and asynchrony. 
+
+THROTTLE is robust and outperforms existing algorithms in almost all type of attacks. 
+
+THROTTLE outperformed BASGDm under fixed flooding even with increased ρ, and outperformed 
+
+μ2-SGD with RFA under both ALIE and flooding attacks. The exception was Empire, where THROTTLE achieved 59 .6% and 61 .5% , compared with 96 .0% for BASGDm and 94 .0% for μ2-SGD with RFA. Since both baselines used momentum, we expect that adding momentum to T HROTTLE ,together with tuning the clipping radius, would narrow this gap. We leave this to future work. 
+
+> 2
+
+For ALIE and Empire, we used the latest gradients from each honest client as the information for them. 
+
+> 3
+
+https://github.com/dahan198/asynchronous-fault-tolerant-ml 
+
+8Preprint 0 5000 10000 15000 20000 25000 30000   
+
+> Number of computed gradients
+> 10 −6
+> 10 −5
+> 10 −4
+> 10 −3
+> 10 −2
+> 10 −1
+> 10 0
+> 10 1
+> F(x) ¡ F ¤
+> All workers identical
+> Minibatch SGD (q = ∞) Asynchronous SGD Throttle (q=1.1) Throttle (q=1.5) Asynchronous μ²-SGD BASGD BASGDm
+> 05000 10000 15000 20000 25000 30000
+> Number of computed gradients
+> One slow worker
+
+Figure 3: We ran experiments without Byzantine clients on a simple least-squares problem with random data and tuned all stepsizes for each methods under pure asynchrony using Ray 4 framework. We averaged over three seeds. Left: all clients compute gradients at similar speeds. Right: one worker sleeps for 100 × its compute time after every gradient computation. THROTTLE (green) achieves faster convergence because the soft throttling mechanism allows us to take slightly larger stepsize η than asynchronous SGD. 6.2 THROTTLE OUTPERFORMS STANDARD ASYNCHRONOUS SGD Following Mishchenko et al. (2022), we study least-squares optimization with 40 asynchronous Ray 4 workers and no Byzantine clients (Figure 3). We compare T HROTTLE with q ∈ { 1.1, 1.5}
+
+against minibatch SGD ( q = ∞), asynchronous SGD, μ2-SGD, BASGD, and BASGDm 5. We tuned the stepsizes separately for each method. All methods use a budget of 32 ,000 computed gradients, including those discarded at hard restarts by T HROTTLE . We plot the optimality gap against this count. The right panel introduces one straggler that sleeps for 100 × its gradient computation time after each computation. Appendix E.2 provides further details. 
+
+Effectiveness of soft throttling. With a tuned stepsize T HROTTLE performs significantly better than its two limits. Among the tested values, q = 1 .1 achieves the lowest final optimality gap in both worker configurations. Although q = 1 .5 converges more slowly per computed gradient, it still outperforms asynchronous SGD and minibatch SGD. Asynchronous μ2-SGD, BASGD, and BASGDm did not utilize asynchrony into faster convergence. All three existing methods had slower convergence than minibatch SGD even in the absence of Byzantine clients. 
+
+Soft throttling remains effective with a straggler. Introducing a worker that sleeps for 100 × its computation time has little effect on the convergence of T HROTTLE per computed gradient (Figure 3, right). Even at q = 1 .5, convergence per computed gradient is largely preserved relative to the setting without a straggler, although convergence becomes less stable. 
+
+## 7 CONCLUSION 
+
+We introduce soft throttling, an exponential down-weighting of updates by the speed of each client. We show that the resulting algorithm, T HROTTLE , is a generalization of both synchronous Byzantine-robust SGD ( q → ∞ ), and (almost) asynchronous SGD ( q → 1) without Byzantine clients. The convergence rate of T HROTTLE matches the known rate at each limit and holds against flooding attacks without any bound on the Byzantine update ratio. Our experiments demonstrate robustness to attacks and show that soft throttling accelerates convergence even in the absence of Byzantine clients. 
+
+> 4
+
+https://docs.ray.io/en/latest/ray-core/examples/plot_parameter_server. html#asynchronous-parameter-server-training 
+
+> 5
+
+For the latter three methods, we replace robust aggregation with averaging while preserving any weighting scheme used by the original method. Gradient clipping was also disabled λt = ∞ for T HROTTLE .
+
+9Preprint 
+
+## ACKNOWLEDGEMENTS 
+
+Kaoru Otsuka was supported by MEXT Supporting Pioneering Research through AI for 1,000 Dis-covery challenges Program (SPReAD) Japan Grant Number JPMXP1726264354. Maxime Meyer was supported by the National Research Foundation, Singapore under its AI Singapore Programme (AISG Award No: AISG3-PhD-2026-01-068T). Makoto Yamada was partly supported by JSPS KAKENHI Grant Number 24K03004 and by JST ASPIRE JPMJAP2302. 
+
+## AI U SE STATEMENT 
+
+We used generative AI tools (large language models and LLM-based coding agents) in this work as follows. 
+
+Theory. All definitions, main theorem statements, proof strategies, and the proposed algorithm were developed by the authors. LLMs were used to check proofs for errors, correct minor mistakes, verify numerical constants, refine notation, and convert the authors’ arguments into polished formal LaTeX. 
+
+Experiments. LLM-based coding agents were used to implement methods, design and refine exper-imental pipelines, and adapt publicly available code from prior works. LLMs also provided limited assistance with interpreting results and qualitative analysis, including cross-checking generated plots against the intended algorithm. 
+
+Writing and figures. We used generative AI tools for drafting and editing parts of the manuscript based on the authors’ initial drafts, and for producing the figures as TikZ code from the authors’ hand-drawn illustrations. 
+
+Exclusions. We did not use generative AI to generate synthetic datasets or to clean or reformat datasets, propose or refine hypotheses, develop the theoretical model or conceptual framework, or propose research ideas. All LLM-assisted work has been reviewed and tested by the authors. Proofs were independently checked after LLM-assisted revision, and all LLM-assisted text was verified. We take full responsi-bility for the final content of this work. 
+
+## REFERENCES 
+
+Alekh Agarwal and John C. Duchi. Distributed delayed stochastic optimization. In IEEE Conference on Decision and Control , 2012. Youssef Allouah, Sadegh Farhadkhani, Rachid Guerraoui, Nirupam Gupta, Rafael Pinot, and John Stephan. Fixing by mixing: A recipe for optimal byzantine ML under heterogeneity. In Interna-tional Conference on Artificial Intelligence and Statistics , 2023a. Youssef Allouah, Rachid Guerraoui, Nirupam Gupta, Rafael Pinot, and Geovani Rizk. Robust dis-tributed learning: Tight error bounds and breakdown point under data heterogeneity. In Advances in Neural Information Processing Systems , 2023b. Youssef Allouah, Sadegh Farhadkhani, Rachid Guerraoui, Nirupam Gupta, Rafael Pinot, Geovani Rizk, and Sasha Voitovych. Byzantine-robust federated learning: Impact of client subsampling and local updates. In International Conference on Machine Learning , 2024. Gilad Baruch, Moran Baruch, and Yoav Goldberg. A little is enough: Circumventing defenses for distributed learning. In Advances in Neural Information Processing Systems , 2019. Gerard M Baudet. Asynchronous iterative methods for multiprocessors. In Journal of the ACM ,1978. Peva Blanchard, El Mahdi El Mhamdi, Rachid Guerraoui, and Julien Stainer. Machine learning with adversaries: Byzantine tolerant gradient descent. In Advances in Neural Information Processing Systems , 2017. 10 Preprint S´ ebastien Bubeck. Convex optimization: Algorithms and complexity. Foundations and trends in Machine Learning , 8(3-4):231–357, 2015. Jianmin Chen, Rajat Monga, Samy Bengio, and Rafal Jozefowicz. Revisiting distributed syn-chronous sgd. In International Conference on Learning Representations Workshop Track , 2016. Yudong Chen, Lili Su, and Jiaming Xu. Distributed statistical machine learning in adversarial set-tings: Byzantine gradient descent. Proceedings of the ACM on Measurement and Analysis of Computing Systems , 2017. Tehila Dahan and Kfir Y. Levy. Weight for robustness: A comprehensive approach towards optimal fault-tolerant asynchronous ML. In Advances in Neural Information Processing Systems , 2024. Georgios Damaskinos, Rachid Guerraoui, Rhicheek Patra, Mahsa Taziki, et al. Asynchronous byzantine machine learning (the case of SGD). In International Conference on Machine Learning ,2018. El-Mahdi El-Mhamdi, Rachid Guerraoui, Arsany Guirguis, Lˆ e Nguyˆ en Hoang, and S´ ebastien Rouault. Genuinely distributed byzantine machine learning. In Symposium on Principles of Distributed Computing , 2020. Minghong Fang, Jia Liu, Neil Zhenqiang Gong, and Elizabeth S. Bentley. Aflguard: Byzantine-robust asynchronous federated learning. In Annual Computer Security Applications Conference ,2022. Sadegh Farhadkhani, Rachid Guerraoui, Nirupam Gupta, Rafael Pinot, and John Stephan. Byzantine machine learning made easy by resilient averaging of momentums. In International Conference on Machine Learning , 2022. Eduard Gorbunov, Samuel Horv´ ath, Peter Richt´ arik, and Gauthier Gidel. Variance reduction is an antidote to byzantines: Better rates, weaker assumptions and communication compression as a cherry on the top. In International Conference on Learning Representations , 2023. Samuel Horvath, Stefanos Laskaridis, Mario Almeida, Ilias Leontiadis, Stylianos Venieris, and Nicholas Lane. Fjord: Fair and accurate federated learning under heterogeneous targets with ordered dropout. In Advances in Neural Information Processing Systems , 2021. Peter J. Huber. Robust statistics. In Wiley Series in Probability and Statistics , 2005. Rustem Islamov, Mher Safaryan, and Dan Alistarh. AsGrad: A sharp unified analysis of asynchronous-SGD algorithms. In International Conference on Artificial Intelligence and Statis-tics , 2024. Peter Kairouz, H. Brendan McMahan, Brendan Avent, Aur´ elien Bellet, Mehdi Bennis, Arjun Nitin Bhagoji, Kallista A. Bonawitz, Zachary Charles, Graham Cormode, Rachel Cummings, Rafael G. L. D’Oliveira, Hubert Eichner, Salim El Rouayheb, David Evans, Josh Gardner, Zachary Gar-rett, Adri` a Gasc´ on, Badih Ghazi, Phillip B. Gibbons, Marco Gruteser, Za¨ ıd Harchaoui, Chaoyang He, Lie He, Zhouyuan Huo, Ben Hutchinson, Justin Hsu, Martin Jaggi, Tara Javidi, Gauri Joshi, Mikhail Khodak, Jakub Koneˇ cn´ y, Aleksandra Korolova, Farinaz Koushanfar, Sanmi Koyejo, Tancr` ede Lepoint, Yang Liu, Prateek Mittal, Mehryar Mohri, Richard Nock, Ayfer ¨ Ozg¨ ur, Rasmus Pagh, Hang Qi, Daniel Ramage, Ramesh Raskar, Mariana Raykova, Dawn Song, Weikang Song, Sebastian U. Stich, Ziteng Sun, Ananda Theertha Suresh, Florian Tram` er, Praneeth Vepakomma, Jianyu Wang, Li Xiong, Zheng Xu, Qiang Yang, Felix X. Yu, Han Yu, and Sen Zhao. Advances and open problems in federated learning. In Foundations and Trends in Machine Learning , 2021. Sai Praneeth Karimireddy, Lie He, and Martin Jaggi. Learning from history for byzantine robust optimization. In International Conference on Machine Learning , 2021. Sai Praneeth Karimireddy, Lie He, and Martin Jaggi. Byzantine-robust learning on heterogeneous datasets via bucketing. In International Conference on Learning Representations , 2022. Anastasia Koloskova, Nicolas Loizou, Sadra Boreiri, Martin Jaggi, and Sebastian U. Stich. A uni-fied theory of decentralized SGD with changing topology and local updates. In International Conference on Machine Learning , 2020. 11 Preprint Anastasia Koloskova, Sebastian U. Stich, and Martin Jaggi. Sharper convergence guarantees for asynchronous SGD for distributed and federated learning. In Advances in Neural Information Processing Systems , 2022. Anastasia Koloskova, Nikita Doikov, Sebastian U Stich, and Martin Jaggi. On convergence of incremental gradient for non-convex smooth functions. In International Conference on Machine Learning , 2024. Anastasiia Koloskova, Ryan McKenna, Zachary Charles, John Rush, and H Brendan McMahan. Gradient descent with linearly correlated noise: Theory and applications to differential privacy. In Advances in Neural Information Processing Systems , 2023. Leslie Lamport, Robert Shostak, and Marshall Pease. The Byzantine generals problem . Association for Computing Machinery (ACM) / ACM Books, 10 2019. ISBN 9781450372701. doi: 10.1145/ 3335772.3335936. Xiangru Lian, Yijun Huang, Yuncheng Li, and Ji Liu. Asynchronous parallel stochastic gradient for nonconvex optimization. In Advances in Neural Information Processing Systems , 2015. Grigory Malinovsky, Peter Richt´ arik, Samuel Horv´ ath, and Eduard Gorbunov. Byzantine robustness and partial participation can be achieved at once: Just clip gradient differences. In Advances in Neural Information Processing Systems , 2024. Horia Mania, Xinghao Pan, Dimitris Papailiopoulos, Benjamin Recht, Kannan Ramchandran, and Michael I Jordan. Perturbed iterate analysis for asynchronous stochastic optimization. In SIAM Journal on Optimization , 2017. Arto Maranjyan, Alexander Tyurin, and Peter Richt´ arik. Ringmaster ASGD: The first asynchronous SGD with optimal time complexity. In Forty-second International Conference on Machine Learn-ing , 2025. El Mahdi El Mhamdi, Rachid Guerraoui, and S´ ebastien Rouault. The hidden vulnerability of dis-tributed learning in byzantium. In International Conference on Machine Learning , 2018. El Mahdi El Mhamdi, Rachid Guerraoui, and S´ ebastien Rouault. Distributed momentum for byzantine-resilient stochastic gradient descent. In International Conference on Learning Rep-resentations , 2021. Konstantin Mishchenko, Francis R. Bach, Mathieu Even, and Blake E. Woodworth. Asynchronous SGD beats minibatch SGD under arbitrary delays. In Advances in Neural Information Processing Systems , 2022. Yurii Nesterov. Lectures on convex optimization . Springer, 2018. John Nguyen, Kshitiz Malik, Hongyuan Zhan, Ashkan Yousefpour, Mike Rabbat, Mani Malek, and Dzmitry Huba. Federated learning with buffered asynchronous aggregation. In International conference on artificial intelligence and statistics , 2022. Kaoru Otsuka, Yuki Takezawa, and Makoto Yamada. Delayed momentum aggregation: Communication-efficient byzantine-robust federated learning with partial participation. In In-ternational Conference on Machine Learning , 2026. Krishna Pillutla, Sham M. Kakade, and Za¨ ıd Harchaoui. Robust aggregation for federated learning. In IEEE Transactions on Signal Processing , 2022. Ahmad Rammal, Kaja Gruntkowska, Nikita Fedin, Eduard Gorbunov, and Peter Richt´ arik. Commu-nication compression for byzantine robust learning: New efficient algorithms and improved rates. In International Conference on Artificial Intelligence and Statistics , 2024. Benjamin Recht, Christopher Re, Stephen Wright, and Feng Niu. Hogwild!: A lock-free approach to parallelizing stochastic gradient descent. In Advances in neural information processing systems ,2011. 12 Preprint Max Ryabinin, Eduard Gorbunov, Vsevolod Plokhotnyuk, and Gennady Pekhimenko. Moshpit SGD: Communication-efficient decentralized training on heterogeneous unreliable devices. In 
+
+Advances in Neural Information Processing Systems , 2021. Chang-Wei Shi, Yi-Rui Yang, and Wu-Jun Li. Ordered momentum for asynchronous SGD. In 
+
+Advances in Neural Information Processing Systems , 2024. Qiankun Shi, Jie Peng, Kun Yuan, Xiao Wang, and Qing Ling. Optimal complexity in byzantine-robust distributed stochastic optimization with data heterogeneity. In Journal of Machine Learn-ing Research , 2025. Sebastian U Stich and Sai Praneeth Karimireddy. The error-feedback framework: Sgd with delayed gradients. In Journal of Machine Learning Research , 2020. J. Tsitsiklis, D. Bertsekas, and M. Athans. Distributed asynchronous deterministic and stochastic gradient optimization algorithms. In IEEE Transactions on Automatic Control , 1986. Alexander Tyurin and Peter Richt´ arik. Optimal time complexities of parallel stochastic optimization methods under a fixed computation model. In Thirty-seventh Conference on Neural Information Processing Systems , 2023. Alexander Tyurin, Kaja Gruntkowska, and Peter Richt´ arik. Freya PAGE: First optimal time com-plexity for large-scale nonconvex finite-sum optimization with heterogeneous asynchronous com-putations. In The Thirty-eighth Annual Conference on Neural Information Processing Systems ,2024a. Alexander Tyurin, Marta Pozzi, Ivan Ilin, and Peter Richt´ arik. Shadowheart SGD: Distributed asyn-chronous SGD with optimal time complexity under arbitrary computation and communication heterogeneity. In The Thirty-eighth Annual Conference on Neural Information Processing Sys-tems , 2024b. Joost Verbraeken, Matthijs Wolting, Jonathan Katzy, Jeroen Kloppenburg, Tim Verbelen, and Jan S Rellermeyer. A survey on distributed machine learning. Acm computing surveys (csur) , 53(2): 1–33, 2020. Cong Xie, Sanmi Koyejo, and Indranil Gupta. Zeno: Distributed stochastic gradient descent with suspicion-based fault-tolerance. In International Conference on Machine Learning , 2019. Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta. Fall of empires: Breaking byzantine-tolerant SGD by inner product manipulation. In Uncertainty in Artificial Intelligence , 2020a. Cong Xie, Sanmi Koyejo, and Indranil Gupta. Zeno++: Robust fully asynchronous SGD. In Inter-national Conference on Machine Learning , 2020b. Tao Yang, Xinlei Yi, Junfeng Wu, Ye Yuan, Di Wu, Ziyang Meng, Yiguang Hong, Hong Wang, Zongli Lin, and Karl H Johansson. A survey of distributed optimization. Annual Reviews in Control , 47:278–305, 2019. Yi-Rui Yang and Wu-Jun Li. Basgd: Buffered asynchronous sgd for byzantine learning. In Interna-tional conference on machine learning , 2021. Yi-Rui Yang and Wu-Jun Li. Buffered asynchronous SGD for byzantine learning. In Journal of Machine Learning Research , 2023. Yi-Rui Yang, Chang-Wei Shi, and Wu-Jun Li. On the effect of batch size in byzantine-robust dis-tributed learning. In International Conference on Learning Representations , 2024. Dong Yin, Yudong Chen, Ramchandran Kannan, and Peter Bartlett. Byzantine-robust distributed learning: Towards optimal statistical rates. In International conference on machine learning ,2018. Bohang Zhang, Jikai Jin, Cong Fang, and Liwei Wang. Improved analysis of clipping algorithms for non-convex optimization. Advances in Neural Information Processing Systems , 2020a. 13 Preprint Jingzhao Zhang, Tianxing He, Suvrit Sra, and Ali Jadbabaie. Why gradient clipping accelerates training: A theoretical justification for adaptivity. In International Conference on Learning Rep-resentations , 2020b. Banghua Zhu, Lun Wang, Qi Pang, Shuai Wang, Jiantao Jiao, Dawn Song, and Michael I. Jordan. Byzantine-robust federated learning with optimal statistical rates. In International Conference on Artificial Intelligence and Statistics , 2023. 14 Preprint 
+
+## A NOTATIONS 
+
+In Algorithm 1, we write • x(0) ∈ Rd the initial parameter, • n the total number of clients, • q ∈ [1 , ∞] the scaling factor, • T the number of iterations. • Sr the start of the rth round, • r(t) := max {Sr : Sr ≤ t} the current round number, • j(t) the current client, • ci(t) := Pt−1 
+
+> s=r(t)
+
+1{js=i} the number of gradients that the client i has already delivered in the current round, • v(t−τt) 
+
+> jt
+
+=
+
+(
+
+∇F (x(t−τt); ξ(t−τt) 
+
+> jt
+
+) if jt ∈ G ∗ if jt ∈ B the feedback received, • ηt := 
+
+( ηn if cjt (t) = 0 ,  
+
+> ηqcjt(t)
+
+else . the stepsize, • Sr(t) the current side information. 
+
+## B ANALYZING ASYNCHRONOUS SGD THROUGH THE VIRTUAL ITERATE 
+
+Koloskova et al. (2022); Mishchenko et al. (2022) study a virtual iterate ˜x(t), where every update is performed on the current model instead of the outdated version, 
+
+˜x(t) := ˜ x(t−1) − η∇F (x(t−1) ). (3) The sum of the updates of the virtual iterate over T steps is simply ˜S = ˜ x(0) + PTt=1 η∇F (x(t−1) ).The key insight is that the sum of the updates of the actual iterate S = x(0) + PTt=1 η∇F (x(t−τt))
+
+corresponds almost exactly to ˜S. It only differs by the first factor x(0) and the fact that the update 
+
+∇F (x(0) ) appears n times in S but only once in ˜S, which comprises later updates instead ( S can be seen as being “delayed” compared to ˜S). Therefore, both iterates differ by at most n − 1 stochastic gradients, regardless of T (Mishchenko et al., 2022, Lemma 1). Standard Synchronous SGD tech-niques can be used to analyse the convergence of the virtual iterate, and hence that of the real iterate 
+
+x(t).
+
+Adapting to the Byzantine Setting. However, this virtual iterate loses its usefulness in the Byzan-tine setting. Indeed, it can consist of an arbitrarily large proportion of Byzantine updates, and hence be arbitrarily bad. This contrasts with standard Byzantine distributed learning settings and explains the added assumptions of previous work (Dahan & Levy, 2024). We remove this assumption by considering a modified version of the virtual iterate, which we introduce in Appendix C. 
+
+## C CONVERGENCE PROOFS 
+
+Our proofs build on perturbed iterate analysis (Mania et al., 2017; Stich & Karimireddy, 2020). Existing analyses of asynchronous SGD (Mishchenko et al., 2022; Koloskova et al., 2022) also rely on this technique, approximating the asynchronous iterate by a synchronized virtual iterate. A related construction is the virtual sequence with restart (Koloskova et al., 2023), later adapted to incremental gradient methods (Koloskova et al., 2024). Islamov et al. (2024) combined the two ideas through a two-stage virtual sequence to analyze asynchronous SGD with shuffling. Inspired by Islamov et al. (2024), our analysis of T HROTTLE also uses a two-stage virtual sequence. The first stage is the standard approximation of the asynchronous iterate by a synchronized one 15 Preprint (Fig. 4). The second approximates this synchronized iterate, which still contains Byzantine updates, by a synchronized iterate free of them (Fig. 5): 
+
+x(t) y(t) z(t)
+
+real iterate “synchronized” iterate de-Byzantinized iterate  
+
+> synchronization de-Byzantinization
+
+Both the de-Byzantinization step and its combination with asynchronous virtual sequences with restart are new to our analysis. In Section C.1, we show that perturbed iterate analysis also applies to standard Byzantine-robust SGD analysis (with momentum, for generality). Section C.2 then presents the full analysis of THROTTLE using the two-stage virtual sequence above. C.1 VIRTUAL ITERATE ANALYSIS FOR SYNCHRONOUS BYZANTINE -ROBUST SGD In this section, we present a new analysis technique for Byzantine-robust SGD. It recovers the known convergence rate and, more importantly, provides the proof strategy for our main theorem. Consider the actual iterates of Byzantine-robust SGD with momentum. We include momentum just for gen-erality ( α = 1 reduces to SGD). 
+
+x(t) := x(t−1) − η Agg  {m(t) 
+
+> i
+
+}ni=1 
+
+, m(t) 
+
+> i
+
+:= (1 − α) m(t−1)  
+
+> i
+
++ α∇F (x(t−1) ; ξ(t) 
+
+> i
+
+).
+
+We construct the virtual sequence {y(t)}T −1 
+
+> t=0
+
+by 
+
+y(t) := x(t−1) − η ¯m(t), y(0) := x(0) ,
+
+that is, the point reached from x(t−1) when the aggregate is replaced by the average momentum of honest clients. 
+
+Lemma 1 (Descent Lemma for Virtual Iterate Analysis for Synchronous Byzantine-robust SGDm) .
+
+Suppose the stepsizes satisfy 0 < η t ≤ 1/(8 L). and denote Et[·] := E[· | F t−1], where Ft−1
+
+contains the full history through round t − 1. Then, for every t ≥ 2,
+
+Et
+
+f (y(t)) ≤f (y(t−1) ) − 3ηt
+
+8 ∇f (x(t−1) ) 2 + 5ηt
+
+4 Et ¯m(t) − ∇ f (x(t−1) ) 2 + 32ηt
+
+x(t−1) − y(t−1) 2
+
+| {z }    
+
+> =3η2
+> t−12ηtm(t−1) −¯m(t−1) 2
+
+.
+
+Proof. By the definition of the virtual iterate, 
+
+y(t) = y(t−1) − ηt ¯m(t) +  x(t−1) − y(t−1) .
+
+Therefore, L-smoothness gives 
+
+f (y(t)) ≤ f (y(t−1) ) − ηt
+
+D
+
+∇f (y(t−1) ), ¯m(t)E
+
++
+
+D
+
+∇f (y(t−1) ), x(t−1) − y(t−1) E
+
++ Lη 2
+
+> t
+
+2 ¯m(t) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+.
+
+Adding and subtracting ∇f (x(t−1) ) inside the inner product, while retaining the virtual iterate gap, yields 
+
+f (y(t)) ≤ f (y(t−1) ) − ηt
+
+D
+
+∇f (y(t−1) ), ∇f (x(t−1) )
+
+E
+
+− ηt
+
+
+
+∇f (y(t−1) ), ¯m(t) − ∇ f (x(t−1) ) − x(t−1) − y(t−1) 
+
+ηt
+
+
+
++ Lη 2
+
+> t
+
+2 ¯m(t) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+.
+
+For the first inner product, polarization identity and L-smoothness imply 
+
+−ηt
+
+D
+
+∇f (y(t−1) ), ∇f (x(t−1) )
+
+E
+
+= − ηt
+
+2 ∇f (x(t−1) ) 2 − ηt
+
+2 ∇f (y(t−1) ) 2 + ηt
+
+2 ∇f (x(t−1) ) − ∇ f (y(t−1) ) 2
+
+≤ − ηt
+
+2 ∇f (x(t−1) ) 2 − ηt
+
+2 ∇f (y(t−1) ) 2 + ηtL2
+
+2 x(t−1) − y(t−1) 2.
+
+16 Preprint For the second inner product, Young’s inequality gives 
+
+− ηt
+
+
+
+∇f (y(t−1) ), ¯m(t) − ∇ f (x(t−1) ) − x(t−1) − y(t−1) 
+
+ηt
+
+
+
+≤ ηt
+
+2 ∇f (y(t−1) ) 2 + ηt
+
+2 ¯m(t) − ∇ f (x(t−1) ) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+.
+
+Combining these inequalities cancels the squared gradient norm at y(t−1) , leaving 
+
+f (y(t)) ≤f (y(t−1) ) − ηt
+
+2 ∇f (x(t−1) ) 2 + ηtL2
+
+2 x(t−1) − y(t−1) 2
+
++ ηt
+
+2 ¯m(t) − ∇ f (x(t−1) ) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
++ Lη 2
+
+> t
+
+2 ¯m(t) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+.
+
+Next, inserting ∇f (x(t−1) ) into the last squared norm gives 
+
+¯m(t) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+≤ 2 ∇f (x(t−1) ) 2 + 2 ¯m(t) − ∇ f (x(t−1) ) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+.
+
+Moreover, 
+
+¯m(t) − ∇ f (x(t−1) ) − x(t−1) − y(t−1) 
+
+ηt
+
+> 2
+
+≤ 2 ¯m(t) − ∇ f (x(t−1) ) 2 + 2
+
+η2
+
+> t
+
+x(t−1) − y(t−1) 2.
+
+Substituting both bounds and collecting terms, we obtain 
+
+f (y(t)) ≤f (y(t−1) ) − ηt
+
+ 12 − Lη t
+
+
+
+∇f (x(t−1) ) 2
+
++ ηt(1 + 2 Lη t) ¯m(t) − ∇ f (x(t−1) ) 2
+
++
+
+ 1
+
+ηt
+
++ 2 L + ηtL2
+
+2
+
+
+
+x(t−1) − y(t−1) 2.
+
+Since Lη t ≤ 1/8,
+
+12 − Lη t ≥ 38 , 1 + 2 Lη t ≤ 54 , 1 + 2 Lη t + L2η2
+
+> t
+
+2 ≤ 161 128 ≤ 32 .
+
+Consequently, 
+
+f (y(t)) ≤f (y(t−1) ) − 3ηt
+
+8 ∇f (x(t−1) ) 2 + 5ηt
+
+4 ¯m(t) − ∇ f (x(t−1) ) 2 + 32ηt
+
+x(t−1) − y(t−1) 2.
+
+Taking conditional expectations and for t ≥ 2, the real and virtual updates imply 
+
+x(t−1) − y(t−1) =  x(t−2) − ηt−1m(t−1)  −  x(t−2) − ηt−1 ¯m(t−1) 
+
+= −ηt−1
+
+ m(t−1) − ¯m(t−1) .
+
+Substitution proves the Lemma. Combining this lemma with Karimireddy et al. (2021, Lemmas 9 and 11) yields the same conver-gence rate up to a constant factor. This construction also provides key intuition for T HROTTLE and its analysis. It corresponds to the special case of T HROTTLE in which every round is a synchroniza-tion round ( q → ∞ ). C.2 PROOF OF THE MAIN THEOREM 
+
+Let us restate the main theorem in its precise form. 17 Preprint 
+
+x(0) = y(0) 
+
+x(1) 
+
+x(2) 
+
+x(3) 
+
+x(4) 
+
+x(5) 
+
+y(1) 
+
+y(2) 
+
+y(3) 
+
+x(6) = y(4) = y(5) = y(6) 1 
+
+> n
+
+g(0)  
+
+> C
+> 1
+> q
+
+g(1)  
+
+> C
+> 1
+> n
+
+g(0)  
+
+> A
+> 1
+> q2
+
+g(2)  
+
+> C
+> 1
+> q
+
+g(3)  
+
+> A
+> 1
+> n
+
+g(0)  
+
+> B
+> 1
+> n
+
+g(0)  
+
+> A
+> 1
+> n
+
+g(0) 
+
+> B
+
+ˆg(0) 1 
+
+> q
+
+g(1)  
+
+> C
+> 1
+> q2
+
+g(2)  
+
+> C
+> 1
+> q
+
+g(3)     
+
+> A
+> canceled g(4)
+> C
+> canceled g(5)
+> A
+> Restart at S1= 6
+
+Figure 4: Actual and virtual iterates with a hard restart. 
+
+Theorem 1 (Non-convex Convergence rate) . Let T ≥ 2 and q > 1. Suppose that Assumptions 2, 1, and 3, as well as Assumption 4 with G′ ≤ 3G hold, together with the local (c, δ )-robust aggregator 
+
+A, and use λt = G. Define initial distance ∆, effective time steps Teff , number of restart rounds 
+
+NT , and restart ratio θT as 
+
+∆ := f (x(0) ) − f∗, Teff =: 1 +  
+
+> T−1
+
+X
+
+> t=1
+
+ˆηt/η, NT := 1 +  
+
+> T−1
+
+X
+
+> t=1
+
+1{t=r(t)}, θT := NT
+
+Teff 
+
+.
+
+Suppose that ∆ > 0, and choose the output iterate according to 
+
+P(xout = x(0) ) = 1
+
+Teff 
+
+, P(xout = x(t)) = ˆηt
+
+ηT eff 
+
+, t ∈ { 1, . . . , T − 1}. (4) 
+
+Choose the stepsize η > 0 as 
+
+η = min 
+
+(s 
+
+∆
+
+Lσ 2(1 − θT + θT /|G| )Teff 
+
+,
+
+
+
+∆
+
+L2Teff (1 − θT )
+
+
+
+9( n − 1) 2G2 + 4 cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+> 1/3
+
+, 14L
+
+)
+
+.
+
+We have 
+
+E∥∇ f (xout )∥2 = O
+
+s
+
+Lσ 2∆
+
+Teff 
+
+
+
+1 − θT + θT
+
+|G| 
+
+
+
++
+
+ L∆
+
+Teff 
+
+2/3 
+
+(1 − θT )
+
+
+
+9( n − 1) 2G2 + 4 cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+ 1/3
+
++ L∆
+
+Teff 
+
++
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+θT
+
+!
+
+.
+
+Let the real iterate be 
+
+x(t) = x(t−1) − ηtg(t−τt) 
+
+> jt
+
+, where t − τt ≥ r(t),
+
+with the stepsize ηt in equation 2. First arrivals use the local aggregator with side information from the last synchronized round, and repeated arrivals use clipping at radius G.Define the first virtual iterate (de-asynchronized version) as 
+
+y(t+1) =
+
+
+
+y(t) − ˆηtg(t) 
+
+> jt
+
+, if t > r (t),
+
+x(t) − ηnnX
+
+> i=1
+
+g(t) 
+
+> i
+
+, if t = r(t), , and y(1) = x(0) − ηn
+
+> n
+
+X
+
+> i=1
+
+g(0)  
+
+> i
+
+.
+
+18 Preprint reset at S1 = 6 ˆg(0) 
+
+¯g(0) 
+
+ˆg(6) 
+
+¯g(6) x(0) = y(0) = z(0) 
+
+y(1) 
+
+y(2) 
+
+y(3) 
+
+z(1) 
+
+z(2) 
+
+z(3) 
+
+y(4) = y(5) = y(6) = x(6) 
+
+z(4) = z(5) = z(6) 
+
+y(7) 
+
+z(7) 
+
+Figure 5: Virtual iterates with clipping and a hard restart. where 
+
+ˆηt := 
+
+
+
+η, if t = r(t),ηnext( t+1 ,j t), if t > r (t) and the gradient computation is not canceled by the server ,
+
+0 t > r (t) and the gradient computation is canceled by the server .
+
+Furthermore, we define another virtual iterate to remove the effect of clipping and Byzantine up-dates: 
+
+z(t+1) =
+
+(z(t) − ˆηt∇F (x(t); ξ(t) 
+
+> jt
+
+), if t > r (t),
+
+y(t) − η · 1
+
+> |G|
+
+P 
+
+> i∈G
+
+∇F (x(t); ξ(t) 
+
+> i
+
+), if t = r(t),
+
+and 
+
+z(1) = x(0) − η · 1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(0) ; ξ(0)  
+
+> i
+
+).
+
+If the job is canceled (i.e., ˆηt = 0 ), define y(t+1) = y(t) and z(t+1) = z(t). By construction, we have at every synchronization time Sr , y(Sr ) = x(Sr ).
+
+The definition of z(1) gives one additional stochastic descent step before the virtual-iterate recursion starts. 
+
+Lemma 2 (Initial stochastic descent step) . If η ≤ 1/L , then 
+
+E[f (z(1) ) | x(0) ] ≤ f (x(0) ) − η
+
+2 ∥∇ f (x(0) )∥2 + Lη 2σ2
+
+2|G| .
+
+Proof. Counting the initial round as restart-like, let 
+
+g(0) := 1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(0) ; ξ(0)  
+
+> i
+
+).
+
+Conditional independence, unbiasedness, and the variance bound give 
+
+E[g(0) | x(0) ] = ∇f (x(0) ),
+
+E[∥g(0) − ∇ f (x(0) )∥2 | x(0) ] ≤ σ2
+
+|G| .
+
+19 Preprint Therefore, L-smoothness and z(1) = x(0) − ηg(0) imply 
+
+E[f (z(1) ) | x(0) ] ≤ f (x(0) ) − η∥∇ f (x(0) )∥2
+
++ Lη 2
+
+2
+
+
+
+∥∇ f (x(0) )∥2 + σ2
+
+|G| 
+
+
+
+≤ f (x(0) ) − η
+
+2 ∥∇ f (x(0) )∥2 + Lη 2σ2
+
+2|G| ,
+
+where the last inequality uses Lη ≤ 1.At a synchronization time t = r(t), the aggregate used by the first virtual iterate satisfies 
+
+1
+
+n
+
+> n
+
+X
+
+> i=1
+
+A(v(t) 
+
+> i
+
+; S) = 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+g(t) 
+
+> i
+
+.
+
+We use a local (c, δ )-robust aggregator in the sense of the main text. 
+
+Lemma 3 (Synchronization aggregation error) . Under Assumption 1, at every synchronization time 
+
+t,
+
+E
+
+ 1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(t); ξ(t) 
+
+> i
+
+) − 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+A(v(t) 
+
+> i
+
+; Sr(t))
+
+> 2
+
+| F t
+
+ ≤ 2cδσ 2.
+
+Proof. For any i, j ∈ G , conditional independence and unbiasedness give 
+
+E[∥∇ F (x(t); ξ(t) 
+
+> i
+
+) − ∇ F (x(t); ξ(t) 
+
+> j
+
+)∥2 | F t] = E[∥∇ F (x(t); ξ(t) 
+
+> i
+
+) − ∇ f (x(t))∥2 | F t]+ E[∥∇ F (x(t); ξ(t) 
+
+> j
+
+) − ∇ f (x(t))∥2 | F t]
+
+≤ 2σ2.
+
+Thus the pairwise radius ρ2 in Definition 1 is at most 2σ2. Applying the local (c, δ )-robust aggrega-tor definition 1 conditionally on Ft proves the claim. 
+
+Lemma 4 (Stochastic virtual-iterate relationship) . For every t after the first restart, 
+
+y(t+1) − z(t+1) = η
+
+"
+
+1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(r(t)) ; ξ(r(t))  
+
+> i
+
+) − 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+A(v(r(t))  
+
+> i
+
+; Sr(t))
+
+#
+
++
+
+> t
+
+X
+
+> k=r(t)+1
+
+ˆηk
+
+h
+
+∇F (x(k); ξ(k) 
+
+> jk
+
+) − g(k)
+
+> jk
+
+i
+
+.
+
+The second sum is zero when t = r(t). Moreover, 
+
+E∥y(t+1) − z(t+1) ∥2 ≤ η2
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+.
+
+Proof. Let r = r(t). At the synchronization round, 
+
+y(r+1) − z(r+1) = η
+
+"
+
+1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(r); ξ(r) 
+
+> i
+
+) − 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+A(v(r) 
+
+> i
+
+; Sr(t))
+
+#
+
+.
+
+Every subsequent round k > r satisfies 
+
+y(k+1) − z(k+1) = y(k) − z(k) + ˆ ηk
+
+h
+
+∇F (x(k); ξ(k) 
+
+> jk
+
+) − g(k)
+
+> jk
+
+i
+
+.
+
+Unrolling this recursion proves the first display. 20 Preprint For every good client, clipping is inactive by Assumption 3, and hence ∇F (x(k); ξ(k) 
+
+> jk
+
+) − g(k) 
+
+> jk
+
+= 0 .The sum below contains only repeated-arrival contributions, whose norms are at most G by non-restart clipping at radius G. Together with Assumption 3, this gives 
+
+> t
+
+X
+
+> k=r(t)+1
+
+ˆηk
+
+η
+
+h
+
+∇F (x(k); ξ(k) 
+
+> jk
+
+) − g(k)
+
+> jk
+
+i
+
+≤ 2G
+
+> t
+
+X
+
+> k=r(t)+1
+
+ˆηk
+
+η 1{jk ∈B} 
+
+≤ 2G|B| 
+
+q − 1 .
+
+The last inequality follows by summing, for each Byzantine client, the geometric sequence q−1 +
+
+q−2 + · · · within the round. Therefore, Lemma 3 gives 
+
+E∥y(t+1) − z(t+1) ∥2 ≤ η2
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+.
+
+This proves the result. 
+
+Lemma 5 (Real–virtual iterate difference after synchronization) . Suppose Assumption 4 holds, and let r be a synchronization round. At non-restart times t > r (t), under the same hard-restart indexing as in the deterministic proof, 
+
+x(t) − y(t) = X
+
+> m∈[n]\{ jt}
+
+ηnext( t,m )g(prev( t,m ))  
+
+> m
+
+.
+
+Consequently, 
+
+∥x(t) − y(t)∥2 ≤ 9( n − 1) 2η2G2 almost surely .
+
+At restart times, x(Sr ) = y(Sr ), so the gap is zero. Proof. For t > r (t), denote at = x(t) − y(t). Exactly as in the deterministic proof, unrolling the two recursions after r(t) gives 
+
+at = ηn
+
+> n
+
+X
+
+> i=1
+
+g(r(t))  
+
+> i
+
+−
+
+> t
+
+X
+
+> k=r(t)+1
+
+ηkg(k−τk ) 
+
+> jk
+
++
+
+> t−1
+
+X
+
+> k=r(t)+1
+
+ˆηkg(k)
+
+> jk
+
+= X
+
+> m∈[n]\{ jt}
+
+ηnext( t,m )g(prev( t,m ))  
+
+> m
+
+.
+
+Because k − τk ≥ r(k), all but at most one pending vector per client cancel. Canceled computations have weight zero, so at most n−1 terms remain. First-arrival contributions have norm at most 3G by Assumption 4, and repeated-arrival contributions have norm at most G ≤ 3G by clipping at radius 
+
+G. Using ηnext( t,m ) ≤ η therefore gives 
+
+∥x(t) − y(t)∥2 ≤ (n − 1) X
+
+> m∈[n]\{ jt}
+
+η2next( t,m )∥g(prev( t,m ))  
+
+> m
+
+∥2
+
+≤ 9( n − 1) 2η2G2.
+
+At restart times the gap is zero by construction. This bound is pathwise and therefore also holds after taking expectation. 
+
+Lemma 6 (Descent Lemma for Non-Restart Rounds) . If t > r (t) and ˆηt ≤ 1/(2 L), then 
+
+E[f (z(t+1) ) | F t] ≤ f (z(t)) − ˆηt
+
+4 ∥∇ f (x(t))∥2 − ˆηt
+
+2 ∥∇ f (z(t))∥2
+
++ L2 ˆηt∥x(t) − y(t)∥2 + L2 ˆηt∥y(t) − z(t)∥2
+
++ Lσ 2 ˆη2
+
+> t
+
+2 .
+
+21 Preprint 
+
+Proof. By L-smoothness and conditional unbiasedness, 
+
+E[f (z(t+1) ) | F t] ≤ f (z(t)) − ˆηt⟨∇ f (z(t)), ∇f (x(t))⟩
+
++ Lˆη2
+
+> t
+
+2
+
+
+
+∥∇ f (x(t))∥2 + σ2
+
+.
+
+Using 
+
+−⟨ a, b⟩ = − 12 ∥a∥2 − 12 ∥b∥2 + 12 ∥a − b∥2,
+
+we obtain 
+
+E[f (z(t+1) ) | F t] ≤ f (z(t)) −
+
+ ˆηt
+
+2 − Lˆη2
+
+> t
+
+2
+
+
+
+∥∇ f (x(t))∥2
+
+− ˆηt
+
+2 ∥∇ f (z(t))∥2 + ˆηt
+
+2 ∥∇ f (z(t)) − ∇ f (x(t))∥2
+
++ Lσ 2 ˆη2
+
+> t
+
+2 .
+
+Finally, 
+
+ˆηt
+
+2 ∥∇ f (z(t)) − ∇ f (x(t))∥2 ≤ L2 ˆηt∥x(t) − y(t)∥2
+
++ L2 ˆηt∥y(t) − z(t)∥2,
+
+and ˆηt ≤ 1/(2 L) implies ˆηt/2 − Lˆη2 
+
+> t
+
+/2 ≥ ˆηt/4.
+
+Lemma 7 (Descent Lemma for Restart Rounds) . If t = r(t) and 4Lη ≤ 1, then ˆηt = η and 
+
+E[f (z(t+1) ) | F t] ≤ f (z(t)) − η
+
+4 ∥∇ f (x(t))∥2
+
++ L2η∥x(t) − y(t)∥2 + L2η∥y(t) − z(t)∥2
+
++ 1
+
+η ∥y(t) − z(t)∥2 + Lη 2σ2
+
+2|G| .
+
+Proof. Conditional independence gives 
+
+E
+
+"
+
+1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(t); ξ(t) 
+
+> i
+
+) Ft
+
+#
+
+= ∇f (x(t)),
+
+E
+
+ 1
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(t); ξ(t) 
+
+> i
+
+) − ∇ f (x(t))
+
+> 2
+
+| F t
+
+ ≤ σ2
+
+|G| .
+
+The restart update is 
+
+z(t+1) = z(t) + y(t) − z(t) − η
+
+|G| 
+
+X
+
+> i∈G
+
+∇F (x(t); ξ(t) 
+
+> i
+
+).
+
+By L-smoothness and conditional unbiasedness, 
+
+E[f (z(t+1) ) | F t] ≤ f (z(t)) − η⟨∇ f (z(t)), ∇f (x(t))⟩
+
++
+
+D
+
+∇f (z(t)), y(t) − z(t)E
+
++ Lη 2∥∇ f (x(t))∥2
+
++ L∥y(t) − z(t)∥2 + Lη 2σ2
+
+2|G| .
+
+The same inner-product identity as above and Young’s inequality give 
+
+D
+
+∇f (z(t)), y(t) − z(t)E
+
+≤ η
+
+2 ∥∇ f (z(t))∥2 + 12η ∥y(t) − z(t)∥2.
+
+22 Preprint Moreover, 
+
+η
+
+2 ∥∇ f (z(t)) − ∇ f (x(t))∥2 ≤ L2η∥x(t) − y(t)∥2
+
++ L2η∥y(t) − z(t)∥2.
+
+Combining these estimates gives the coefficient 
+
+−η
+
+ 12 − Lη 
+
+
+
+in front of ∥∇ f (x(t))∥2. The total coefficient in front of ∥y(t) − z(t)∥2 is 
+
+L2η + L + 12η .
+
+Since 4Lη ≤ 1,
+
+12 − Lη ≥ 14 , L + 12η ≤ 34η ≤ 1
+
+η ,
+
+which proves the result. 
+
+Theorem 2 (Combined Stochastic Descent Lemma) . If η ≤ 1/(4 L), then for all t,
+
+E[f (z(t+1) ) | F t] ≤ f (z(t)) − ˆηt
+
+4 ∥∇ f (x(t))∥2
+
++ L2 ˆηt∥x(t) − y(t)∥2 + L2 ˆηt∥y(t) − z(t)∥2
+
++ Lˆη2 
+
+> t
+
+σ2
+
+2
+
+
+
+1{t>r (t)} + 1{t=r(t)}
+
+|G| 
+
+
+
++ 1
+
+η ∥y(t) − z(t)∥2 1{t=r(t)} .
+
+Proof. If t > r (t), apply Lemma 6 and drop the nonpositive term 
+
+− ˆηt
+
+2 ∥∇ f (z(t))∥2.
+
+If t = r(t), apply Lemma 7. These two cases prove the stated inequality. 
+
+Lemma 8 (Summed restart perturbation bound) . Let 
+
+NT := 1 +  
+
+> T−1
+
+X
+
+> t=1
+
+1{t=r(t)} .
+
+Then 
+
+1
+
+η 
+
+> T−1
+
+X
+
+> t=1
+
+E∥y(t) − z(t)∥2 1{t=r(t)} ≤ η
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+(NT − 1) 
+
+≤ η
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+NT .
+
+Proof. Fix a restart time t. Applying Lemma 4 with index t − 1 gives 
+
+E∥y(t) − z(t)∥2 ≤ η2
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+.
+
+Dividing by η and summing over the restart times proves the claim. 
+
+Proof of Theorem 1. Apply Lemma 2, weaken its descent coefficient from 1/2 to 1/4, and then sum Theorem 2 over t = 1 , . . . , T − 1. Taking total expectation, telescoping from f (x(0) ), and using 23 Preprint 
+
+f (z(T )) ≥ f∗ gives 
+
+14 η∥∇ f (x(0) )∥2 + 
+
+> T−1
+
+X
+
+> t=1
+
+ˆηtE∥∇ f (x(t))∥2
+
+!
+
+≤ ∆ + L2 
+
+> T−1
+
+X
+
+> t=1
+
+ˆηtE∥x(t) − y(t)∥2
+
++ L2 
+
+> T−1
+
+X
+
+> t=1
+
+ˆηtE∥y(t) − z(t)∥2
+
++ Lη 2σ2
+
+2|G| + Lσ 2
+
+2 
+
+> T−1
+
+X
+
+> t=1
+> t>r (t)
+
+ˆη2
+
+> t
+
++ Lσ 2
+
+2|G|  
+
+> T−1
+
+X
+
+> t=1
+> t=r(t)
+
+ˆη2 
+
+> t
+
++ 4 cδσ 2η(NT − 1) + 8G2|B| 2
+
+(q − 1) 2 η(NT − 1) .
+
+Lemma 5, Lemma 4, and the definition of Teff imply  
+
+> T−1
+
+X
+
+> t=1
+> t>r (t)
+
+ˆηt = η(Teff − NT ),
+
+and, since the real–virtual gap is zero at restart times, 
+
+L2 
+
+> T−1
+
+X
+
+> t=1
+
+ˆηtE∥x(t) − y(t)∥2 = L2 
+
+> T−1
+
+X
+
+> t=1
+> t>r (t)
+
+ˆηtE∥x(t) − y(t)∥2
+
+≤ 9L2(n − 1) 2G2η3(Teff − NT )= 9 L2(n − 1) 2G2η3Teff (1 − θT ),L2 
+
+> T−1
+
+X
+
+> t=1
+> t>r (t)
+
+ˆηtE∥y(t) − z(t)∥2 ≤ L2η3(Teff − NT )
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+.
+
+At restart times, the remaining part of the same sum satisfies 
+
+L2 
+
+> T−1
+
+X
+
+> t=1
+
+ˆηtE∥y(t) − z(t)∥2 1{t=r(t)}
+
+≤ L2η3
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+(NT − 1) .
+
+Since L2η2 ≤ 1/16 , combining this restart contribution with Lemma 8 gives at most 
+
+17 16 η
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+(NT − 1) ≤ 17 16 η
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+NT .
+
+24 Preprint Also, ˆηt = η at restart times, while ˆη2 
+
+> t
+
+≤ η ˆηt otherwise. Including the initial step, the variance weights satisfy 
+
+η2
+
+|G| + 
+
+> T−1
+
+X
+
+> t=1
+> t>r (t)
+
+ˆη2 
+
+> t
+
++ 1
+
+|G|  
+
+> T−1
+
+X
+
+> t=1
+> t=r(t)
+
+ˆη2
+
+> t
+
+= η2NT
+
+|G| + 
+
+> T−1
+
+X
+
+> t=1
+> t>r (t)
+
+ˆη2
+
+> t
+
+≤ η2
+
+ NT
+
+|G| + Teff − NT
+
+
+
+= η2Teff 
+
+
+
+1 − θT + θT
+
+|G| 
+
+
+
+.
+
+Collecting these estimates yields 
+
+14 η∥∇ f (x(0) )∥2 + 
+
+> T−1
+
+X
+
+> t=1
+
+ˆηtE∥∇ f (x(t))∥2
+
+!
+
+≤ ∆ + Lσ 2η2Teff 
+
+2
+
+
+
+1 − θT + θT
+
+|G| 
+
+
+
++ 9 L2η3Teff (1 − θT )( n − 1) 2G2
+
++ 4 L2η3Teff (1 − θT )cδσ 2
+
++ 8 L2η3Teff (1 − θT ) G2|B| 2
+
+(q − 1) 2
+
++ 17 4 cδσ 2ηN T
+
++ 17 2 η G2|B| 2
+
+(q − 1) 2 NT .
+
+Dividing by ηT eff /4 and using the output distribution gives 
+
+E∥∇ f (xout )∥2 ≤ 4∆ 
+
+ηT eff 
+
++ 2 Lσ 2η
+
+
+
+1 − θT + θT
+
+|G| 
+
+
+
++ 4 L2η2(1 − θT )
+
+
+
+9( n − 1) 2G2 + 4 cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
++ 17 4
+
+
+
+4cδσ 2 + 8G2|B| 2
+
+(q − 1) 2
+
+
+
+θT .
+
+Using the stepsize tuning lemma (Lemma 17 (Koloskova et al., 2020)), we obtain the stated conver-gence rate. 
+
+## D LOCAL ROBUST AGGREGATORS 
+
+This appendix collects the material on local (c, δ )-robust aggregators (Definition 2) that is used in Sections 4: a general construction with examples (Appendix D.1) and the impossibility of decom-position without side information (Appendix D.2). Assumption 4 for centered clipping is verified in Remark 2. D.1 A G ENERAL CONSTRUCTION 
+
+Every local aggregator we use is of the following form. 
+
+Lemma 9 (Centered aggregators are decomposable) . Let ψ : Rd → Rd be any map and take the side information to be an anchor, S = a ∈ Rd. Then 
+
+A(v; a) := a + ψ(v − a), Agg( x1, . . . , xn; a) := a + 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+ψ(xi − a),
+
+satisfy Agg( x1, . . . , xn; a) = 1
+
+> n
+
+Pni=1 A(xi; a).
+
+25 Preprint 
+
+Proof. The identity is immediate from 1
+
+> n
+
+P
+
+> i
+
+(a + ψ(xi − a)) = a + 1
+
+> n
+
+P 
+
+> i
+
+ψ(xi − a).The role of ψ is to leave honest inputs (essentially) unchanged, ψ(u) ≈ u when ∥u∥ is of the order of the honest inputs’ magnitude, while bounding the effect of arbitrary inputs. Two natural choices are Centered Clipping (Karimireddy et al., 2021): ψcc (u) := u min 
+
+n
+
+1, τ
+
+∥u∥
+
+o
+
+,
+
+Centered Truncated Mean (CTM, new) ψctm (u) := u 1{∥ u∥≤ R}.
+
+Centered clipping with S = ( a, τ ) is Example 1. Centered clipping is (c, δ )-robust when the an-chor is close to the honest mean and the radius is chosen accordingly (Karimireddy et al., 2021, Theorem IV). Here, we show that CTM is also a local (c, δ )-robust aggregator. 
+
+Proposition 1 (Centered Truncated Mean is a (c, δ )-robust aggregator) . Let CTM a,R be the aggre-gator in the preceding theorem with ψctm . Let n ≥ 2 and 1 
+
+> n
+
+≤ δ < 12 . Let G ⊆ [n] denote the set of honest inputs and B = [ n]\G the set of Byzantine inputs, with β := |B|  
+
+> n
+
+≤ δ. Fix the side information 
+
+(a, R ) before observing the current inputs. Suppose that, conditional on this side information, the honest inputs are independent and satisfy 
+
+E∥xi − a∥2 ≤ V 2, ∀i ∈ G ,
+
+for some V ≥ 0. Choosing R2 = V 2 
+
+> δ
+
+yields that 
+
+E∥CTM a,R (x1, x2, . . . , xn) − ¯x∥2 ≤ 10 δV 2.
+
+Consequently, if the admissible side information pair satisfies V 2 ≤ Kρ 2 for some constant K, then Centered Truncated Mean satisfies the definition of (c, δ )-robust aggregator with c = 10 K. 
+
+Proof. Write 
+
+ψR(u) = u1{∥ u∥≤ R}, Zi = ( xi − a)1{∥ xi−a∥>R }, i ∈ G .
+
+By assumption, E∥Zi∥2 ≤ V 2. Also, by Markov’s inequality, 
+
+∥EZi∥ ≤ E ∥xi − a∥1{∥ xi−a∥>R }
+
+
+
+≤ E∥xi − a∥2
+
+R ≤ V 2
+
+R .
+
+Next, the aggregation error admits the decomposition 
+
+CTM a,R (x1, . . . , xn) − ¯x = − 1
+
+n
+
+X
+
+> i∈G
+
+Zi + 1
+
+n
+
+X
+
+> i∈B
+
+ψR(xi − a) − β( ¯ x − a).
+
+Because ∥ψR(u)∥ ≤ R,
+
+1
+
+n
+
+X
+
+> i∈B
+
+ψR(xi − a)
+
+> 2
+
+≤ βR. 
+
+Furthermore, Jensen’s inequality gives 
+
+E∥ ¯x − a∥2 ≤ 1
+
+|G| 
+
+X
+
+> i∈G
+
+E∥xi − a∥2 ≤ V 2.
+
+Therefore, 
+
+E 1
+
+n
+
+X
+
+> i∈B
+
+ψR(xi − a) − β( ¯ x − a)
+
+> 2
+
+≤ 2β2(R2 + V 2).
+
+Combining above result yields 
+
+E∥CTM a,R (x1, . . . , xn) − ¯x∥2 ≤ 2V 2
+
+n + 2V 4
+
+R2 + 4 δ2(R2 + V 2)
+
+≤
+
+ 2
+
+n + 6 δ + 4 δ2
+
+
+
+V 2
+
+≤ 10 δV 2
+
+by R2 = V 2/δ and 1 
+
+> n
+
+≤ δ < 1/2. The case V = 0 is immediate with R = 0 .26 Preprint D.2 IMPOSSIBILITY WITHOUT SIDE INFORMATION 
+
+Definition 2 allows the local map A to depend on a side information S. The following proposition shows that this is not a technical convenience: no per-input map of the input alone can be robust. 
+
+Proposition 2 (Failure without side information) . Let n ≥ 3, d ≥ 1, and 1/n ≤ δ < 1/2. For any finite c ≥ 0, there is no map f : Rd → Rd such that the aggregator 
+
+Agg( x1, . . . , xn) := 1
+
+n
+
+> n
+
+X
+
+> i=1
+
+f (xi)
+
+is (c, δ )-robust in the sense of Definition 1. Proof. Suppose such a map f exists. Let G = [ n − 1] and B = {n}. This split is admissible because 
+
+|G| = n − 1 ≥ (1 − δ)n.Fix arbitrary a, y ∈ Rd, and take the deterministic inputs 
+
+x1 = · · · = xn−1 = a, xn = y.
+
+The honest inputs are independent, their mean is a, and their pairwise dispersion is zero. Defini-tion 1, applied with ρ = 0 , therefore gives 
+
+n − 1
+
+n f (a) + 1
+
+n f (y) = a for all a, y ∈ Rd.
+
+Taking y = a shows that f (a) = a for every a ∈ Rd. Substituting this identity back into the display yields n − 1
+
+n a + 1
+
+n y = a for all a, y ∈ Rd,
+
+which is impossible when y̸ = a.
+
+## E ADDITIONAL EXPERIMENTAL DETAILS 
+
+E.1 COMMON SETTINGS AND IMPLEMENTATION 
+
+Two codebases were used. The least-squares experiment of Figure 3 runs real asynchronous workers. Every client is a Ray actor, the parameter server applies gradients in the order in which they arrive, and delays are produced by CPU contention rather than by a model. The MNIST experiment of Figure 2 uses a single-process, event-driven simulator with simulated (vir-tual) time based on the (Dahan & Levy, 2024) codebase. The arrival sequence of every client is generated once per (schedule, seed) and is identical for all methods, communication latency is zero, and a client’s next computation starts when its previous message arrives. Kardam and 
+
+μ2-SGD were ported from the authors’ public github repositories ( gdamaskinos/kardam and 
+
+dahan198/asynchronous-fault-tolerant-ml ). BASGD, BASGDm were implemented from the papers, since no public code exists. Each seed spawns independent random streams for the data order, the arrival schedule, the initialization and the attack. Tables 1 and 3 list the complete configurations. E.2 LEAST -SQUARES EXPERIMENT (F IGURE 3) 
+
+Problem. We minimize F (x) = 12n ∥Ax − b∥2 with n = 10 ,000 samples and d = 400 . The entries of A are i.i.d. uniform on [0 , 1) scaled by 1/√d. A stochastic gradient is the gradient of F
+
+on a minibatch of 256 samples drawn without replacement; all workers hold the same data (i.i.d., no partitioning). Reported losses are F (x)−F ∗ evaluated on all n samples every 40 accepted gradients. 27 Preprint 0.2 0.4 0.6 0.8 1.0 
+
+fixed flood, =1 fixed flood, =3 fixed flood, =10    
+
+> 05000 10000 15000 0.2 0.4 0.6 0.8 1.0
+
+random flood, =1    
+
+> 05000 10000 15000
+
+random flood, =3    
+
+> 05000 10000 15000
+
+random flood, =10 
+
+Simulated wall-clock time Test accuracy BASGD 
+
+Throttle q=1.1 
+
+BASGDm 
+
+Throttle q=1.5 
+
+²-SGD (CWMed) 
+
+Kardam ²-SGD (RFA) 
+
+Figure 6: Additional MNIST flooding-attack results complementing Figure 2, with n = 25 clients, including |B| = 5 Byzantine clients. The top and bottom rows show fixed-vector and random-vector flooding, respectively. Columns correspond to ρ ∈ { 1, 3, 10 }, extending the ρ = 30 results in Figure 2. Here, ρ multiplies the Byzantine clients’ update rates, yielding an expected Byzantine update fraction of ρ/ (2 + ρ). All other experimental settings are the same as in Figure 2. T HROTTLE 
+
+maintains high test accuracy across the three flooding rates. 0 1000 2000 3000 
+
+Delay 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> Frequency
+> M¿max
+
+Figure 7: Empirical distribution of gradient delays in the least-squares experiment with M = 40 
+
+asynchronous workers on 20 CPU cores based on (Mishchenko et al., 2022). Delay is the number of server updates between a worker’s dispatch and the arrival of its gradient. frequencies are shown on a logarithmic scale. The green and red vertical lines average delay M and the maximum observed delay τmax , respectively, illustrating that delays can greatly exceed the number of workers. 
+
+Asynchronous execution. M = 40 workers run as Ray actors on a 20-core CPU machine (two workers per core), so arrival times are genuine wall-clock timings. The server applies each gradient on arrival and immediately re-dispatches the same worker with the updated model, i.e. there are always 40 computing gradients. Deley distribution (the number of server updates between a worker’s 28 Preprint Table 1: Least-squares configuration used in Figure 3. 
+
+Objective F (x) = 12n ∥Ax − b∥2, n = 10 ,000 , d = 400 , condition number ≈ 1.9 × 10 3
+
+Stochastic gradient minibatch of 256 samples without replacement. all clients have shared i.i.d. data Clients M = 40 Ray actors on 20 CPU cores. Straggler (right panel) worker 39 sleeps 100 × its compute time after each gradient ( 1.7% of arrivals instead of 2.5% )Budget 32 ,000 computed gradients for every method. Methods Minibatch SGD and asynchronous SGD are based on (Mishchenko et al., 2022), THROTTLE q ∈ { 1.1, 1.5}, μ2-SGD ( β = 0 .25 , γ = 0 .1), BASGD / BASGDm ( B = 10 , mean, μ = 0 .9)THROTTLE no clipping ( λ = τ = ∞, no Byzantine clients) hard restart when all M clients have arrived; discarded gradients included in the budget Step-size tuning grid search over η = 2 k/ 3, k ∈ [−30 , 18] ∩ Z (Table 2) Seeds {42 , 43 , 44 }
+
+Table 2: Learning rates used in Fig. 3. Grid η = 2 k/ 3 (displayed learning rates are rounded); criterion: mean of F (x) − F ∗ over the checkpoints in the last 10% of the 32,000-computed gradient budget, averaged over seeds {42 , 43 , 44 }; a grid point is valid only if all three repeats converge. ‘tail mean’ is that criterion at the selected η.
+
+Method η used tail mean ± std Minibatch SGD ( q = ∞) 0.1984 , k = −7 3.46 × 10 −3 ± 3.4 × 10 −5
+
+Asynchronous SGD ( q = 1 ) 0.5, k = −3 1.37 × 10 −4 ± 2.0 × 10 −5
+
+Throttle ( q = 1 .1) 1.587 , k = 2 7.14 × 10 −6 ± 7.4 × 10 −6
+
+Throttle ( q = 1 .5) 3.175 , k = 5 2.55 × 10 −6 ± 1.1 × 10 −6
+
+Asynchronous μ2-SGD 0.125 , k = −9 1.82 × 10 −2 ± 1.4 × 10 −5
+
+BASGD ( B = 10 ) 5.04 , k = 7 8.89 × 10 −3 ± 2.4 × 10 −3
+
+BASGDm ( B = 10 , μ = 0 .9) 5.04 , k = 7 6.99 × 10 −3 ± 3.0 × 10 −4
+
+dispatch and its arrival) is naturally heavy-tailed. See Fig. 7 for our experiment environments’ case, similarly computed as in Mishchenko et al. (2022). In the right panel of Figure 3 one worker sleeps for 100 times its own compute time after every gradient. Figure 3 shows the seed 42 run of every method. E.3 MNIST EXPERIMENT (F IGURE 2) Table 3: MNIST configuration used in Figure 2. 
+
+Dataset MNIST (60,000 train / 10,000 test), i.i.d. clients each drawing minibatches from its own reshuffling of the full training set Model Conv-Conv-FC-BatchNorm-FC (66,230 parameters), cross-entropy loss Clients n = 20 (15 honest, 5 Byzantine. δ = 0 .25 )Arrivals (standard attacks) periodic sequence as in the Dahan & Levy (2024)’s code every third arrival is Byzantine ( 1/3 of updates). The arriving client is drawn within its group with probability ∝ its index Arrivals (flooding) Independent Poisson processes: honest client i has rate ri ∝ i (honest rates sum to 1); the Byzantine group has total rate ρ/ 2, split ∝ index, ρ ∈ { 1, 3, 10 , 30 },i.e. an expected Byzantine share of updates ρ/ (2 + ρ) = 0 .33 , 0.60 , 0.83 , 0.94 
+
+Batch size 16 per client Training horizon 16 ,000 honest updates ( 800 sync. iterations, 4.3 epochs); test every 500 Attacks RD ( σ = 0 .2), NG ( −10 ×), Empire ( ϵ = 6 ), ALIE ( zmax = 0 .253 ), fixed-vector flood, random-vector flood (norm 10) Methods Kardam ( f = 5 ); BASGD / BASGDm ( B = 11 , trimmed mean, ∆ = 20 , μ = 0 .9); 
+
+μ2-SGD (weighted CWMed / RFA; β = 0 .25 , γ = 0 .1); THROTTLE (q ∈ { 1.1, 1.5}, τ = 100 , λ = 1 )
+
+η tuning grid {1, 0.1, 0.01 } without attack (Table 4), clipping radius λ = 1 
+
+Seeds {1, 2, 3}
+
+29 Preprint Table 4: Learning-rate selection on MNIST without attack: final test accuracy (%, mean ± std over seeds {1, 2, 3}) for η ∈ { 0.01 , 0.1, 1}. Throttle results are shown for λ = 1 . Bold entries indicate the selected values for the baseline methods; ties are broken towards the smaller η.                                                                             
+
+> Method η= 0 .01 η= 0 .1η= 1
+> Kardam 41.5 ±14.7 70.3 ±10.5 68.5 ±26.4 BASGD 94.4 ±0.4 98.3 ±0.2 98.7 ±0.1
+> BASGDm 94.7 ±0.5 98.6 ±0.1 99.1 ±0.1
+> μ2-SGD (CWMed) 99.1 ±0.1 99.2 ±0.2 10.6 ±0.9
+> μ2-SGD (RFA) 99.1 ±0.1 99.2 ±0.1 11.0 ±0.6 Throttle q= 1 .1,λ= 1 98.8 ±0.1 99.2 ±0.1 99.2 ±0.1 Throttle q= 1 .5,λ= 1 97.9 ±0.1 99.1 ±0.1 99.0 ±0.1
+
+E.4 COMPUTING ENVIRONMENT 
+
+Both experiments ran on one workstation (Table 5). The least-squares runs use NumPy on the CPU only (40 Ray actors on 20 cores). The MNIST study (585 runs) took 5.3 hours of wall-clock time, about 74 process-hours. The least-squares step-size sweeps took about 10 hours and the final 42 runs about 40 minutes, executed strictly one Ray instance at a time. Table 5: Runtime hardware and software.       
+
+> CPU 20 logical cores (aarch64) GPU NVIDIA GB10, CUDA 13.0 (MNIST, μ2-SGD only) Python / NumPy 3.12.3 / 2.4.4 PyTorch 2.12.0+cu130 (MNIST) Ray 2.58.0 (least squares)
+
+Data and model. We use the standard MNIST dataset (60,000 training and 10,000 test images). The model is the convolutional network of the Dahan & Levy (2024)’s code-base: Conv (1 →20 , 5×5) –ReLU–MaxPool (2) –Conv (20 →50 , 5×5) –ReLU–MaxPool (2) –
+
+FC (800 →50) –BatchNorm–ReLU– FC (50 →10) with 66,230 parameters and the cross-entropy loss. Every client draws minibatches of 16 from its own independent reshuffling of the full training set (i.i.d. clients). Byzantine clients that run the honest protocol (RD, NG) use separate data, so they never consume the honest data budget. Test accuracy on the full test set is evaluated every 500 honest arrivals. 
+
+Simulator and arrival schedules. There are n = 20 clients, of which the last 5 are Byzantine (δ = 0 .25 ). A run ends after 16 ,000 honest updates, i.e. 800 synchronous iterations of 20 clients or 
+
+4.3 epochs. Two arrival schedules are used. Periodic (standard-attack panels in Figure 2) reproduces the Dahan & Levy (2024)’s code: arrivals are numbered 1, 2, . . . , every third arrival is Byzantine (the code rounds its parameter λbyz = 0 .4 to the period ⌈1/0.4⌉ = 3 , so the Byzantine share of arrivals is 1/3, not 0.4). Within each group (honest and Byzantine), the sending client is drawn with probability proportional to its index plus one. Therefore, honest client rates differ by a factor of 15 from Byzantine rates. For flooding attacks, every client is an independent Poisson process; honest rates are the same propor-tional weights normalized to sum to one. The Byzantine group’s total rate is ρ · p0 
+
+> 1−p0
+
+= ρ/ 2 with 
+
+p0 = 1 /3. The expected Byzantine share of all arrivals is ρp 0/(1 −p0 +ρp 0) = 0 .33 , 0.60 , 0.83 , 0.94 
+
+for ρ = 1 , 3, 10 , 30 (measured: 0.337 , 0.604 , 0.835 , 0.938 ) The total number of arrivals grows from 
+
+24 ,000 to 260 ,000 while the honest budget stays fixed. 
+
+Attacks. Let g be the update an honest client would send and L the set of honest clients whose latest update has been delivered. • RD (random disturbance, Yang & Li, 2023) sends g + ξ, ξ ∼ N (0 , ∥0.2 g∥2I).• NG (negative gradient, Yang & Li, 2023) sends −10 g.30 Preprint • Empire (Xie et al., 2020a) sends −6 ¯ g, where ¯g is the mean of the honest updates’ most recently delivered to the server. • ALIE (Baruch et al., 2019): following Yang & Li (2023), a Byzantine client sends ˜g with 
+
+˜gj = mean j − zmax std j , where mean j and std j are the mean and standard deviation of the j-th coordinate over the honest updates’ most recently delivered to the server, and 
+
+zmax = Φ −1  m−⌊ m/ 2+1 ⌋
+
+> m−r
+
+ with m clients, r of them Byzantine, and Φ−1 the standard normal quantile function. Empire and ALIE used omniscient property of Byzantine clients in the sense that they read the honest updates that have actually been delivered to the server. All Byzantine updates are generated at send time from the latest available information. The two flooding attacks require no gradient computation: the fixed-vector flood sends the same random direction of norm 10 in every message, the random-vector flood a fresh standard normal direction rescaled to norm 10 , both at ρ times the honest group’s rate as described above. 31

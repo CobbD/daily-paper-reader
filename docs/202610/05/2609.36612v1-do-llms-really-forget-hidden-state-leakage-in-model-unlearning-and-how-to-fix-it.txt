@@ -1,0 +1,615 @@
+Title: Do LLMs Really Forget? Hidden-State Leakage in Model Unlearning and How to Fix it
+
+URL Source: https://arxiv.org/pdf/2609.36612v1
+
+Published Time: Wed, 30 Sep 2026 00:49:42 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Do LLMs Really Forget? Hidden-State Leakage in Model Unlearning and How to Fix it 
+
+Hadi Reisizadeh 1, ∗, Jiajun Ruan 1, ∗, Sijia Liu 2,3, Mingyi Hong 11 University of Minnesota, 2 Michigan State University, 3 IBM Research 
+
+hadir@umn.edu 
+
+Abstract 
+
+Unlearning in large language models (LLMs) is typically evaluated at the output level, where a model appears to suppress sensitive or undesirable content. In this work, we show that such evalu-ations can create an illusion of forgetting: even when output-level leakage is eliminated, sensitive information can remain encoded in the model’s hidden representations. We first provide a theoretical analysis establishing a fundamental separation between output suppression and representational erasure. Specifically, we show that the decoder can be made arbitrarily insensitive to sensitive directions, driving output-level leakage to zero, while the hidden representations retain the underlying information. To empirically validate this phenomenon, we train generative probe decoders on hidden states across transformer layers, enabling layer-wise measurement of information leakage. Across three widely used benchmarks, TOFU, MUSE, and WMDP, and state-of-the-art unlearning methods, we find that substantial sensitive information remains recoverable from hidden representations, even when standard output-level metrics indicate successful unlearning. To address this gap, we propose Probe-Adversarial Representation Suppression (PARS), an unlearning objective that adversarially minimizes the extractable information from hidden representations. PARS directly targets representa-tional leakage and provides significantly stronger guarantees of erasure under adversarial probing and relearning attacks, outperforming all evaluated baselines. Our results highlight a fundamental limitation of existing unlearning paradigms and suggest that true forgetting in LLMs requires control-ling not only model outputs, but also the information encoded in hidden representations. Codes are available at https://github.com/OptimAI-Lab/HiddenStateUnlearning .
+
+# 1 Introduction 
+
+Large language models (LLMs) have demonstrated exceptional capabilities across a wide range of tasks, including reasoning, code generation, and question answering [43]. LLMs are trained on massive web-scale datasets that often contain harmful, private, or copyrighted content. Consequently, LLMs may generate biased [17, 28], private [30, 46], or illegal responses [16, 42], and can even provide guidance on bioweapons or cyberattacks [3, 18]. LLM unlearning has emerged as a promising solution, aiming to remove undesired knowledge from trained models while preserving overall utility. 
+
+Unlearning Algorithms. Various unlearning methods have been proposed, formulating LLM unlearning as a regularized optimization problem that balances forgetting undesired information and retaining model utility. Such approaches include gradient ascent-descent (GradDiff) [27], negative preference optimization (NPO) [52], simplified NPO variants (SimNPO) [11], and representation misdirection unlearning (RMU) [18]. All of these methods except RMU optimize a token-level cross-entropy loss, training the model to assign maximum probability to reference tokens at each decoding step, enforcing behavior aligned with reference outputs. On the other hand, RMU [18] operates directly on hidden representations at chosen layers, shifting them away from the forget set while preserving performance on 
+
+> *Equal contribution.
+
+1arXiv:2609.36612v1 [cs.LG] 29 Sep 2026 GradDiff NPO SimNPO SURE SAM PARS (Ours) 010 20 30 40 50 60  
+
+> KnowMem on  f
+> 53.4 41.3 47.1 38.7 42.3 40.1 57.1 50.1 52.7 49.5 50.1 45.3
+> Unlearn Relearn75
+
+Figure 1: Robustness to relearning at-tacks [10] on MUSE-News, measured by KnowMem on the forget set Df before at-tack (“Unlearn”) and after 75 fine-tuning steps on a small forget subset (“Relearn75”). All baselines show striking recovery of sensitive information, while our PARS show better re-sistance. 0 2 4 6 8 10 12 14 Layer 0510 15 20 25 Entailment Score 
+
+> Original GradDi ff
+> NPO SimNPO RMU PARS (Ours)
+
+Figure 2: Generation-based probing in Sec-tion 3 reveals the retention of sensitive infor-mation across intermediate layers. A probe is trained at each layer to extract this information, with the output evaluated using an Entailment Score (higher scores indicate greater leakage). 
+
+the retain set. More formulations have been introduced, including bi-level and multi-task optimization approaches [33, 4]. More detailed discussions in Appendix A .
+
+Unlearning Benchmarks. Several benchmarks have been introduced to evaluate unlearning performance. TOFU [27] measures unlearning of fictitious author biographies through question answering, testing whether models forget synthetic personal information while preserving general knowledge. MUSE [39] evaluates both verbatim and knowledge memorization on news and book corpora, assessing whether mod-els can recall sensitive content. WMDP [18] targets the removal of hazardous knowledge in biosecurity, cybersecurity, and chemical security domains, evaluated through multiple-choice questions designed as proxies for dangerous capabilities.               
+
+> Question Ground Truth
+> According to Sir Elton, what year did Paul O’Grady host his and David Furnish’s stag party? 2005
+> Method Probe at ℓ= 28 Response at Output ( ℓ= 31 )
+> NPO 2005 2004
+> SAM 2005 - Sil sil sil sil sil... 2001 - although the article says 2002
+> SimNPO 2005. Sir Elton and David Furnish... 2000
+> PARS (Ours) 2 Silicon Valley techies... 2012
+
+Table 1: Generated responses on MUSE-News across unlearning methods. The left column shows the probe de-coder at layer ℓ = 28 and the right column shows output-level generation ( ℓ = 31 , the final layer of LLaMA2-7B). All methods, namely, NPO, SAM, SimNPO suppress the answer in outputs, but probe decoders can still recover it from hidden representations. Our proposed algorithm, PARS, achieves genuine erasure at both levels. Red : failed unlearning. Green : successful unlearning. 
+
+Challenges. Despite rapid progress in LLM un-learning algorithms and benchmarks, recent stud-ies show that existing methods remain vulnera-ble to a wide range of adversarial attacks, see 
+
+Appendix A . Sensitive knowledge can often be detected through Membership Inference Attacks (MIA) such as Min–K%++ [38], relearning at-tacks [25, 14, 10], and multiple probabilistic de-coding measured by Leak@k [34]. For example, 
+
+Fig. 1 shows that after only a small number of fine-tuning steps, previously “forgotten” information rapidly re-emerges, indicating that the underlying knowledge has not been fully erased. This vulner-ability could arise from a fundamental limitation of current evaluation protocols: for most existing methods, we evaluate forgetting only at the out-put level, measuring whether the model avoids directly generating sensitive content. However, hidden representations may still retain the informa-tion internally. As shown in Table 1 , even when probing at the final layer ( ℓ = 31 in LLaMA2-7B) suggests successful forgetting, sensitive information remains recoverable from intermediate representations such as layer ℓ = 28 . Moreover, prior probing on intermediate layers mainly adopt linear classifiers to evaluate information retention in hidden representa-tions, under which RMU [18] shows robust performance. However, Fig. 2 shows that generation-based probing reveals severe information leakage, where a decoder trained on intermediate representations can reconstruct sensitive content despite linear probing indicating successful forgetting. These findings 2show that suppressing sensitive outputs does not necessarily correspond to genuine knowledge removal, highlighting the need for representation-level evaluation and unlearning methods that directly erase sensitive information from hidden states. A recent trend in LLM unlearning is to move beyond output-level optimization and explore un-learning by directly modifying hidden representations, which aligns with the conjecture above. Sparse Autoencoder (SAE)-based methods decompose activations into sparse, interpretable feature directions and perform unlearning by editing these features [45, 5, 29, 12], while activation steering approaches identify and intervene on salient activation patterns through inference-time editing or lightweight parameter updates [36, 35, 8]. However, these methods typically assume that sensitive information is concentrated in identifiable subspaces or neurons, and therefore focus on removing or shifting these components. While the methods above can effectively reduce behavioral expression of sensitive content, they do not guarantee that the underlying information is fully eliminated from the representation space. This limitation motivates a representation-level perspective on unlearning, aiming to both quantify residual sensitive information in hidden states and completely remove it from representations. These observations suggest the following conjecture: 
+
+Conjecture. Existing unlearning methods create an illusion of forgetting: sensitive outputs are suppressed at the decoder level while the hidden representations retain the underlying knowledge. 
+
+1.1 Our Contributions 
+
+In this work, we reveal a fundamental limitation of the output-level evaluation framework for LLM unlearning where suppressing sensitive outputs does not imply erasing the underlying knowledge from hidden representations. This finding challenges the unlearning guarantees of prior work, which assume that output-level suppression is a sufficient proxy for true forgetting. We establish this gap information-theoretically in Section 2, corroborate it empirically via generative probing across transformer layers in Section 3. Moreover, in Section 4, we propose PARS as a first step to suppress sensitive information in hidden states. Concretely, our contributions are as follows: 
+
+(1) We model the unlearning process from an information-theoretic perspective and analyze the relationship between output-level suppression and representation-level erasure. We show that the decoder can be made arbitrarily insensitive to sensitive directions in the representation space, driving output-level leakage to zero, while the underlying hidden representations continue to retain the sensitive information independently of the decoder. This establishes an information-theoretic gap between output suppression and true representational erasure. 
+
+(2) We train a lightweight generative probe decoder on hidden states at each transformer layer and verify that sensitive content remains recoverable from hidden states. Unlike the linear probing approach of WMDP [18], which evaluates only multiple-choice accuracy at each layer, our probe enables free-form generation across all layers. Across various unlearning methods on TOFU [27], MUSE [39], and WMDP [18], we find that hidden representations preserve substantial sensitive information across multiple layers, even when output-level metrics indicate successful unlearning. 
+
+(3) The gap established in (1) and observed in (2) motivates an unlearning objective that directly targets hidden representations beyond model outputs. We develop a novel algorithm, named Probe-Adversarial Representation Suppression (PARS), that augments the standard forget-retain optimization with an adversarial inner maximization over probe decoders at multiple layers simultaneously. We evaluate beyond standard metrics using MIA [38], Leak@ k [34], and relearning attacks [25, 14, 10]. Our method, PARS, on TOFU, achieves perfect forgetting under the Entailment Score (ES) [49], reduces \leak@ 64 -ES by 82 .7%, produces a substantially lower Min-K%++ MIA score than the evaluated baselines, while maintaining comparable model utility. On MUSE-News, PARS reduces post-relearning VerbMem by 
+
+61 % and KnowMem by 19 % relative to SAM [10], a method specifically designed to enhance robustness against relearning attacks. 3Ultimately, our work provides a new perspective on information leakage in LLM unlearning and establishes a representation-level direction for more robust unlearning methods. 
+
+# 2 An Information-Theoretic Analysis of Unlearning 
+
+In this section, we use information theory to model the unlearning process and formalize the conjecture stated in Section 1: existing unlearning methods create an illusion of forgetting, suppressing sensitive outputs at the decoder level while the hidden representations retain the underlying knowledge. To this end, we introduce a semantic variable S, which captures the sensitive concept expressed in a model’s response, for example, the correct answer to a question about a fictitious author, or a piece of hazardous biological knowledge. Intuitively, true unlearning is required to make S unrecoverable from both the model’s outputs 
+
+and its internal hidden representations. We formalize this gap by deriving two information-theoretic bounds: (1) An upper bound on how much information about S is observable at the model’s output Z:we show this can be very small by making the decoder insensitive to S; (2) An lower bound on how much information about S remains encoded in the hidden representations R: we demonstrate this depends only on the backbone and stays bounded away from zero regardless of what the decoder does. The key insight is that output-level suppression and representational erasure are governed by distinct components of the model: one by decoder, one by backbone, implying suppressing outputs alone is insufficient to ensure representational erasure. 
+
+2.1 Problem Setup 
+
+We first present two stages of our setup: (i) the unlearning phase, where a pre-trained model is updated using a training set to remove specific information, and (ii) the inference phase, where the obtained model is evaluated on a test set. 
+
+Unlearning Phase. We assume that prompt–response pairs are drawn from an unknown data distribution 
+
+(X, Y ) ∼ D u where X denotes a prompt and Y denotes the corresponding response. Starting from a pre-trained LLM, the parameters are updated during the unlearning phase by minimizing the optimization problem min θ E(X,Y )∼D u
+
+ℓ(Y | X; θ) where ℓ(Y | X; θ) denotes the training loss using the model parameter θ for an input X with respect to response Y . At the end of this stage, we obtain an unlearned model with parameters θu.
+
+Inference Phase. We decompose the parameters of the unlearned model as θu = ( ˜θu, W, b ) where ˜θu
+
+denotes the parameters of the network up to the final linear layer, and W ∈ Rn×d and b ∈ Rn denote the decoder parameters. We consider a test set drawn from a distribution (X, Y ) ∼ D i where X is a prompt and Y = ( Y1, . . . , Y N ) denotes the corresponding response sequence. At decoding step t, the model predicts the next token Yt conditioned on the prompt and the previously generated tokens. We denote this decoding context by Ct := ( X, Y <t ). Let f denote the mapping implemented by the model up to the final hidden layer at decoding step t. Given the context Ct and the parameters ˜θu, the model computes a hidden representation Rt = f (Ct; ˜θu) ∈ Rd. The decoder then produces logits Vt = W R t + b where Vt ∈ Rn
+
+corresponds to scores for the n tokens in the model vocabulary. The model output is sampled according to Zt | Vt ∼ Categorical(softmax( Vt)) where Zt ∈ { 1, . . . , n } denotes the predicted next-token index, i.e., 
+
+P (Zt = i | Vt) = exp( Vt,i )
+
+Pnj=1 exp( Vt,j ) .
+
+For simplicity, our analysis focuses on a fixed decoding step and we drop the index t; the results extend naturally to the full sequence. Hence, the dependency structure at a decoding step can be summarized as 
+
+C −→ R = f (C; ˜θu) −→ V = W R + b −→ Z. (1) Let S denote a semantic variable associated with the response Y , representing the underlying concept expressed in the response. More precisely, we define S = g(Y ) where g extracts the semantic 4representation of the response. The variable S therefore varies across the data distribution as different prompts correspond to responses expressing different semantic concepts. Latent variables of this form are widely used in generative modeling and representation learning, where sentence-level semantic content is commonly represented in continuous embedding spaces [7, 32, 13, 44, 15]. The variable S is not observed by the model and is introduced solely for analysis. In the following lemma, we give an exact orthogonal decomposition of the representation R relative to a unit direction v.
+
+Lemma 1. Fix any measurable representation R ∈ Rd, any sensitive variable S, and any unit vector 
+
+v ∈ Rd. Then, we have 
+
+R = r0 + ( μS + ζ)v + ξ, (2) 
+
+with E[ζ | S] = 0 and v⊤ξ = 0 , where r0 := E[R], α := v⊤(R−r0), μS := E[α | S], ζ := α−E[α | S],and ξ := ( I − vv ⊤)( R − r0).
+
+vr0 (μS + ζ)vξ
+
+0
+
+R
+
+Figure 3: Geometric visualization of the decomposition R = r0 +(μS + ζ)v + ξ.
+
+The proof of Lemma 1 is presented in Appendix D . Here, r0 is the prompt-dependent baseline, μS captures the class-conditional mean activation along v, ζ is a zero-mean fluctuation along v, and ξ is or-thogonal to v. Hence, the representation separates into: (i) prompt-only information r0; (ii) a one-dimensional signal component aligned with 
+
+v; and (iii) an orthogonal residual. We note that this decomposition is purely geometric and holds without distributional assumptions. The vi-sualization of the decomposition R in (2) with its components is shown in Figure 3 .Now, we present the quantity ∆( v) for any unit vector v measuring how sensitive the decoder is to perturbations of the hidden representation along direction v.
+
+Definition 1 (ε-insensitive direction) . Let W ∈ Rn×d. A unit vector v ∈ Rd is called ε-insensitive for W
+
+if 
+
+∆( v) := inf  
+
+> λ∈R
+
+∥W v − λ1∥∞ ≤ ε. (3) 
+
+implying there exist λ⋆ ∈ R and u ∈ Rn with ∥u∥∞ ≤ ε such that W v = λ⋆1 + u.
+
+Intuitively, small ε implies that shifting R along v adds a constant to all logits, which softmax cancels, leaving the output distribution unchanged. 
+
+2.2 Main Result and Discussion 
+
+We now present the main theorem, which formally establishes the gap between output-level suppression and representational erasure. Our key tool is mutual information I(A; B) measuring how much knowing 
+
+B reduces uncertainty about A. We use it here to quantify how much sensitive information S is recoverable either from the hidden representation R or from the model output Z. The central quantity governing output-level leakage is the ε-insensitivity of the decoder W . Intuitively, if the decoder is insensitive to a direction v in representation space (small ε), then shifting R along v hardly changes the output distribution, so any information encoded along v is effectively invisible at the output level but fully present in the hidden state. 
+
+Theorem 1. Fix decoder parameters (W, b ) and let v be an ε-insensitive direction for W . Assume 
+
+(ζ, ξ ) ⊥ (C, S ) and ζ ∼ N (0 , τ 2). Let N(U ) := 12πe e2h(U ) denote entropy power for the random variable U with differential entropy h. Then: (a) the information about S encoded in the hidden representation R is lower bounded by 
+
+I(S; R) ≥ 12 log 
+
+
+
+1 + N(μS )
+
+τ 2
+
+
+
+, (4) 5(b) the information about S observable at the model output Z is upper bounded by 
+
+I(S; Z | C) ≤ ε2 Var( μS ). (5) As Theorem 1 establishes, the lower bound (4) depends on N(μS ), a property of the backbone , while the upper bound (5) depends on ε = ∆( v), a property of the decoder . Since these two quantities are independently controlled, one can simultaneously achieve I(S; Z | C) = 0 and I(S; R) ≥ M for any 
+
+M > 0 by setting ε = 0 while keeping N(μS ) > 0. This states a precise, negative message about output-level unlearning. Suppressing sensitive outputs is not the same as erasing sensitive knowledge .This theoretical gap directly motivates our empirical study in Section 3 and our proposed algorithm, PARS, in Section 4, which directly targeting the hidden representations. 
+
+# 3 Probing Hidden Representations: An Empirical Study 
+
+In this section, we empirically validate Theorem 1 through a generative probing framework that trains a lightweight decoder on the hidden representations R(ℓ) at each transformer layer ℓ and measures how much sensitive content remains recoverable. Across various unlearning methods on TOFU, MUSE, and WMDP, we show that current approaches suppress sensitive knowledge primarily through decoder insensitivity rather than by erasing it from the hidden representations. 
+
+3.1 Probing Methodology 
+
+We design the following probing protocol to empirically measure the sensitive information encoded in the hidden representation at each layer ℓ.
+
+Decoder Training. For each unlearned model and each layer ℓ, we train a lightweight probe decoder 
+
+W (ℓ), initialized from the unlearned model’s decoder parameters. We split the full forget set Df into a training split Dtf and a held-out evaluation split Def . The probe is trained on Dtf to predict forget-set answers directly from the hidden states R(ℓ) 
+
+> θu
+
+, using cross-entropy loss computed only on answer tokens, with question tokens masked from the loss. More precisely, the probing objective is 
+
+min  
+
+> W(ℓ)
+
+E(q,a )∼D tf
+
+h
+
+− X
+
+> t
+
+log PW (ℓ)
+
+ at | R(ℓ)(q, a <t )i
+
+. (6) 
+
+Measuring Hidden Layer Information. The trained decoder W (ℓ) is evaluated on held-out split Def to measure how much sensitive information is recoverable from the unlearned model’s hidden representations. For each pair (q, a ) ∈ D ef , we compute the information leakage as 
+
+S(ℓ)(q) := Metric  a, W (ℓ) ◦ R(ℓ)(q),
+
+where Metric (·, ·) denotes the evaluation metric. We note that probing classifiers are well-established tools for understanding what information is encoded in hidden representations [2, 23, 1]. In the unlearning context, RMU [18] attaches a linear probe to intermediate layers and evaluates multiple-choice accuracy as a proxy for hidden-state leakage. However, multiple-choice accuracy requires only disrupting the ranking of a few candidate tokens at a single output position. So, a model can fail every multiple-choice question while its hidden representations remain fully decodable via free-form generation. On the other hand, our probing approach trains a 
+
+generative decoder at each layer, enabling free-form generation directly from intermediate hidden states. This provides a strictly stronger measure of leakage than classification-based probing. Here, we apply generative probing for quantifying representational leakage across benchmarks and unlearning methods. 60 4 8 12 16 20 24 28 
+
+> Layer
+> 010 20 30 40 50 60 70 80
+> VerbMem RS-F1
+> Original NPO SAM SimNPO GradDiff SURE PARS
+
+Figure 4: VerbMem RS-F1 of the probe decoder at each layer vs. output-level score of each unlearned model for MUSE-News benchmark. 0 4 8 12 16 20 24 28 
+
+> Layer
+> 010 20 30 40 50 60 70 80
+> KnowMem RS-Recall
+> Original NPO SAM SimNPO GradDiff SURE PARS
+
+Figure 5: KnowMem RS-Recall of the probe de-coder at each layer vs. output-level score of each unlearned model on MUSE-News benchmark. 
+
+3.2 Generative Probing Results 
+
+Evaluation Set & Metric. In the following, we describe the sets used for probing experiments on the TOFU, MUSE-News, and WMDP-Bio benchmarks and their corresponding Metric (·, ·).TOFU. We adopt the forget10 training set, where the forget set comprises 400 QA pairs corresponding to 20 fictitious authors. For evaluation, we use the binary Entailment Score (ES), which employs a pretrained NLI model [41] to verify whether the generated answer entails the ground truth a [49]. MUSE-News. We exploit two tasks for the forget set: (1) 100 verbatim news article extracted from the forget corpus. The unlearned model is prompted with the first portion of each article and evaluated on how closely the generated continuation matches the true continuation using ROUGE-L Score (RS)-F1 [21]; (2) 
+
+100 GPT-4–generated QA pairs from BBC news after August 2023 [20], with gold answers in keyword-only format [39]. Since gold answers are short and keyword-based, RS-Recall directly measures whether the sensitive keywords are present in the generated output. WMDP-Bio. This dataset comprises hazardous biological knowledge of bioweapons and bioterrorism. While the original benchmark consists of multiple-choice questions, we extract the correct answers and reformulate the data into a standard QA format. As the WMDP dataset involves reasoning hazardous knowledge, LLM’s outputs can partially contain harmful knowledge. We evaluate unlearning performance using the LLM-as-Judge metric providing a graded score ( 1 − 4), capturing different levels of knowledge leakage, our prompts are adopted from [34].             
+
+> Benchmark Base Model Unlearning Methods Core Metric
+> TOFU LLaMA-3.2-1B-Instruct NPO, SimNPO ES RMU MUSE-News LLaMA2-7B GradDiff, NPO RS SimNPO, SURE, SAM WMDP-Bio Zephyr-7B-beta GradDiff, NPO LLM-as-Judge SimNPO, RMU
+
+Table 2: Summary of unlearning methods and evalu-ation metrics across benchmarks. 
+
+Probe Training Configurations. We partition the forget QA set into an 80% split for training Dtf the probe and a 20% split for evaluation Def . The probe is optimized using a learning rate of 5 × 10 −5 and a batch size of 4. We set the maximum number of training epochs to 50 and employ early stopping with a patience of 3 epochs. 
+
+LLM Unlearning Methods. We conduct our probing experiments on LLaMA-3.2-1B-Instruct [9], LLaMA2-7B [39], and Zephyr-7B-beta [18] for TOFU, MUSE-News, and WMDP, respectively. For TOFU and MUSE-News, Original refers to the model fine-tuned on both the forget and retain sets prior to unlearning. We evaluate various unlearning methods, namely, NPO [52], SimNPO [11], RMU [18], SURE [53], and SAM [10], augmenting NPO with sharpness-aware minimization to improve robustness against relearning attacks. Table 2 summarizes the evaluated methods and the metric used for each set. 
+
+Results. 
+
+TOFU. As Figure 2 illustrates, almost all unlearning methods exhibit more sensitive information leakage under ES metric in their hidden states than at the output level, despite showing relatively successful unlearning performance in generated outputs. This critical discrepancy indicates that these methods solely mask sensitive information at the output level, while significant knowledge remains highly recoverable from intermediate representations. MUSE-News. Figures 4 and 5 expose a systematic failure mode of output-level unlearning on MUSE-7News benchmark. As Figure 4 shows, all methods appear successful under output-level evaluation, with near-zero verbatim leakage; however, probe decoders still recover significant verbatim information from hidden states across multiple layers. Figure 5 demonstrates on the KnowMem task, that all unlearning methods exceed the corresponding output-level KnowMem scores in the final layers. Thus, existing methods do not erase the sensitive content from the model’s representations. Instead, the undesired information is suppressed at the output level. 0 4 8 12 16 20 24 28 
+
+> Layer
+> 0.00 0.05 0.10 0.15 0.20 0.25
+> LLM Judge Score
+> Original NPO GradDiff SimNPO RMU
+
+Figure 6: LLM-as-Judge Score of the probe decoder at each layer vs. output-level score on WMDP-Bio dataset. 
+
+WMDP-Bio. Figure 6 shows a similar trend to the TOFU and MUSE-News benchmarks. Although RMU achieves a lower accuracy value ( 31 .2; lower is better) on the original multiple-choice evaluation pipeline compared to SimNPO (41 .6) and NPO ( 42 .5) (see Table 4 in [33]), it is substan-tially more vulnerable under our free-form generation prob-ing setting. Moreover, Figure 9 of [18] shows that RMU performs well under linear probing across layers. However, our generation-based probing reveals stronger information leakage suggesting that standard linear probes could fail to capture residual memorization. Finally, although GradDiff, NPO, and SimNPO achieve nearly zero LLM-as-a-Judge scores at the final output layer, our probing decoder can still recover substantial sensitive content from hidden representations. 
+
+# 4 PARS: Probe-Adversarial Representation Suppression 
+
+Our theoretical and empirical results in Sections 2 and 3 establish that representational leakage is a fundamental failure mode of existing unlearning methods identifying, formalizing, and quantifying this gap is the primary contribution of this paper. A natural follow-up question is: can we design an unlearning objective that directly suppresses representational leakage? We propose PARS as one concrete answer. PARS achieves substantially stronger robustness to adversarial probing and relearning attacks by targeting sensitive information at its source in the hidden representations. 
+
+4.1 Extension to PARS-induced Robust Unlearning 
+
+Standard unlearning methods minimize an output-level objective min θ Lf (θ) + α Lr(θ) where Lf
+
+suppresses the probability of generating forget set, Lr preserves utility on the retain set, and α adjusts the balance between the forget and retain tasks. This objective does not guarantee that the hidden representations R(ℓ) 
+
+> θ
+
+stop to encode the sensitive content S; it only ensures that the model’s own decoder no longer maps those representations to S. Hence, the probed model should also avoid leaking sensitive information. To this end, we choose a subset of hidden layers Lp ⊆ { 0, . . . , L − 1} where L is the total number of hidden layers. We define the total probing loss over Lp as Lp(θ, ϕ) = P 
+
+> ℓ∈Lp
+
+L(ℓ) 
+
+> p
+
+(θ, ϕ)
+
+where the probe loss at layer ℓ is the expected next-token prediction loss of the decoder ϕ(ℓ) applied to the hidden representations of the forget corpus: 
+
+L(ℓ) 
+
+> p
+
+(θ, ϕ) := Ex∼D f
+
+− 1
+
+|x|
+
+> |x|
+
+X
+
+> t=1
+
+log Pϕ(ℓ)
+
+
+
+xt R(ℓ) 
+
+> θ
+
+(x<t )
+
+ . (7) For a fixed model parameter θ, we define the optimized probe as ϕ⋆(θ) = arg min ϕ Lp(θ, ϕ) which extracts the most sensitive information from the probed model. We then penalize the model according to the amount of information recoverable by this optimized probe. This gives the following probing-guided unlearning objective: 
+
+min 
+
+> θ
+
+
+
+Lf (θ) + αLr(θ) − β
+
+|Lp| Lp(θ, ϕ⋆(θ)) 
+
+
+
+, (8) 8where β controls the strength of representation-level suppression. We note that the negative sign for the probe loss indicates that a smaller loss corresponds to greater recoverability of forget content. Therefore, the problem in (8) encourages the model to increase the optimized probe loss, making sensitive content less recoverable from the probed hidden representations while still preserving retain-set utility. In our experiments, we exploit the NPO loss [52] as the forget objective Lf (·) with a cross-entropy as retain loss Lr(·).
+
+4.2 Experiments 
+
+We evaluate our proposed unlearning method PARS on two datasets, TOFU and MUSE-News. 
+
+PARS Training Configuration. We provide detailed setups in Appendix B.2 with models, hyperparame-ter choices and computational overheads discussions. 
+
+Evaluation Tasks. We measure unlearning effectiveness using three metrics for each benchmark. For TOFU, we use Entailment Score (ES) on Df , Membership Inference Attack (MIA) [40] exploiting Min-K%++ [38], and \leak@ 64 –ES measuring the leakage over 64 probabilistic generation samples [34]. For MUSE-News, we report VerbMem and KnowMem on Df measuring verbatim and knowledge memorization at the output level, and \leak@ 64 –RS. We also evaluate robustness to relearning attacks by measuring ES for TOFU, and VerbMem and KnowMem for MUSE-News, on Df after fine-tuning the unlearned model on a small subset of this set [10]. Further, we evaluate unlearning robustness to jailbreak attacks using Greedy Coordinate Gradient (GCG) [54]. The model’s overall utility is evaluated by ES on Retain QA for TOFU and by KnowMem on Dr for MUSE-News. The details on the evaluation tasks are in Appendix B.1 . We compare PARS against GradDiff [22], NPO [52], SimNPO [11], SURE [53], and SAM [10].                                                    
+
+> Model Unlearning Effectiveness Relearning Robustness Jailbreak Utility
+> ES ↓MIA ↓\leak@ 64 –ES ↓ES ↓GCG ↓Retain QA ↑
+> Original 26.7 -1.8 84.3 N/A 0.306 30.9 GradDiff 22.4 -6.3 80.5 31.9 0.260 35.0 NPO 18.6 -3.6 75.9 20.4 0.219 29.6 SimNPO 15.6 -5.4 76.4 22.4 0.237 32.2 RMU 17.4 -3.1 96.7 26.4 0.241 35.4 PARS 13.0 -104.6 73.7 20.4 0.198 34.7
+
+Table 3: Comparison of unlearning performance across baseline methods on the TOFU benchmark. Lower MIA scores indicate diminished memorization and superior unlearning efficacy, while lower Leak@64 values signify more thorough knowledge erasure. Robustness against relearning attacks is quantified by post-relearning ES, robustness against GCG jailbreak attacks is measured by post-GCG ROUGE-L (lower, more robust), and model utility is assessed via ES on the retain QA set.                                                                        
+
+> Method Unlearning Effectiveness Relearning Robustness Jailbreak Utility
+> VerbMem Df↓KnowMem Df↓\leak@ 64 –RS ↓VerbMem Df↓KnowMem Df↓GCG ↓KnowMem Dr↑
+> Original 56.3 63.7 96.4 N/A N/A 0.175 55.2 GradDiff 22.5 53.4 93.2 73.2 57.1 0.170 42.0 NPO 0.3 41.3 90.9 41.5 50.1 0.113 41.8 SimNPO 13.9 47.1 92.0 78.9 52.7 0.109 40.3 SURE 0.0 38.7 88.7 39.5 49.5 0.112 40.7 SAM 0.0 42.3 83.3 41.3 50.1 0.096 42.6 PARS 0.9 40.1 80.6 26.8 45.3 0.093 41.7
+
+Table 4: Comparison of unlearning performance across baselines on the MUSE-News set. Lower pre-attack 
+
+\leak@64–RS and pre- and post-attack VerbMem and KnowMem on Df indicate more effective unlearning. 
+
+Results. Table 3 reports the performance of PARS and other unlearning baselines on TOFU forget10. PARS outperforms all baselines in terms of the forgetness metric while maintaining comparable per-formance on the retain task. Moreover, this model achieves a much lower Min-K%++ score than the 9evaluated baselines. PARS outperforms RMU on all forget metrics despite RMU being a representation-level approach. Hence, generically perturbing hidden activations, as in RMU, does not necessarily suppress sensitive information encoded in hidden states. Instead, PARS uses an optimized probe to identify information that is decodable from hidden states and trains the model to reduce this probe-based recoverability. We compare PARS with other baselines on MUSE-News in Table 4 . While PARS achieves comparable VerbMem and KnowMem prior to relearning attacks, it outperforms all baselines on the robustness evaluation metrics, including \leak@ 64 –RS, post-relearning VerbMem and KnowMem, and jailbreak robustness. Specifically, relative to SAM, which is designed to enhance robustness against relearning attacks, PARS reduces VerbMem by 61% and KnowMem by 19.0% post-relearning. This indicates that suppressing probe-recoverable information from hidden states provides further robustness beyond sharpness-aware optimization. 
+
+# 5 Conclusion 
+
+We showed that existing LLM unlearning methods suffer from a fundamental limitation: an illusion of forgetting. Although sensitive outputs are suppressed at the decoder level, the hidden representations retain the underlying knowledge. We formalized this gap through an information-theoretic analysis and then validated it empirically using generative probing across three benchmarks. Finally, we proposed PARS, a probe-adversarial unlearning objective that directly targets representational leakage and outperforms existing baselines across various LLM unlearning tasks, including MIA, Leak@k, relearning, and jailbreak attacks. Our work provides a new lens for understanding information leakage in LLM unlearning and establishes a representation-level foundation for future algorithm design. 
+
+# References 
+
+[1] Yossi Adi, Einat Kermany, Yonatan Belinkov, Ofer Lavi, and Yoav Goldberg. Fine-grained analysis of sentence embeddings using auxiliary prediction tasks. arXiv preprint arXiv:1608.04207 , 2016. [2] Guillaume Alain and Yoshua Bengio. Understanding intermediate layers using linear classifier probes. arXiv preprint arXiv:1610.01644 , 2016. [3] Clark Barrett, Brad Boyd, Elie Bursztein, Nicholas Carlini, Brad Chen, Jihye Choi, Amrita Roy Chowdhury, Mihai Christodorescu, Anupam Datta, Soheil Feizi, et al. Identifying and mitigating the security risks of generative ai. Foundations and Trends® in Privacy and Security , 6(1):1–52, 2023. [4] Zhiqi Bu, Xiaomeng Jin, Bhanukiran Vinzamuri, Anil Ramakrishna, Kai-Wei Chang, Volkan Cevher, and Mingyi Hong. Unlearning as multi-task optimization: A normalized gradient difference approach with an adaptive learning rate. arXiv preprint arXiv:2410.22086 , 2024. [5] Bartosz Cywi´ nski and Kamil Deja. Saeuron: Interpretable concept unlearning in diffusion models with sparse autoencoders. arXiv preprint arXiv:2501.18052 , 2025. [6] Aghyad Deeb and Fabien Roger. Do unlearning methods remove information from language model weights? arXiv preprint arXiv:2410.08827 , 2024. [7] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of deep bidirectional transformers for language understanding. In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers) , pages 4171–4186, 2019. [8] Chenlu Ding, Jiancan Wu, Leheng Sheng, Fan Zhang, Yancheng Yuan, Xiang Wang, and Xiangnan He. Mllmeraser: Achieving test-time unlearning in multimodal large language models through activation steering. arXiv preprint arXiv:2510.04217 , 2025. 10 [9] Vineeth Dorna, Anmol Mekala, Wenlong Zhao, Andrew McCallum, Zachary C Lipton, J Zico Kolter, and Pratyush Maini. Openunlearning: Accelerating llm unlearning via unified benchmarking of methods and metrics. arXiv preprint arXiv:2506.12618 , 2025. [10] Chongyu Fan, Jinghan Jia, Yihua Zhang, Anil Ramakrishna, Mingyi Hong, and Sijia Liu. Towards llm unlearning resilient to relearning attacks: A sharpness-aware minimization perspective and beyond. arXiv preprint arXiv:2502.05374 , 2025. [11] Chongyu Fan, Jiancheng Liu, Licong Lin, Jinghan Jia, Ruiqi Zhang, Song Mei, and Sijia Liu. Simplicity prevails: Rethinking negative preference optimization for llm unlearning. arXiv preprint arXiv:2410.07163 , 2024. [12] Eoin Farrell, Yeu-Tong Lau, and Arthur Conmy. Applying sparse autoencoders to unlearn knowledge in language models. arXiv preprint arXiv:2410.19278 , 2024. [13] Tianyu Gao, Xingcheng Yao, and Danqi Chen. Simcse: Simple contrastive learning of sentence embeddings. In Proceedings of the 2021 conference on empirical methods in natural language processing , pages 6894–6910, 2021. [14] Shengyuan Hu, Yiwei Fu, Zhiwei Steven Wu, and Virginia Smith. Unlearning or obfuscating? jogging the memory of unlearned llms via benign relearning. arXiv preprint arXiv:2406.13356 ,2024. [15] Ting Jiang, Shaohan Huang, Zhongzhi Luan, Deqing Wang, and Fuzhen Zhuang. Scaling sentence embeddings with large language models. In Findings of the association for computational linguistics: EMNLP 2024 , pages 3182–3196, 2024. [16] Antonia Karamolegkou, Jiaang Li, Li Zhou, and Anders Søgaard. Copyright violations and large language models. arXiv preprint arXiv:2310.13771 , 2023. [17] Hadas Kotek, Rikker Dockum, and David Sun. Gender bias and stereotypes in large language models. In Proceedings of The ACM Collective Intelligence Conference , pages 12–24, 2023. [18] Nathaniel Li, Alexander Pan, Anjali Gopal, Summer Yue, Daniel Berrios, Alice Gatti, Justin D Li, Ann-Kathrin Dombrowski, Shashwat Goel, Long Phan, et al. The wmdp benchmark: Measuring and reducing malicious use with unlearning. arXiv preprint arXiv:2403.03218 , 2024. [19] Pengyu Li, Lingling Zhang, Zhitao Gao, Yanrui Wu, Yuxuan Dong, Huan Liu, Bifan Wei, and Jun Liu. AGT AO : Robust and stabilized llm unlearning via adversarial gating training with adaptive orthogonality, 2026. [20] Yucheng Li, Frank Geurin, and Chenghua Lin. Avoiding data contamination in language model evaluation: Dynamic test construction with latest materials. arXiv preprint arXiv:2312.12343 , 2023. [21] Chin-Yew Lin. Rouge: A package for automatic evaluation of summaries. In Text summarization branches out , pages 74–81, 2004. [22] Bo Liu, Qiang Liu, and Peter Stone. Continual learning and private unlearning. In Conference on Lifelong Learning Agents , pages 243–254. PMLR, 2022. [23] Nelson F Liu, Matt Gardner, Yonatan Belinkov, Matthew E Peters, and Noah A Smith. Linguistic knowledge and transferability of contextual representations. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers) , pages 1073–1094, 2019. [24] Jakub Łucki, Boyi Wei, Yangsibo Huang, Peter Henderson, Florian Tram` er, and Javier Rando. An adversarial perspective on machine unlearning for ai safety. arXiv preprint arXiv:2409.18025 , 2024. 11 [25] Aengus Lynch, Phillip Guo, Aidan Ewart, Stephen Casper, and Dylan Hadfield-Menell. Eight methods to evaluate robust unlearning in llms. arXiv preprint arXiv:2402.16835 , 2024. [26] Aleksander Madry, Aleksandar Makelov, Ludwig Schmidt, Dimitris Tsipras, and Adrian Vladu. Towards deep learning models resistant to adversarial attacks. arXiv preprint arXiv:1706.06083 ,2017. [27] Pratyush Maini, Zhili Feng, Avi Schwarzschild, Zachary C. Lipton, and J. Zico Kolter. Tofu: A task of fictitious unlearning for llms, 2024. [28] Fabio Motoki, Valdemar Pinho Neto, and Victor Rodrigues. More human than human: Measuring chatgpt political bias. Available at SSRN 4372349 , 2023. [29] Aashiq Muhamed, Jacopo Bonato, Mona T Diab, and Virginia Smith. Saes can improve unlearning: Dynamic sparse autoencoder guardrails for precision unlearning in llms. In Second Conference on Language Modeling , 2025. [30] Milad Nasr, Nicholas Carlini, Jonathan Hayase, Matthew Jagielski, A Feder Cooper, Daphne Ippolito, Christopher A Choquette-Choo, Eric Wallace, Florian Tram` er, and Katherine Lee. Scalable extraction of training data from (production) language models. arXiv preprint arXiv:2311.17035 ,2023. [31] Vaidehi Patil, Peter Hase, and Mohit Bansal. Can sensitive information be deleted from llms? objectives for defending against extraction attacks. arXiv preprint arXiv:2309.17410 , 2023. [32] Nils Reimers and Iryna Gurevych. Sentence-bert: Sentence embeddings using siamese bert-networks. In Proceedings of the 2019 conference on empirical methods in natural language processing and the 9th international joint conference on natural language processing (EMNLP-IJCNLP) , pages 3982–3992, 2019. [33] Hadi Reisizadeh, Jinghan Jia, Zhiqi Bu, Bhanukiran Vinzamuri, Anil Ramakrishna, Kai-Wei Chang, Volkan Cevher, Sijia Liu, and Mingyi Hong. Blur: A bi-level optimization approach for llm unlearning. arXiv preprint arXiv:2506.08164 , 2025. [34] Hadi Reisizadeh, Jiajun Ruan, Yiwei Chen, Soumyadeep Pal, Sijia Liu, and Mingyi Hong. Leak@ k: Unlearning does not make llms forget under probabilistic decoding. arXiv preprint arXiv:2511.04934 , 2025. [35] Atakan Seyito˘ glu, Aleksei Kuvshinov, Leo Schwinn, and Stephan G¨ unnemann. Extracting unlearned information from llms with activation steering. arXiv preprint arXiv:2411.02631 , 2024. [36] William F Shen, Xinchi Qiu, Meghdad Kurmanji, Alex Iacob, Lorenzo Sani, Yihong Chen, Nicola Cancedda, and Nicholas D Lane. Llm unlearning via neural activation redirection. arXiv preprint arXiv:2502.07218 , 2025. [37] Abhay Sheshadri, Aidan Ewart, Phillip Guo, Aengus Lynch, Cindy Wu, Vivek Hebbar, Henry Sleight, Asa Cooper Stickland, Ethan Perez, Dylan Hadfield-Menell, et al. Latent adversarial training improves robustness to persistent harmful behaviors in llms. arXiv preprint arXiv:2407.15549 ,2024. [38] Weijia Shi, Anirudh Ajith, Mengzhou Xia, Yangsibo Huang, Daogao Liu, Terra Blevins, Danqi Chen, and Luke Zettlemoyer. Detecting pretraining data from large language models. arXiv preprint arXiv:2310.16789 , 2023. [39] Weijia Shi, Jaechan Lee, Yangsibo Huang, Sadhika Malladi, Jieyu Zhao, Ari Holtzman, Daogao Liu, Luke Zettlemoyer, Noah A Smith, and Chiyuan Zhang. Muse: Machine unlearning six-way evaluation for language models. arXiv preprint arXiv:2407.06460 , 2024. 12 [40] Reza Shokri, Marco Stronati, Congzheng Song, and Vitaly Shmatikov. Membership inference attacks against machine learning models. In 2017 IEEE symposium on security and privacy (SP) ,pages 3–18. IEEE, 2017. [41] Damien Sileo. tasksource: Structured dataset preprocessing annotations for frictionless extreme multi-task learning and evaluation. arXiv preprint arXiv:2301.05948 , 2023. [42] Lichao Sun, Yue Huang, Haoran Wang, Siyuan Wu, Qihui Zhang, Chujie Gao, Yixin Huang, Wenhan Lyu, Yixuan Zhang, Xiner Li, et al. Trustllm: Trustworthiness in large language models. 
+
+arXiv preprint arXiv:2401.05561 , 2024. [43] Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 , 2023. [44] Liang Wang, Nan Yang, Xiaolong Huang, Linjun Yang, Rangan Majumder, and Furu Wei. Improving text embeddings with large language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 11897–11916, 2024. [45] Xu Wang, Zihao Li, Benyou Wang, Yan Hu, and Difan Zou. Model unlearning via sparse autoencoder subspace guided projections. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 26541–26557, 2025. [46] Jiaxin Wen, Pei Ke, Hao Sun, Zhexin Zhang, Chengfei Li, Jinfeng Bai, and Minlie Huang. Unveiling the implicit toxicity in large language models. In The 2023 Conference on Empirical Methods in Natural Language Processing , 2023. [47] Han Yan, Zheyuan Liu, and Meng Jiang. Dual-space smoothness for robust and balanced llm unlearning. arXiv preprint arXiv:2509.23362 , 2025. [48] Hongbang Yuan, Zhuoran Jin, Pengfei Cao, Yubo Chen, Kang Liu, and Jun Zhao. Towards robust knowledge unlearning: An adversarial framework for assessing and improving unlearning robustness in large language models. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 39, pages 25769–25777, 2025. [49] Xiaojian Yuan, Tianyu Pang, Chao Du, Kejiang Chen, Weiming Zhang, and Min Lin. A closer look at machine unlearning for large language models. arXiv preprint arXiv:2410.08109 , 2024. [50] Hongyang Zhang, Yaodong Yu, Jiantao Jiao, Eric Xing, Laurent El Ghaoui, and Michael Jordan. Theoretically principled trade-off between robustness and accuracy. In International conference on machine learning , pages 7472–7482. PMLR, 2019. [51] Jingyang Zhang, Jingwei Sun, Eric Yeats, Yang Ouyang, Martin Kuo, Jianyi Zhang, Hao Frank Yang, and Hai Li. Min-k%++: Improved baseline for detecting pre-training data from large language models. arXiv preprint arXiv:2404.02936 , 2024. [52] Ruiqi Zhang, Licong Lin, Yu Bai, and Song Mei. Negative preference optimization: From catas-trophic collapse to effective unlearning. arXiv preprint arXiv:2404.05868 , 2024. [53] Zhiwei Zhang, Fali Wang, Xiaomin Li, Zongyu Wu, Xianfeng Tang, Hui Liu, Qi He, Wenpeng Yin, and Suhang Wang. Catastrophic failure of llm unlearning via quantization. arXiv preprint arXiv:2410.16454 , 2024. [54] Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr, J Zico Kolter, and Matt Fredrikson. Universal and transferable adversarial attacks on aligned language models. arXiv preprint arXiv:2307.15043 ,2023. 13 A Related Works 
+
+Adversarial Attacks for Unlearning. As more LLM unlearning methods are proposed, evaluating their robustness has emerged critical. Various adversarial attacks have been developed to extract undesired information, assessing whether an unlearning approach is truly effective or solely masking the data [14]. Current adversarial attacks generally fall into two broad categories: (1) Generation-based attacks exploit the unlearned model’s text generation capabilities to recover information. This includes relearning attacks, where lightweight fine-tuning on even a small subset of forget samples can effectively restore unlearned knowledge [6, 10, 24]. Another example is jailbreaking attacks, in which adversarial prompts are carefully crafted to bypass safety alignments and recover forgotten information during inference [54, 24, 31, 25]. Recently, metrics such as Leak@k [34] have been proposed to assess the risk of adversarial, repetitive prompting under probabilistic decoding, aiming to extract worst-case leaked outputs. (2) Internal-state-based attacks target to detect traces of sensitive training data from a model’s internal representations. Instead of relying on generated text, these methods analyze internal behavior, probability distributions, or latent states to determine whether specific training data remains memorized. Techniques such as Min-K% [38] and Min-K%++ [51] exploit token probability distributions to detect pre-training data leakage and can be considered a special case of Membership Inference Attacks (MIA) [40]. Moreover, a linear probe (or auxiliary classifier) is typically a simple linear or MLP model attached to a frozen intermediate representation of a neural network, used to assess what information is encoded in hidden states [23, 1]. In unlearning context, probes are further applied to detect whether sensitive or task-relevant knowledge is still retained in intermediate representations [18]. Our framework extends the classification-based probes to a generation-aware probe operating over hidden states and vocabulary distributions. It directly evaluates how much memorized content can be recovered from each layer’s representation. This enables our proposed algorithm, PARS, to quantify not only whether information is linearly separable, but also whether it is generatively decodable, providing a more direct mechanism for identifying and mitigating latent knowledge leakage in LLMs. 
+
+Adversarial Training Perspectives in Unlearning. Such training has been widely studied as a mechanism for improving model robustness, though it often incurs substantial computational overhead and optimization challenges [50, 26]. Recently, machine unlearning approaches have incorporated adversarial paradigms to defend against extraction and relearning attacks. A promising line of work formulates unlearning as a latent-space adversarial min–max problem, in which perturbations are introduced to hidden states and optimized to recover forgotten knowledge, while model parameters are updated to resist such worst-case activations [37, 48, 19]. Another direction of work [10] models relearning attacks through a parameter-space min–max formulation, where worst-case weight perturbations are constructed to reverse unlearning, and robustness is enforced via sharpness-aware minimization to promote a smooth loss landscape. Despite these advances, such methods primarily assess robustness through output-level recovery, without explicitly probing or constraining residual sensitive information within intermediate representations. To address this issue, the work [47] proposes a probe-based adversarial framework (PRISM), which trains a latent probe to distinguish harmful and safe representations under adversarial perturbations, and subsequently guides unlearning by pushing harmful representations toward a probe-defined safe region. However, this approach relies on the probe as a surrogate objective, enforcing decision-boundary align-ment rather than explicitly identifying and removing sensitive information embedded in representations. In contrast, our paradigm directly operates on intermediate representations by probing layer-wise hidden states with generative supervision, enabling it to capture and expose residual sensitive information that may not be reflected in classification boundaries. By aligning these representations with target generations rather than binary decisions, PARS can more precisely identify and erase latent leakage beyond probe-level classification. 14 B Experimental Details 
+
+B.1 Evaluation Tasks 
+
+MIA Min-K%++ quantifies memorization using normalized token log-likelihoods. For each token xt,the score is Min-K%++ token (xt) = log p(xt | x<t ) − μx<t 
+
+σx<t 
+
+,
+
+where μx<t and σx<t are the mean and standard deviation of log-probabilities over the vocabulary conditioned on x<t . The sequence-level score averages the lowest k% token scores: Min-K%++ (x) = 1
+
+|min -k%|
+
+X 
+
+> xt∈min -k%
+
+Min-K%++ token (xt).
+
+A higher score indicates stronger memorization, while a lower score indicates better unlearning on the forget set. In our experiment, we use k = 40% (i.e., the lowest 40% of tokens). 
+
+Leak@k evaluates information leakage under adversarial multiple prompting under probabilistic decoding. In our experiment, Leak@k generates n = 200 independent samples to measure the reappear-ance of forgotten knowledge within k = 64 generations. Leak@k employs probabilistic decoding, for which we set the temperature to 1.0 and top-p to 1. For the dataset-specific evaluation metrics, we utilize RS-Recall for the MUSE dataset and ES for the TOFU dataset. 
+
+Relearning Attacks evaluate the robustness of the unlearning process by fine-tuning the unlearned model on the forget set for a short duration. This tests the model’s true forget quality by measuring how easily the supposedly erased information can be recovered after this brief relearning phase. The specific hyperparameters utilized for the relearning attacks across the TOFU and MUSE datasets are detailed in 
+
+Table 5. Jailbreak Attacks evaluate whether adversarial prompts can extract the sensitive content from the unlearned model. We use Greedy Coordinate Gradient (GCG) [54] to optimize a shared adversarial suffix 
+
+s on a subset Da ⊂ D f , given as 
+
+s∗ = arg min  
+
+> s
+
+− 1
+
+|D a|
+
+X
+
+> (x,y )∈D a
+
+1
+
+LyLy
+
+X
+
+> t=1
+
+log pθu (yt | x ⊕ s, y <t ),
+
+where θu denotes the unlearned model, x is the input prompt, y is the undesired target, ⊕ denotes concatenation, and Ly = min(16 , |y|) restricts optimization to the target prefix. GCG iteratively proposes token substitutions using gradients and selects the suffix with the lowest average target loss. We then append the optimized suffix to held-out forget prompts and evaluate extraction under greedy decoding; greater extraction indicates weaker robustness to jailbreak attacks. 
+
+Dataset Learning Rate Batch Size Steps 
+
+TOFU 2 × 10 −5 8 75 
+
+MUSE 2 × 10 −5 4 75 
+
+Table 5: Hyperparameters for Relearning Attacks. 
+
+B.2 PARS Training Setup. 
+
+We used NVIDIA A100 to perform full parameter unlearning. Specifically, we used 8 × A100 to run unlearning for MUSE-News benchmark, 2 × A100 to run unlearning for TOFU benchmark. 15 PARS Hyperparameters. On TOFU and MUSE benchmarks, PARS is implemented on the NPO loss. For TOFU, it uses 6 epochs, learning rate of 10 −5, batch size of 32 , α = 6 , and β = 0 .5. For MUSE, we exploit 6 epochs, learning rate of 10 −5, batch size of 2, α = 4 , and β = 0 .75 .
+
+Computational Overheads. Our PARS algorithm introduces an additional probing loss to facilitate the erasure of internal knowledge within intermediate layers. While this approach yields significantly more robust performance across various attacks, it inherently introduces a computational tradeoff. Specifically, the auxiliary loss requires additional GPU memory to store intermediate representations and gradients. For instance, utilizing four intermediate layers incurs an estimated additional GPU memory overhead of 
+
+15% for MUSE-News and 50% for TOFU. Furthermore, the training time increases compared to standard NPO training: from 1 hour to 3 hours on TOFU, and from 2 hours to 4 hours on MUSE-News, see in 
+
+Table 6 .                         
+
+> Dataset Model Target Layers ( Lp)Baseline Time PARS Time Extra GPU Mem.
+> TOFU LLaMA-3.2-1B-Instruct {8,10 ,12 ,14 }2.0hr 4.0hrs +50%
+> MUSE-News LLaMA2-7B {24 ,26 ,28 ,30 }1.0hr 3.0hrs +15%
+
+Table 6: Summary of dataset-specific configurations and computational overheads for the PARS algorithm compared with baseline time refers to standard NPO training. 
+
+# C Proof of Theorem 1 
+
+We first present an auxiliary lemma. 
+
+Lemma 2. Let qx := Categorical(softmax( x)) for x ∈ Rn. Then, for any z, η ∈ Rn,
+
+KL( qz ∥qz+η) ≤ 12 ∥η∥2
+
+> ∞
+
+. (9) The proof of Lemma 2 is provided in Appendix E . Now, we are ready for the proof of Theorem 1. We prove (a) and (b) separately. 
+
+(a) Let T := v⊤(R − r0). Then, using R = r0 + ( μS + ζ)v + ξ, we have 
+
+T = v⊤ (μS + ζ)v + ξ
+
+= v⊤v(μS + ζ) + v⊤ξ = μS + ζ
+
+where the last step follows from ∥v∥2 = 1 and v⊤ξ = 0 . Since T is a measurable function of R, the data processing inequality gives 
+
+I(S; R) ≥ I(S; T ) = h(T ) − h(T | S). (10) For the second term in (10), since conditioning on S shifts T by the constant μS , we have 
+
+h(T | S) = h(ζ) = 12 log(2 πe τ 2). (11) Since μS is a measurable function of S and ζ ⊥ S, we have μS ⊥ ζ. Hence, to lower bound the first term in (10), applying the entropy power inequality, we get 
+
+N(T ) = N(μS + ζ) ≥ N(μS ) + N(ζ) = N(μS ) + τ 2, (12) where the last step follows from ζ ∼ N (0 , τ 2). From (12), we can write 
+
+h(T ) ≥ 12 log  2πe (N(μS ) + τ 2). (13) 16 Substituting (11) and (13) into (10), we obtain 
+
+I(S; R) ≥ 12 log 
+
+
+
+1 + N(μS )
+
+τ 2
+
+
+
+.
+
+(b) Fix c ∈ C . For each s ∈ supp( S | C = c), we define ps := P (Z ∈ · | C = c, S = s) and 
+
+¯p := P (Z ∈ · | C = c) = ES|C=c[pS ]. Using the identity for conditional mutual information, we have 
+
+I(S; Z | C = c) = ES|C=c[KL( pS ∥¯p)] . (14) Since KL divergence is convex in its second argument, for each fixed s, we get 
+
+KL 
+
+
+
+ps ES′|C=c[pS′ ]
+
+
+
+≤ ES′|C=c[KL( ps∥pS′ )] ,
+
+where S′ is an independent copy of S under PS|C=c. Averaging over S | C = c, we obtain 
+
+I(S; Z | C = c) ≤ ES,S ′|C=c[KL( pS ∥pS′ )] . (15) Let Θ := ( ζ, ξ ) denote the noise variable, independent of (C, S ). For each s, we define the Θ-conditional distribution as ps,θ := P (Z ∈ · | C = c, S = s, Θ = θ). Under the model, ps,θ =Categorical(softmax( Vs,θ )) with logits Vs,θ = W  r0 + ( μs + ζ)v + ξ + b and μs := E[α | S = s].Moreover, we can write ps = EΘ[ps, Θ]. From the joint convexity of KL divergence, we can conclude 
+
+KL( ps∥ps′ ) = KL 
+
+
+
+EΘ[ps, Θ] EΘ[ps′,Θ]
+
+
+
+≤ EΘ
+
+KL( ps, Θ∥ps′,Θ) . (16) For fixed θ = ( ζ, ξ ), the logit difference satisfies Vs,θ − Vs′,θ = ( μs − μs′ ) W v . Since v is ε-insensitive, there exist λ⋆ ∈ R and u ∈ Rn with ∥u∥∞ ≤ ε such that W v = λ⋆1 + u. Because softmax( z + c1) = softmax( z) for any c ∈ R, the additive shift λ⋆1 does not affect the induced categorical distribution. Hence we may equivalently compare logits differing by η := ( μs − μs′ ) u with ∥η∥∞ ≤ ε |μs − μs′ |.Applying Lemma 2, we obtain 
+
+KL( ps,θ ∥ps′,θ ) ≤ 12 ∥η∥2 
+
+> ∞
+
+≤ 12 ε2(μs − μs′ )2. (17) Taking expectation (17) over Θ and using (16), we get 
+
+KL( ps∥ps′ ) ≤ 12 ε2(μs − μs′ )2. (18) Finally, taking expectation in (18) over i.i.d. (S, S ′) drawn from PS|C=c and using (15), we get 
+
+I(S; Z | C = c) ≤ 12 ε2 E(μS − μS′ )2 | C = c = ε2 Var( μS | C = c). (19) Averaging (19) over C, we yield 
+
+I(S; Z | C) ≤ ε2 E[Var( μS | C)] ≤ ε2 Var( μS ),
+
+where the last step follows from the law of total variance. This completes the proof of (b). 
+
+# D Proof of Lemma 1 
+
+From the definition of r0, we have R = r0 + β where β := R − E[R]. Fix a unit vector v ∈ Rd and let 
+
+P := vv ⊤ and P⊥ := I − P . Hence, we can write 
+
+β = P β + P⊥β = ( v⊤β)v + P⊥β. (20) 17 We define α := v⊤(R − r0) = v⊤β and ξ := P⊥(R − r0) = P⊥β. Using (20), we get 
+
+R = r0 + ( v⊤β)v + P⊥β = r0 + αv + ξ. (21) Now, we decompose α as α = μS + ζ where μS := E[α | S] and ζ := α − E[α | S]. This together with (21) leads us to 
+
+R = r0 + ( μS + ζ)v + ξ, 
+
+with E[ζ | S] = 0 . Moreover, using the fact ∥v∥2 = 1 , we have 
+
+v⊤ξ = v⊤(I − vv ⊤)( R − r0) = ( v⊤ − v⊤vv ⊤)( R − r0) = 0 .
+
+# E Proof of Lemma 2 
+
+We define the log-partition function g as 
+
+g(z) := log 
+
+> n
+
+X
+
+> i=1
+
+ezi , z ∈ Rn.
+
+Then, g is C∞ and convex, with 
+
+∇g(z) = q, ∇2g(z) = Diag( q) − qq ⊤,
+
+where q = softmax( z). In particular, for any η ∈ Rn, we have 
+
+η⊤∇2g(z) η = η⊤(Diag( q) − qq ⊤)η =
+
+> n
+
+X
+
+> i=1
+
+qiη2 
+
+> i
+
+−
+
+ nX
+
+> i=1
+
+qiηi
+
+2
+
+= Var i∼q(ηi).
+
+The softmax family {qz }z∈Rn is an exponential family with natural parameter z and log-partition function 
+
+g; hence its Kullback–Leibler divergence satisfies the standard identity 
+
+KL( qz ∥qz+η) = g(z + η) − g(z) − ⟨∇ g(z), η ⟩ = Dg(z + η, z ), (22) i.e., it equals the Bregman divergence of g at (z + η, z ). By Taylor’s theorem in integral form, we get 
+
+Dg(z + η, z ) = 
+
+Z 10
+
+(1 − t) η⊤∇2g(z + tη ) η dt. (23) For any distribution, Var( X) ≤ (range( X)) 2/4. Therefore, for each t ∈ [0 , 1] , we arrive at 
+
+η⊤∇2g(z + tη ) η = Var i∼softmax( z+tη )(ηi) ≤ (max i ηi −min i ηi)2
+
+4 ≤ ∥ η∥2
+
+> ∞
+
+, (24) where the last inequality follows from max i ηi − min i ηi ≤ 2∥η∥∞. Substituting (23) into (22), we arrive at 
+
+KL( qz ∥qz+η) = 
+
+Z 10
+
+(1 − t) η⊤∇2g(z + tη ) η dt (a) 
+
+≤
+
+Z 10
+
+(1 − t) ∥η∥2 
+
+> ∞
+
+dt = 12 ∥η∥2
+
+> ∞
+
+,
+
+where (a) holds due to (24). This completes the proof of the lemma. 18

@@ -1,0 +1,1462 @@
+Title: From Mathematical to Executable Certificates for Machine Unlearning
+
+URL Source: https://arxiv.org/pdf/2610.02268v1
+
+Published Time: Mon, 05 Oct 2026 00:02:41 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+Preprint 
+
+# FROM MATHEMATICAL TO EXECUTABLE CERTIFICATES FOR MACHINE UNLEARNING 
+
+Ziyu Zhao ∗,1,2 Xinyu Wang ∗,2 Xiao-Wen Chang 2 Yixuan He †,11Arizona State University 2McGill University 
+
+# ABSTRACT 
+
+Machine unlearning is needed when data must be removed because of deletion requests, outdated records, or data-quality concerns, while retraining from scratch can be costly. Certified machine unlearning methods provide mathematical guaran-tees, while deployed systems release concrete finite-precision artifacts produced by software. To bridge the gap between mathematical guarantees and practical deployment, we introduce Executable Release Certification (ExecCert), a release-time layer that certifies the candidate artifact considered for release. ExecCert either closes a method’s native certificate for the executed candidate or applies Retraining-Reference Release Verification (RRV) to certify fidelity to current retain-set retraining. Sequential deletion makes the latter nontrivial because the exact retain-set reference and the stored numerical state evolve separately. For frozen representations with a mutable ridge head, we develop an incremental realization of RRV that maintains certified evidence across deletion requests rather than re-constructing it at each release. On four published unlearning implementations, ExecCert preserves valid certificates, changes release decisions, tightens conserva-tive bounds, and identifies the retraining-reference fidelity supported by concrete outputs. In sequential-service experiments, RRV eliminates false releases caused by stored-equation verification while closely tracking realized error, and incremen-tal certification remains cheaper than both fresh and maintained verified-factor alternatives once release checks become sufficiently frequent. 
+
+# 1 INTRODUCTION 
+
+Machine-learning models may need to remove the influence of training records when users withdraw consent, data become outdated, or errors are discovered; regulations such as the EU’s right to be forgotten provide an additional motivation. Retraining from scratch on the retained data gives a natural reference but can be costly, motivating machine unlearning methods that seek to approximate retraining at lower deletion cost (Ginart et al., 2019; Guo et al., 2020; Sekhari et al., 2021; Gupta et al., 2021). Certified unlearning further provides mathematical guarantees relating an efficient deletion mechanism to this reference (Guo et al., 2020; Sekhari et al., 2021; Gupta et al., 2021; Chien et al., 2024; Zhang et al., 2024b; Koloskova et al., 2025; Pandey et al., 2026). However, a deployed system releases a concrete finite-precision artifact produced by software, rather than the mathematical object analyzed by the guarantee. This raises a distinct deployment question: does the artifact actually considered for release satisfy the intended certificate or retraining-reference contract? 
+
+Sequential deletion makes this deployment-level question especially important. After each request, the exact retain-set system changes, while the deployed service advances a separate finite-precision state through rounded updates. These two systems do not always coincide: a candidate may solve the stored equation accurately, sometimes even with zero stored residual, but still violate the contract defined relative to current retain-set retraining. Verifying the stored computation alone is therefore insufficient; release-time certification must connect the executed artifact to the intended reference. We introduce Executable Release Certification (ExecCert) to fill the gap between the two systems. Before a candidate is released, the deployment fixes a release contract, and ExecCert certifies whether 
+
+> ∗
+
+Equal contribution. 
+
+> †
+
+Corresponding author. 
+
+1arXiv:2610.02268v1 [cs.LG] 1 Oct 2026 Preprint 
+
+Deletion requests Unlearning generator Executable certification   
+
+> Native closure RRV
+
+Policy gate 
+
+# ✓
+
+> Release
+
+# ✗
+
+> Withhold / Repair
+> repair, recompute, or re-encode
+
+Figure 1: ExecCert certifies a concrete unlearning artifact before release. The generator’s finite-precision output is checked against a predeclared contract through native-certificate closure or retraining-reference verification (RRV). Only certified artifacts pass the policy gate; an inconclusive candidate is withheld or repaired and then recertified. the concrete executed artifact satisfies that contract. It supports two paths: when an unlearning method already exposes a certificate quantity, native closure rigorously encloses that quantity for the executed candidate; when the contract is defined relative to retraining on the current retain set, Retraining-Reference Release Verification (RRV) instead certifies the candidate directly against that reference. In both cases, the output generator, release contract, and verifier remain separate components. Our main sequential realization is Incremental RRV for ridge regression heads with symmetric positive-definite (SPD) normal matrices. RRV itself certifies only the concrete candidate considered for release. During the preceding deletion sequence, Incremental RRV maintains certified relations between the service’s finite-precision statistics and the exact retain-set statistics, together with reusable inverse-defect evidence. Here d denotes the feature dimension of each ridge regression head. Guarded rank-one transitions update this proof state in O(d2) work. When a candidate is considered for release, the maintained evidence is composed into its retraining-reference certificate. Alternatively, On-demand RRV constructs the required evidence when certification is requested. Experiments on four published unlearning implementations and sequential services show that Ex-ecCert changes release decisions, tightens or preserves existing certificates, and characterizes the retraining-reference fidelity supported by emitted outputs. In sequential services, RRV prevents false releases admitted by stored-equation checking while closely tracking realized error; on frozen 3B representations with a mutable ridge head, Incremental RRV remains cheaper than both fresh and maintained verified-factor alternatives once release checks become sufficiently frequent. 
+
+Contributions. We make three contributions. First, we formalize executable release certification as a distinct layer between a mathematical unlearning mechanism and the concrete artifact considered for release. ExecCert supports both rigorous closure of a method’s native certificate and certification against current retain-set retraining (Sections 3 and 4.1). Second, we develop Incremental RRV for sequential deletion, maintaining certified relations between finite-precision service state and the exact retain-set system together with reusable inverse-defect evidence. Guarded rank-one transitions update this proof state in O(d2) work (Sections 4 and 4.3). Third, we evaluate ExecCert on four published unlearning implementations and sequential services, showing that executable certification has practical consequences: it can change release decisions, tighten or preserve existing certificates, prevent false releases, and amortize verification when certification is frequent (Section 5). 
+
+# 2 RELATED WORK 
+
+Full retraining on the retain set is a natural exact reference but incurs the cost of processing the surviving data. Exact unlearning targets the same output distribution and need not literally rerun the original training algorithm; certified approximate removal instead applies an efficient update and bounds its deviation from the declared reference, through influence or Newton steps, randomized mechanisms, or guarantees that compose across a deletion sequence (Guo et al., 2020; Sekhari et al., 2021; Gupta et al., 2021; Chien et al., 2024; Koloskova et al., 2025; Zou et al., 2025; Pandey et al., 2026). These results differ in what they bound, but share an assumption: the analysis governs the mathematical update, and the deployed artifact is taken to realize it. A second line asks instead how 2Preprint an external party can be convinced that deletion happened, auditing execution traces and provenance, probing the released model for residual influence of the deleted records, or attaching cryptographic proofs that a prescribed computation was carried out (Thudi et al., 2022; Weng et al., 2024; Eisenhofer et al., 2025; Zhang et al., 2024a; Maheri et al., 2026). That evidence concerns which computation ran , for a verifier that distrusts the operator. Ours is the complement: the verifier is internal, the computation known, and the question is whether the artifact about to be released meets a contract stated in exact arithmetic. The two compose, since proving that the prescribed update ran says nothing about the rounding it accumulated. That numerical question has its own literature. Finite precision is known to break guarantees derived in exact arithmetic, in differential privacy, robustness certification, and verified training (Mironov, 2012; Voracek & Hein, 2023; Sz´ asz et al., 2025; Jin et al., 2024), and verified numerics supplies the countermeasure: rigorous enclosures for linear-system residuals, approximate inverses, and low-rank updates (Krawczyk, 1969; Oishi & Rump, 2002; Rump, 2010; Hager, 1989). These tools certify a solution against a fixed system. Cholesky downdates and iterative refinement provide classical ways to update a numerical solve (Higham, 2002; Rump, 2010); maintaining such a factor does not by itself verify its relation to the changing exact system, so factor validation and residual enclosures remain part of a release certificate. Sequential deletion removes that fixture, since the retain-set system moves with every request while the service advances a separately rounded state, so our ridge regression realization maintains a certified relation between the two and converts it at release time into a certificate against the current reference. ScaleGUN studies a related transfer for graph propagation (Yi & Wei, 2025); RRV instead transfers from finite-precision service state to the retain-set system. 
+
+# 3 FROM MATHEMATICAL TO EXECUTABLE CERTIFICATES 
+
+An unlearning generator processes a declared set or sequence of deletion requests and produces a finite-precision candidate eθ. The deployment fixes an admissible set A independently of that candidate. ExecCert returns C ERTIFIED only after establishing eθ ∈ A ; otherwise the policy gate may repair, recompute, re-encode, or withhold the candidate. For evaluation, a candidate is conforming when it belongs to A, and a false release is a nonconforming candidate returned as C ERTIFIED . An I NCONCLUSIVE candidate may still conform; a released artifact 
+
+is one that passes the policy gate. 
+
+Notation. We write θR for the exact-real retraining reference after the declared deletions and eθ for the executed candidate. Hats denote computed verifier quantities and circles exact-real evaluations of computed intermediates; Section C.1 gives the remaining floating-point notation. 3.1 TWO EXEC CERT PATHS 
+
+These paths correspond to two release requirements. Some deployments need to verify a method’s own certificate after finite-precision execution; others specify fidelity to retraining on the current retain set, which a native certificate may not express. Native closure addresses the first requirement, whereas RRV addresses the second. 
+
+Native-certificate closure. This path is appropriate when an unlearning method already specifies a certificate of the form q(θ; I) ≤ b, where q is the source certificate quantity, b its prescribed threshold, and I any committed inputs or auxiliary state required by the source method. This defines the admissible set Anative = {θ : q(θ; I) ≤ b}. ExecCert does not change this condition: it constructs a rigorous upper bound q(eθ; I) ≤ q+ for the executed candidate and returns C ERTIFIED whenever 
+
+q+ ≤ b. Native closure therefore certifies the concrete finite-precision artifact under the source method’s own certificate. 
+
+Retraining-reference certification. This path is needed when a method’s native certificate does not quantify how close its executed output is to retraining on the current retain set. When a deployment requires this fidelity directly, ExecCert uses Retraining-Reference Release Verification (RRV). RRV defines a uniquely specified exact-real target θR from the declared training objective, mutable model 3Preprint component, and contract inputs. For a predeclared distance d and tolerance τ > 0, the release contract requires d(eθ, θ R) ≤ τ . Rather than computing θR exactly, RRV certifies this contract by constructing a rigorous upper bound on the distance. For the Euclidean parameter contract, this takes the form 
+
+eθ − θR
+
+> F
+
+≤ C. (1) How C is obtained depends on the model class. For ridge regression heads with symmetric positive-definite (SPD) normal matrices, On-demand RRV constructs the required proof information for the candidate, whereas Incremental RRV maintains it while deletion requests are processed. The latter updates certified numerical state through rank-one transitions. For differentiable strongly convex heads, On-demand RRV instead uses a post-update gradient certificate, covering L2-regularized logistic and softmax heads. 3.2 CONTRACTS DERIVED FROM THE RRV B OUND 
+
+The absolute bound C can be translated into several release contracts. For relative parameter fidelity, denote the predeclared tolerance by τpar . The reverse triangle inequality gives 
+
+eθ − θR
+
+> F
+
+∥θR∥F
+
+≤ C
+
+eθ F
+
+− C, (2) whenever eθ F
+
+> C , so the contract is certified when the right-hand side is at most τpar .A deployment may instead care about outputs on a fixed set of input representations Z ∈ Rm×d,declared independently of the candidate. For a parameter matrix with c output columns, it may require 
+
+Z(eθ − θR) F
+
+√mc ≤ τ, (3) for which the parameter certificate immediately gives Z(eθ − θR) F
+
+≤ ∥ Z∥2 C, while Section 4 de-velops a tighter error-centered certificate that preserves the error direction, and the margin conditions in Corollary 1 further imply per-row decision agreement. Contracts are checked separately; the same absolute bound also supports the randomized-release and output-format interfaces in Section 4.4. 
+
+# 4 RETRAINING -R EFERENCE RELEASE VERIFICATION 
+
+Native-certificate closure is method-specific once the source certificate quantity is fixed; its concrete instantiations appear in Section 5.3. The main technical development is therefore RRV, which must certify an executed candidate against a retraining reference that is not explicitly computed. RRV can construct certificate evidence in two ways. On-demand RRV constructs the required evidence when certification is requested, whereas Incremental RRV reuses numerical state maintained across deletion requests. The latter introduces an additional obligation: the maintained finite-precision state must itself be certified against the exact current retain-set system before it can support a release certificate. Our ridge regression realization supports both paths through residual and inverse-defect bounds; for differentiable strongly convex heads, On-demand RRV uses a post-update gradient certificate. The interface in Section 3 concerns a single candidate after a declared deletion sequence. From this point onward, we index internal service state by deletion step t only to describe how incremental evidence evolves. The same machinery also accommodates long-running services that expose intermediate snapshots, in which case a declared subset of internal states may serve as release checkpoints. 4Preprint 4.1 RELEASE -T IME RRV C ERTIFICATES 
+
+For a candidate considered for release, RRV must bound its distance to the exact retraining reference 
+
+θR without explicitly computing that reference. We give two constructions of this parameter-error bound. 
+
+Ridge regression forward certificate. Let the exact retraining reference satisfy Hθ R = B with 
+
+H ∈ Rd×d nonsingular, and let P approximate H−1. Since P (B − H eθ) = P H (θR − eθ), the corrected residual would equal the parameter error if P = H−1. With an approximate inverse, the verifier instead controls both the inverse defect and the corrected residual: 
+
+∥Id − P H ∥2 ≤ δ < 1, P (B − H eθ) F
+
+≤ ρ. (4) 
+
+Lemma 1 (Retraining-reference forward certificate) . Under Equation (4) ,
+
+eθ − θR
+
+> F
+
+≤ C := ρ
+
+1 − δ .
+
+Strongly-convex post-update certificate. For a differentiable strongly convex objective, RRV can instead construct the parameter certificate directly from the final candidate. If g+ upper-bounds its gradient norm under the current retain-set objective and μ− lower-bounds the objective’s strong-convexity constant, then C = g+/μ − bounds the candidate’s distance to the exact minimizer. This post-update construction requires no inverse proof state and applies, for example, to L2-regularized logistic and softmax heads. The formal statement and executable construction appear in Proposition 3 and Section D.1. For fixed readouts, the ridge regression construction admits a tighter directional refinement. For a predeclared set of input representations Z ∈ Rm×d, the parameter certificate gives Z(θR − eθ) F
+
+≤∥Z∥2 C, which treats the direction of the parameter error as unknown. The corrected residual also provides a computed center b∆ for that error, allowing the remaining uncertainty to be bounded around an estimated direction. 
+
+Proposition 1 (Error-centered readout certificate) . Let ∆ = θR − eθ and suppose ∥∆∥F ≤ C and 
+
+∆ − b∆ F
+
+≤ R∆. Then, for any fixed Z ∈ Rm×d,
+
+∥Z∆∥F ≤ min ∥Z∥2 C, Z b∆ F
+
++ ∥Z∥2 R∆ . (5) We denote the resulting generic and centered bounds by Cball  
+
+> Z
+
+= ∥Z∥2 C and Cctr  
+
+> Z
+
+= Z b∆ F
+
++
+
+∥Z∥2 R∆. The centered bound preserves the estimated error direction and applies the worst-case bound only to its remaining uncertainty. Its executable construction appears in Section C.5.2. The same certificate yields binary score-sign and multiclass top-1 agreement under the margin conditions in Corollary 1. 4.2 MAINTAINING REFERENCE -T RANSFER EVIDENCE 
+
+When a deployment chooses to maintain certificate evidence incrementally, the verifier must relate the service’s evolving finite-precision state to the exact current retain-set system. The release-time certificate in Section 4.1 ultimately concerns the latter, while the service updates a separate stored numerical state. Incremental RRV therefore maintains certified evidence connecting these two systems throughout the deletion sequence. Let Dt = {(xi, y i)}nt 
+
+> i=1
+
+be the retain set after t committed deletions, with feature and target matrices 
+
+Xt and Yt. For λ > 0, define 
+
+Ht = X⊤ 
+
+> t
+
+Xt + λI d, Bt = X⊤ 
+
+> t
+
+Yt, HtθR 
+
+> t
+
+= Bt. (6) Deleting (x, y ) changes the exact statistics by Ht+1 = Ht − xx ⊤ and Bt+1 = Bt − xy ⊤.The service instead stores finite-precision statistics eHt, eBt. Incremental RRV tracks their discrepancy from the exact retain-set statistics through componentwise enclosures 
+
+eHt − Ht ≤ U H,t , eBt − Bt ≤ U B,t . (7) 5Preprint These bounds certify how far the numerical state maintained by the service may have drifted from the exact retain-set system. The second maintained component is reusable inverse evidence. Rather than reconstructing an inverse certificate after every deletion, Incremental RRV carries an approximate inverse Pt, a computed defect tracker bEt, and a certified radius rt satisfying 
+
+Id − Pt eHt − bEt F
+
+≤ rt. (8) For each signed rank-one change, a guarded Sherman–Morrison transition updates Pt, the defect tracker, and the statistics enclosures. The propagated radius accounts for the previous certified uncertainty together with arithmetic error in the update and tracker evaluation. Every denominator, matrix-vector product, and state transition is checked before commit; a failed guard invokes the configured rebuild. A successful rank-one transition costs O(d2), compared with O(d3) for dense inverse reconstruction. At release, these two maintained components are combined to recover the quantities required by the certificate in Section 4.1. Suppressing t, let E = Id − P eH. The exact retain-set residual and inverse defect obey 
+
+B − H eθ = ( eB − eH eθ) + ( B − eB) − (H − eH)eθ, Id − P H = E + P ( eH − H). (9) The first identity transfers the stored-system residual to the exact retain-set residual; the second transfers the stored-system inverse defect to the exact retain-set system. Here and below, an overline denotes a certified upper bound on the enclosed norm, and up( ·) denotes componentwise outward-rounded evaluation. Let bR = fl( eB − eH eθ), let UR enclose residual-evaluation error together with the stored-to-retain-set correction, and let εP bR enclose the arithmetic error in P bR. Combining the maintained statistics and inverse evidence gives 
+
+∥Id − P H ∥2 ≤ δret := up 
+
+
+
+δstored + ∥P ∥2 ∥U H ∥2
+
+
+
+,
+
+P (B − H eθ) F
+
+≤ ρret := up 
+
+ fl( P bR) F
+
+| {z }
+
+> corrected residual
+
++ εP bR
+
+|{z} 
+
+> evaluation error
+
++ ∥up( |P | U R)∥F
+
+| {z }
+
+> reference-transfer error
+
+ ,C = ρret 
+
+1 − δret 
+
+.
+
+(10) Thus the evidence maintained during the deletion sequence is converted only when certification is required into the exact retain-set quantities consumed by the release-time certificate. The componentwise outward-rounded construction appears in Section C.4; the rank-one recurrence and propagation proofs appear in Sections B.3, C.2 and C.6. 4.3 TRANSACTIONAL RELEASE CONFORMANCE 
+
+A release-time certificate may be constructed by either On-demand RRV or Incremental RRV as in Section 4.2. In either case, the certificate must apply to the exact artifact that becomes visible. Let R denote the declared release checkpoints. At t / ∈ R , the service may commit verified internal state without emitting an artifact. At t ∈ R , the current candidate is released only after every declared contract certifies. Any repair, recomputation, or re-encoding that changes the candidate produces a new artifact and therefore requires recertification. A proof-state rebuild, by contrast, changes only the verifier evidence and leaves the candidate itself unchanged. 
+
+Theorem 1 (Incremental RRV release conformance) . Suppose Incremental RRV is initialized with valid statistics and inverse-defect enclosures, accepts only guarded transitions that preserve both invariants, and at each declared release checkpoint applies Equation (10) and the declared contract 
+
+6Preprint 
+
+checks to the concrete candidate. If candidate-changing remediation is recorded as a new candidate and recertified, and release is atomic with respect to the certified artifact, then every released artifact satisfies every declared retraining-reference contract. 
+
+The theorem states the concrete Incremental RRV initialization, transition, reference-transfer, contract-checking, and transactional-release obligations; On-demand RRV is the special case that constructs sound evidence only at a release checkpoint. Proofs and precise transactional assumptions appear in Section B.4. Successful rank-k incremental propagation costs O(kd 2 + kdc ), excluding output generation; complete release and rebuild accounting appears in Section B.4. 4.4 DERIVED RELEASE CONTRACTS 
+
+The same bound composes with Gaussian and Laplace release guarantees, including executable closure of Newton direct-perturbation radii (Pandey et al., 2026; Zou et al., 2025); the full interfaces appear in Section B.2. 
+
+Format compatibility. A final representation may itself be incapable of satisfying the declared contract. Let bθ be a certified reference center with bθ − θR
+
+> F
+
+≤ rref . For a finite scalar format 
+
+F ⊂ R, let dF (bθ) be a certified lower bound on the distance from bθ to Fd×c, and let sref be a certified upper bound on bθ F
+
+.
+
+Proposition 2 (Finite-format impossibility) . Assume θR̸ = 0 . If 
+
+dF (bθ) − rref > τ par (sref + rref ) , (11) 
+
+then no θF ∈ F d×c satisfies the relative contract in Equation (2) .
+
+The format is then infeasible for the declared contract; the proof and codebook construction appear in Sections B.5 and E.4. 
+
+# 5 EXPERIMENTS 
+
+Evaluation questions. We ask whether reference transfer prevents false releases without making certificates overly conservative (Section 5.1), whether incremental evidence reduces lifecycle cost without weakening certification (Section 5.2), and how ExecCert affects four published methods without changing their update rules (Section 5.3). We then test when producer precision or output representation limits the contract (Section 5.4). The sequential service certifies a d = 3073 binary ridge head on frozen Llama-3.2-3B-Instruct (Meta AI, 2024) representations. Controlled diagnostics use DINOv2 (Oquab et al., 2024) on CIFAR-10 (Krizhevsky, 2009) and RoBERTa (Liu et al., 2019) on AG-News (Zhang et al., 2015); the published applications cover linear, logistic, and graph methods. Comparisons hold the candidate and contract fixed. Independent retraining and high-precision intervals supply offline labels. Protocols and provenance appear in Sections D to F. 5.1 REFERENCE -T RANSFER SOUNDNESS AND TIGHTNESS 
+
+Stored-equation verification admits nearly all nonconforming candidates on the matched stress population, whereas RRV produces no false release (Table 5). On the FP32 stress population, Incremental RRV initially certifies 4,838 of 7,293 conforming outputs without a false release; proof-only rebuilds raise conditional coverage to 67.24%, compared with 99.97% for fresh-factor verification (Section 5.4). On a separate fixed population, RRV encloses every realized error across the tolerance sweep, and its certificate remains within about 1% of the independent reference for 95% of outputs (Figure 2). 7Preprint 10 −5 10 −4 10 −3 10 −2        
+
+> Deployment tolerance τpar
+> 0.00 0.05 0.10 0.15 0.20 0.25
+> Coverage gap (percentage points)
+> τpar  = 10 −3
+> (a) Conservatism across tolerances
+> 0.0 0.2 0.4 0.6 0.8 1.0 1.2
+> Certificate inflation (%)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Fraction of outputs
+> median = 0.22% 95th percentile ≤ 0.83%
+> (b) Certificate inflation
+
+Figure 2: RRV certificates closely track realized error. Incremental componentwise RRV and independent retained-row reconstruction evaluate the same fixed FP32 deletion outputs at every tolerance. Coverage gap is the conforming fraction minus the certified fraction; certificate inflation is 
+
+τcert /τ true − 1. No rebuild or producer remediation changes the population. Table 1: Verification of the same frozen 3B safety-head outputs. Latency summarizes 10 repetitions at each of 21 states. No method scans retained rows; state excludes those rows. 
+
+Method Certified release states Med./P95 (s) State (MiB) On-demand RRV (fresh factor) 21/21 2.611/3.593 286.5 Maintained verified factor 21/21 2.453/3.678 358.6 Incremental RRV (norm-ball) 0/21 0.801/0.859 360.3 Incremental RRV (directional) 21/21 1.056/1.163 430.6 
+
+5.2 EVIDENCE REUSE IN SEQUENTIAL SERVICES 
+
+We compare fresh and maintained verified factors with Incremental RRV on the same candidate outputs, fixed readout, and release contract. A direction-free incremental variant tests whether reuse alone is sufficient. The maintained factor removes the weak-baseline explanation: it matches the coverage of fresh factor, while directional Incremental RRV uses roughly 40% of fresh-factor latency at matched coverage (Table 1). The norm-ball variant fails on the same states, so reuse preserves strength only when the proof state retains contract-relevant error direction. This ordering holds throughout the nonempty tolerance sweep. Replacing the readout-norm upper bound by a certified lower bound still leaves every norm-ball certificate above tolerance, ruling out readout-norm looseness as the explanation. A separate decision audit covers about 95% of declared safety-head decisions; observed agreement is not used as certified coverage. Measured-component lifecycle accounting combines complete stream replays with the paired release-check timings. Fresh factor is cheapest for sparse checks; directional Incremental RRV crosses it at about 22 checks per 1,000 requests and remains cheaper than maintained factor throughout the evaluated schedules (Figure 3(a)). Under every-request checking, it reduces lifecycle cost by 42.7% relative to maintained factor. The crossover is workload-specific because it trades continuous proof maintenance against release-time construction. 5.3 PUBLISHED -M ETHOD APPLICATIONS 
+
+We attach ExecCert to four existing unlearning methods: Newton-update removal (Guo et al., 2020), Newton direct perturbation (Zou et al., 2025), ScaleGUN (Yi & Wei, 2025), and CEU (Wu et al., 2023). In each case, the original update rule and emitted candidate are left unchanged; ExecCert is applied only at release time. The check closes either the method’s native certificate quantity or a predeclared retraining-reference contract. Native closure can move Newton-removal retraining earlier, while direct recertification identifies conservative source stops. For Newton direct perturbation, direct certification remains tighter than direction-free composition under both execution precisions; we report an absolute FP64 gap because the direct bound can approach zero. ExecCert preserves the ScaleGUN cheap-update certificates. For 8Preprint Table 2: Executable certification on published unlearning methods. ExecCert is applied to the emitted candidate without changing the underlying update rule. 
+
+Method Release-time outcome Newton removal Native closure shifts the retraining boundary by 0–4 requests ; direct recertification also identifies conservative source stops. Newton direct perturbation At FP32, the median direct bound is 2.28 × tighter than composition; paired FP64 results retain an absolute gap. ScaleGUN All 15/15 cheap-update certificates remain valid. CEU Median realized error is 8.9% ; the median certified upper bound is 14.1% .
+
+(a) Evidence reuse 7 25 50 100 250 500 1k  
+
+> Release checks per 1,000 requests
+> 46810
+> Lifecycle over three streams (10 3 s)
+> RRV crossover ≈ 22
+> Fresh veri fi ed factor Maintained veri fi ed factor Incremental RRV
+
+(b) Format feasibility 10 −4 10 −3  
+
+> Minimum achievable relative error τmin
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Fraction of audited targets
+> BF16 FP16 FP32
+> τpar
+
+Figure 3: Deployment choices affect certification cost and feasibility. (a) Full-stream maintenance measurements combined with matched release-check timings produce the lifecycle curves. The maintained-factor crossover with fresh construction lies beyond the plotted low-frequency region, at about 214 checks per 1,000 requests. (b) The horizontal axis is the minimum achievable relative error 
+
+τmin . A format is ruled out when its certified lower bound exceeds the declared contract τpar ; BF16 is unreachable, while equal-size FP16 remains reachable. CEU, the declared tolerance is not supported, but post-update RRV certifies the weaker fidelity of the emitted heads. These cases show that release-time certification can change a decision, tighten or preserve a certificate, or identify the fidelity supported by an output. Source instrumentation and supplementary results appear in Sections D and D.2. 5.4 PRECISION AND REPRESENTATION BOUNDARIES 
+
+The preceding experiments vary certificate construction for a fixed candidate. We finally ask when the candidate or its representation, rather than the verifier, limits the contract. 
+
+Producer precision. With FP32 statistics, fresh-factor On-demand RRV covers materially more conforming candidates than Incremental RRV after proof-only rebuilds; both paths attain complete coverage with the FP64 producer. Changing precision also changes the emitted candidate, so this is a producer-policy comparison rather than a certificate-only comparison. Full timing and state results appear in Table 7 and Section E.4. 
+
+Release format. BF16 cannot represent any artifact satisfying the declared tolerance, whereas FP16 and FP32 remain feasible (Figure 3(b)). Thus, some failures require changing the producer or encoding rather than tightening verification. 
+
+# 6 DISCUSSION AND CONCLUSION 
+
+Our results separate three release-time failure modes: a mathematical certificate may not close for the executed artifact, a sound verifier may be too weak or costly for the release schedule, or the producer and output format may preclude the contract. ExecCert identifies whether remediation should target verification or the released artifact. 9Preprint Certification strategy depends on the contract and release schedule. Native closure uses the quantity governing a source guarantee; RRV targets fidelity to current retain-set retraining. On-demand construction favors sparse checks, while incremental proof state amortizes frequent certification. ExecCert supplements the upstream guarantee: parameter or fixed-readout fidelity does not establish semantic forgetting or multi-round adaptive privacy. Our incremental implementation covers frozen representations with moderate-dimensional mutable ridge heads; Section A gives the remaining conditions. AI U SE STATEMENT 
+
+We used generative AI tools to assist with code implementation and refactoring, figure and L ATEX editing, and language polishing. The authors reviewed and verified all mathematical statements, experimental designs, interpretations of source methods, code changes, results, and manuscript text. We take responsibility for the final content of this work, including text, claims, and artifacts produced with the aid of generative AI. REPRODUCIBILITY STATEMENT 
+
+The appendix provides complete proofs, executable-verification details, published-source provenance, experimental protocols, and independent reference construction. The accompanying artifact contains the implementation, fixed configurations, source instrumentation patches, and canonical records used for the reported tables and figures. 
+
+# REFERENCES 
+
+Eli Chien, Haoyu Wang, Ziang Chen, and Pan Li. Certified machine unlearning via noisy stochas-tic gradient descent. In Proceedings of the 38th International Conference on Neural Informa-tion Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. ISBN 9798331314385. Thorsten Eisenhofer, Doreen Riepel, Varun Chandrasekaran, Esha Ghosh, Olga Ohrimenko, and Nicolas Papernot. Verifiable and provably secure machine unlearning. In 2025 IEEE Conference on Secure and Trustworthy Machine Learning (SaTML) , pp. 479–496, 2025. doi: 10.1109/ SaTML64287.2025.00033. Antonio A. Ginart, Melody Y. Guan, Gregory Valiant, and James Zou. Making AI forget you: data deletion in machine learning . Curran Associates Inc., Red Hook, NY, USA, 2019. Chuan Guo, Tom Goldstein, Awni Hannun, and Laurens Van Der Maaten. Certified data removal from machine learning models. In Proceedings of the 37th International Conference on Machine Learning , ICML’20. JMLR.org, 2020. Varun Gupta, Christopher Jung, Seth Neel, Aaron Roth, Saeed Sharifi-Malvajerdi, and Chris Waites. Adaptive machine unlearning. In Proceedings of the 35th International Conference on Neural Information Processing Systems , NIPS ’21, Red Hook, NY, USA, 2021. Curran Associates Inc. ISBN 9781713845393. William W. Hager. Updating the inverse of a matrix. SIAM Review , 31(2):221–239, 1989. doi: 10.1137/1031049. URL https://doi.org/10.1137/1031049 .Nicholas J. Higham. Accuracy and Stability of Numerical Algorithms . Society for Industrial and Applied Mathematics, Philadelphia, PA, 2 edition, 2002. doi: 10.1137/1.9780898718027. Jiaming Ji, Donghai Hong, Borong Zhang, Boyuan Chen, Juntao Dai, Boren Zheng, Tianyi Qiu, Jiayi Zhou, Kaile Wang, Boxuan Li, Sirui Han, Yike Guo, and Yaodong Yang. Pku-saferlhf: Towards multi-level safety alignment for llms with human preference, 2025. URL https: //arxiv.org/abs/2406.15513 .Jiankai Jin, Olga Ohrimenko, and Benjamin I. P. Rubinstein. Getting a-round guarantees: Floating-point attacks on certified robustness. In Proceedings of the 2024 Workshop on Artificial Intelligence and Security , AISec ’24, pp. 53–64, New York, NY, USA, 2024. Association for Computing 10 Preprint Machinery. ISBN 9798400712289. doi: 10.1145/3689932.3694761. URL https://doi.org/ 10.1145/3689932.3694761 .Anastasia Koloskova, Youssef Allouah, Animesh Jha, Rachid Guerraoui, and Sanmi Koyejo. Certified unlearning for neural networks. In Proceedings of the 42nd International Conference on Machine Learning , ICML’25. JMLR.org, 2025. Rudolf Krawczyk. Newton-algorithmen zur bestimmung von nullstellen mit fehlerschranken. Com-puting , 4(3):187–201, 1969. doi: 10.1007/BF02234767. Alex Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike Lewis, Luke Zettlemoyer, and Veselin Stoyanov. Roberta: A robustly optimized bert pretraining approach, 2019. URL https://arxiv.org/abs/1907.11692 .Mohammad M Maheri, Sunil Cotterill, Alex Davidson, and Hamed Haddadi. ZK-APEX: ZERO-KNOWLEDGE APPROXIMATE PERSONALIZED UNLEARNING WITH EXECUTABLE PROOFS. In Ninth Conference on Machine Learning and Systems , 2026. URL https:// openreview.net/forum?id=bLx6orLvQM .Meta AI. Llama 3.2-3B-Instruct model card. Hugging Face model repository, 2024. URL https: //huggingface.co/meta-llama/Llama-3.2-3B-Instruct .Ilya Mironov. On significance of the least significant bits for differential privacy. In Proceedings of the 2012 ACM Conference on Computer and Communications Security , CCS ’12, pp. 650–661, New York, NY, USA, 2012. Association for Computing Machinery. ISBN 9781450316514. doi: 10.1145/2382196.2382264. URL https://doi.org/10.1145/2382196.2382264 .Yurii Nesterov. Introductory Lectures on Convex Optimization: A Basic Course , volume 87 of Applied Optimization . Springer, Boston, MA, 2004. doi: 10.1007/978-1-4419-8853-9. Takeshi Ogita, Siegfried M. Rump, and Shin’ichi Oishi. Accurate sum and dot product. SIAM Journal on Scientific Computing , 26(6):1955–1988, 2005. doi: 10.1137/030601818. URL https: //doi.org/10.1137/030601818 .Shin’ichi Oishi and Siegfried M. Rump. Fast verification of solutions of matrix equations. Numerische Mathematik , 90(4):755–773, 2002. doi: 10.1007/s002110100310. Maxime Oquab, Timoth´ ee Darcet, Th´ eo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, Mahmoud Assran, Nicolas Ballas, Wojciech Galuba, Russell Howes, Po-Yao Huang, Shang-Wen Li, Ishan Misra, Michael Rabbat, Vasu Sharma, Gabriel Synnaeve, Hu Xu, Herv´ e Jegou, Julien Mairal, Patrick Labatut, Armand Joulin, and Piotr Bojanowski. Dinov2: Learning robust visual features without supervision, 2024. URL https://arxiv.org/abs/2304.07193 .Aaradhya Pandey, Arnab Auddy, Haolin Zou, Arian Maleki, and Sanjeev Kulkarni. Gaussian certified unlearning in high dimensions: A hypothesis testing approach. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum? id=0FJYicpOj0 .Siegfried M. Rump. Verification methods: rigorous results using floating-point arithmetic. In Proceed-ings of the 2010 International Symposium on Symbolic and Algebraic Computation , ISSAC ’10, pp. 3–4, New York, NY, USA, 2010. Association for Computing Machinery. ISBN 9781450301503. doi: 10.1145/1837934.1837937. URL https://doi.org/10.1145/1837934.1837937 .Ayush Sekhari, Jayadev Acharya, Gautam Kamath, and Ananda Theertha Suresh. Remember what you want to forget: algorithms for machine unlearning. In Proceedings of the 35th International Conference on Neural Information Processing Systems , NIPS ’21, Red Hook, NY, USA, 2021. Curran Associates Inc. ISBN 9781713845393. 11 Preprint Attila Sz´ asz, Bal´ azs B´ anhelyi, and M´ ark Jelasity. No soundness in the real world: On the challenges of the verification of deployed neural networks. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/forum?id=c16m2kUTLZ .Anvith Thudi, Hengrui Jia, Ilia Shumailov, and Nicolas Papernot. On the necessity of auditable algorithmic definitions for machine unlearning. In 31st USENIX Security Symposium (USENIX Security 22) , pp. 4007–4022, Boston, MA, August 2022. USENIX Association. ISBN 978-1-939133-31-1. URL https://www.usenix.org/conference/usenixsecurity22/ presentation/thudi .Vaclav Voracek and Matthias Hein. Sound randomized smoothing in floating-point arithmetic. In The Eleventh International Conference on Learning Representations , 2023. URL https: //openreview.net/forum?id=HaHCoGcpV9 .Jiasi Weng, Shenglong Yao, Yuefeng Du, Junjie Huang, Jian Weng, and Cong Wang. Proof of unlearning: Definitions and instantiation. Trans. Info. For. Sec. , 19:3309–3323, January 2024. ISSN 1556-6013. doi: 10.1109/TIFS.2024.3358993. URL https://doi.org/10.1109/ TIFS.2024.3358993 .Kun Wu, Jie Shen, Yue Ning, Ting Wang, and Wendy Hui Wang. Certified edge unlearning for graph neural networks. In Proceedings of the 29th ACM SIGKDD Conference on Knowledge Discovery and Data Mining . ACM, 2023. doi: 10.1145/3580305.3599271. Lu Yi and Zhewei Wei. Scalable and certifiable graph unlearning: Overcoming the approximation error barrier. In International Conference on Learning Representations ,2025. URL https://proceedings.iclr.cc/paper_files/paper/2025/hash/ f43567631f608dd1317c227c69dae441-Abstract-Conference.html .Binchi Zhang, Zihan Chen, Cong Shen, and Jundong Li. Verification of machine unlearning is fragile. In Proceedings of the 41st International Conference on Machine Learning , ICML’24. JMLR.org, 2024a. Binchi Zhang, Yushun Dong, Tianhao Wang, and Jundong Li. Towards certified unlearning for deep neural networks. In Proceedings of the 41st International Conference on Machine Learning ,ICML’24. JMLR.org, 2024b. Xiang Zhang, Junbo Jake Zhao, and Yann LeCun. Character-level convolutional networks for text classification. In NIPS , 2015. Haolin Zou, Arnab Auddy, Yongchan Kwon, Kamiar Rahnama Rad, and Arian Maleki. Certified machine unlearning under high dimensional regime. Journal of Machine Learning Research , 26 (308):1–58, 2025. URL http://jmlr.org/papers/v26/25-1751.html .12 Preprint 
+
+# A SCOPE AND LIMITATIONS 
+
+Native closure inherits the scope of the source method’s own certificate; RRV instead certifies only the declared distance to its uniquely specified retraining reference. Fixed-readout claims apply to the input representations declared before the candidate is inspected, and say nothing about inputs outside that set. Randomized-release calibration assumes a predeclared common scale; adaptive release policies, in which the noise scale reacts to the candidate, require separate analysis. Our reusable proof state currently targets moderate-dimensional mutable heads. Extending incre-mental certification to larger trainable blocks will require exploiting additional structure, since dense inverse evidence does not scale to that regime. Unlike statistical deletion capacity, proof-state lifetime is instance-dependent and governed by conditioning rather than a universal deletion count: a failed guard triggers certified rebuilding, which restores the invariants at higher cost but imposes no fixed bound on the number of deletions a service can absorb. 
+
+# B PROOFS OF MAIN RESULTS 
+
+B.1 RELEASE -T IME RRV C ERTIFICATES 
+
+We first establish the parameter-error bound and its error-centered fixed-readout refinement. The first is the classical residual–inverse-defect argument from verified linear algebra (Krawczyk, 1969; Oishi & Rump, 2002; Rump, 2010); we retain its short derivation because it is the main certificate interface. 
+
+Proof of Lemma 1. Let ∆ = θR − eθ. Since Hθ R = B,
+
+∆ = ( I − P H )∆ + P (B − H eθ),
+
+∥∆∥F ≤ ∥ I − P H ∥2 ∥∆∥F + P (B − H eθ) F
+
+≤ δ ∥∆∥F + ρ. 
+
+Thus ∥∆∥F ≤ ρ/ (1 − δ) = C. The reverse triangle inequality gives θR 
+
+> F
+
+≥ eθ F
+
+− C, so whenever eθ F
+
+> C ,
+
+eθ − θR
+
+> F
+
+∥θR∥F
+
+≤ C
+
+eθ F
+
+− C. (12) 
+
+Proof of Proposition 1. The first bound follows from ∥Z∆∥F ≤ ∥ Z∥2 ∥∆∥F ≤ ∥ Z∥2 C. For the second, write ∆ = b∆ + (∆ − b∆) and apply the triangle inequality together with the stated center enclosure. Taking the smaller of the two valid bounds gives Equation (5). The absolute parameter bound also certifies decisions with sufficient margin. 
+
+Corollary 1 (Certified linear-decision agreement) . Fix a representation z ∈ Rd. For a binary head satisfying eθ − θR
+
+> 2
+
+≤ C, the executed and retraining-reference signs agree when z⊤ eθ >
+
+∥z∥2 C. For a multiclass head, let eΘ − ΘR
+
+> F
+
+≤ C and a = arg max j z⊤ eθj . It remains the unique top class under ΘR when 
+
+z⊤ eθa − z⊤ eθj > √2 ∥z∥2 C for every j̸ = a. 
+
+13 Preprint 
+
+Proof 
+
+Cauchy–Schwarz bounds the binary score change by ∥z∥2 C. For the multiclass case, writing 
+
+∆j = θR 
+
+> j
+
+− eθj gives 
+
+z⊤(∆ a − ∆j ) ≤ ∥ z∥2 ∥∆a − ∆j ∥2 ≤ √2 ∥z∥2 C. 
+
+The strict margins preserve the stated decisions. For differentiable strongly convex objectives, a post-update gradient enclosure provides a separate construction of the parameter-error bound. 
+
+Proposition 3 (Strongly-convex post-update certificate) . Let L : Rd → R be differentiable and 
+
+μ-strongly convex, with minimizer θR. Suppose the verifier constructs 
+
+g+ ≥ ∇L(eθ) 2
+
+, 0 < μ − ≤ μ. 
+
+Then 
+
+eθ − θR
+
+> 2
+
+≤ g+
+
+μ− =: C. 
+
+The absolute bound is the standard gradient–distance consequence of strong convexity (Nesterov, 2004). A relative contract follows by applying Equation (12). B.2 RANDOMIZED RELEASE INTERFACES 
+
+These fixed-state interfaces use a predeclared common noise scale. If RRV certifies eθ − θR
+
+> 2
+
+≤ C,the equal-covariance Gaussian testing identity of Pandey et al. (2026) gives 
+
+ε∗ =
+
+eθ − θR
+
+> 2
+
+σ ≤ Cσ .
+
+For isotropic radial Laplace releases with common predeclared scale s, we use the density qμ(z) ∝
+
+exp( − ∥ z − μ∥2 /s ). Sampling draws a uniform direction on the Euclidean unit sphere and an independent radius from Gamma( d, s ); the same rule and scale apply to both centers. The triangle inequality gives, for every measurable event A,
+
+Qexec (A) ≤ eC/s Qref (A), Qref (A) ≤ eC/s Qexec (A).
+
+Thus σ ≥ C/ε gives the corresponding Gaussian trade-off guarantee, while s ≥ C/ε gives a two-sided Laplace comparison. Here ε∗ is the equal-covariance Gaussian testing parameter; it is not by itself a conventional (ε, δ )-DP guarantee. If an upstream analysis supplies radius rnom and executable closure adds Cexec , the Laplace result applies with C = rnom + Cexec .B.3 NONSYMMETRIC DEFECT RECURRENCE 
+
+All quantities in this subsection are evaluated in exact real arithmetic. Let Hs, P ∈ Rd×d, x ∈ Rd,and s ∈ {− 1, +1 }. Define 
+
+E = Id − P H s, q = P x, z = P ⊤x, α = 1 + sx ⊤q. 
+
+For α̸ = 0 , let 
+
+H+ 
+
+> s
+
+= Hs + sxx ⊤, P + = P − sα qz ⊤.
+
+The update for P + is the Sherman–Morrison formula (Hager, 1989). The following identity propa-gates the stored-system inverse defect without assuming that P is symmetric. Section C.6 constructs its guarded floating-point realization. 14 Preprint 
+
+Lemma 2 (Exact nonsymmetric defect recurrence) . For arbitrary Hs, P ∈ Rd×d with α̸ = 0 ,including nonsymmetric P , the post-update defect E+ = Id − P +H+ 
+
+> s
+
+satisfies 
+
+E+ = E − q sα
+
+ x⊤ − z⊤Hs
+
+ .
+
+The recurrence requires O(d2) arithmetic and O(d2) state. Proof of Lemma 2. Because z⊤ = x⊤P , expansion of E+ = Id − P +H+ 
+
+> s
+
+gives 
+
+E+ = E − sqx ⊤ + sα qz ⊤Hs + 1
+
+α q(z⊤x)x⊤.
+
+Let β = z⊤x = x⊤q. Since α = 1 + sβ , the coefficient of qx ⊤ equals 
+
+−s + βα = − sα .
+
+Substitution yields E+ = E − (s/α )q(x⊤ − z⊤Hs).B.4 TRANSACTIONAL CONFORMANCE AND COST 
+
+The transactional theorem applies to any sound verification backend. Its incremental corollary combines the maintained statistics and inverse-defect invariants with the release-time contract checks. Here guarded committed transitions require every numerical denominator and interval to pass its guard, every certificate evaluation to remain within the certified arithmetic scope, and every rank-one subupdate and invariant check to complete before commit. At a release checkpoint, the service exposes an artifact only after every declared contract certifies. 
+
+Transactional justification. The initialization hypotheses give the two proof-state invariants at the first state. Theorems 2 and 3 preserve them under every accepted guarded transition. At a release checkpoint, the transfer and release constructions in Sections C.4 and C.5 therefore establish every declared contract for the concrete candidate presented to the policy gate. If remediation changes that candidate, the original certificate no longer authorizes release and the new candidate must be certified separately. Atomic release ensures that the visible artifact is exactly the candidate covered by the successful certificates. 
+
+Cost accounting. Let Gt denote the cost of advancing the selected output generator at request t,let kt be the number of rank-one subupdates for that request, and set m = 0 when no fixed readout is declared. Each request adds O(ktd2 + ktdc ) proof-state work; a release adds O(d2c + mdc )
+
+certificate work. Rebuilding proof state from certified ( eHt, eBt) costs O(d3 + d2c). Reconstructing those statistics from retained rows adds O(ntd2 + ntdc ). Let Mproof count dense proof-state rebuilds that reuse certified sufficient statistics, and let Rdata be the index set of requests whose rebuilds reconstruct those statistics from nt retained rows. Over N requests, the total cost is 
+
+O
+
+ NX
+
+> t=1
+
+Gt +
+
+> N
+
+X
+
+> t=1
+
+(ktd2 + ktdc )+ |R| (d2c + mdc ) + Mproof (d3 + d2c)+ X
+
+> t∈R data
+
+(ntd2 + ntdc + d3 + d2c)
+
+
+
+.
+
+The every-request-release policy is the special case |R| = N .15 Preprint B.5 FINITE -F ORMAT IMPOSSIBILITY 
+
+Let θR ∈ Rd×c be the exact retraining target, and let bθ satisfy bθ − θR
+
+> F
+
+≤ rref . For a finite scalar format F ⊂ R, let dF (bθ) be a certified lower bound on the distance from bθ to Fd×c, and let sref be a certified upper bound on bθ F
+
+.
+
+Proof of Proposition 2. For any representable θF ∈ F d×c, the reverse triangle inequality and the certified reference enclosure give 
+
+θF − θR 
+
+> F
+
+≥ θF − bθ F
+
+− bθ − θR
+
+> F
+
+≥ dF (bθ) − rref .
+
+The ordinary triangle inequality gives 
+
+θR 
+
+> F
+
+≤ sref + rref .
+
+Under Equation (11), the lower bound on the numerator is strictly larger than τpar times this upper bound on the denominator. Thus every representable tensor violates the declared relative contract. 
+
+# C SOUNDNESS OF INCREMENTAL RRV 
+
+This appendix gives the executable verifier specification needed to establish the soundness of the incremental ridge regression backend of RRV. Algorithm 1 gives its transactional release protocol. 
+
+Algorithm 1 Incremental RRV release protocol 
+
+Require: Committed service and proof state, deletion request t, release schedule R, output generator, and one or more declared contracts: parameter fidelity, fixed-readout fidelity, or both 1: Provisionally update the statistics, their retain-set enclosure, and the inverse-defect proof state. 2: if a guard or proof-state invariant check fails then 
+
+3: Apply the configured proof-state rebuild. 4: if the rebuild does not reestablish the required invariant then 
+
+5: Discard the transition; return internal S TATE -F AIL .6: end if 
+
+7: end if 
+
+8: Advance the output-generator state for request t.9: if t / ∈ R then 
+
+10: Atomically commit the verified internal state; emit no output. 11: return NORELEASE 
+
+12: end if 
+
+13: Materialize the current executed candidate artifact eθt.14: Construct (δ, ρ, C ) and every declared contract certificate. 15: if some declared contract is inconclusive then 
+
+16: Withhold the candidate and apply the configured remediation. 17: Reconstruct proof state as needed and recertify any changed candidate. 18: end if 
+
+19: if every declared contract now certifies then 
+
+20: Atomically commit state and certificates; release the candidate. 21: return CERTIFIED 
+
+22: else 
+
+23: Atomically commit verified internal state; withhold the candidate. 24: return INCONCLUSIVE 
+
+25: end if 
+
+The verifier maintains statistics and inverse-defect enclosures, transfers them to the exact retain-set system, and constructs the release certificate in Sections C.2 and C.4 to C.6. 16 Preprint C.1 FLOATING -POINT CONVENTIONS AND NOTATION MAP 
+
+Notation and exact-real interpretation. We use the notation and shapes of Section 4.2; array inequalities and absolute values remain componentwise. A hat denotes a stored computed value, and a circle superscript denotes exact-real evaluation of computed intermediates. The symbol U
+
+denotes a componentwise enclosure, ε a local arithmetic bound, and (δ, ρ ) the hypotheses consumed by Lemma 1. Stored entries are interpreted as their exact real values. 
+
+Standard arithmetic facts. We use the componentwise floating-point models for basic arithmetic, dot products, matrix–vector products, and matrix products from Higham (2002, Ch. 3). Exact residuals returned by T WO SUM use the error-free transformation of Ogita et al. (2005). We invoke these standard facts without rederiving them below; every displayed endpoint is evaluated outward, and a failed arithmetic-scope guard returns I NCONCLUSIVE .
+
+Storage and verifier precision. The stored sufficient statistics may use Fs ∈ { F32 , F64 }, with unit roundoff us. The verifier and all outward endpoints use binary64, Fv = F64 , with uv = 2 −53 . Stored FP32 statistics are promoted exactly to binary64 before verification; all other maintained proof state uses binary64. 
+
+Outward evaluation. Define γ(q) 
+
+> m
+
+= mu q /(1 − mu q ) for mu q < 1 and ¯uq = uq /(1 − uq ), where 
+
+q ∈ { s, v}. For verifier arithmetic, we write γm := γ(v)  
+
+> m
+
+and ¯u := ¯ uv. Let η = 2 −1074 , and let ω be the largest finite binary64 number. For z ∈ F64 ,≥0, define 
+
+up m(z) := nextafter z
+
+1 − γ(v) 
+
+> m
+
+, +∞
+
+!
+
+.
+
+The shorthand up( ·) suppresses only this arity subscript: the implementation passes it explicitly, and each displayed use has the unique arity prescribed by the immediately enclosed operation. 
+
+down( z) = nextafter(fl( z), −∞ ) for its lower endpoint. m = ℓ for a sum of ℓ nonnegative terms, 
+
+m = 1 for one product or division, and m = 2 p + 2 for a scale-safe Frobenius-norm reduction over 
+
+p entries. 
+
+Arithmetic scope. The dot-product bounds permit any parenthesization of binary32 or binary64 products and sums within the stated operation count, so the proof does not depend on a particular threaded-BLAS reduction order. Fused multiply–add is covered conservatively because it incurs no more rounding than the separate product and addition modeled by the bound. Algebraic reassociation through fastmath is disabled. TF32 and kernels with mixed-precision accumulation are outside the certified arithmetic model. Certified runs require IEEE gradual underflow; overflow, nonfinite values, unsafe subnormal intermediates, or an endpoint beyond ω returns I NCONCLUSIVE . Relative-error bounds without an explicit η term are used only after their intermediates are proved to remain in the normal range. These binary64 conventions govern the ridge inverse realization. C.2 RETAIN -S ET STATISTICS PROOF STATE 
+
+Initialization. At initialization, let bAH = fl s(|X0|⊤ |X0|) and bAB = fl s(|X0|⊤ |Y0|). Reverse dot-product bounds instantiate the enclosure below. The declared ridge is interpreted as the exact real value of its stored encoding; the displayed rounding term covers its addition to the stored diagonal. 
+
+U(0)  
+
+> H
+
+= up γ(s) 
+
+> n0
+
+1 − γ(s) 
+
+> n0
+
+bAH + ¯ us eH0
+
+!
+
+∈ Rd×d 
+
+> ≥0
+
+,
+
+U(0)  
+
+> B
+
+= up γ(s) 
+
+> n0
+
+1 − γ(s) 
+
+> n0
+
+bAB
+
+!
+
+∈ Rd×c 
+
+> ≥0
+
+,
+
+(13) 
+
+Shared initialization across precisions. When two storage precisions share one binary64 initial-ization, the lower-precision path instead uses the direct cast enclosure 
+
+U(0)  
+
+> H, s
+
+= up 
+
+
+
+U(0)  
+
+> H, v
+
++ cast s( eH0,v) − eH0,v
+
+
+
+,
+
+17 Preprint and analogously for B. This preserves a common exact data target while isolating the precision used to maintain the stored statistics. We use this shared initialization only for the matched FP32/FP64 diagnostic in Section E.4, so the two arms differ in subsequent storage precision rather than in their exact data target. 
+
+Signed rank-one updates. For an update sign s ∈ {− 1, +1 }, let bGH := fl s(xx ⊤) ∈ Fd×d 
+
+> s
+
+and 
+
+bGB := fl s(xy ⊤) ∈ Fd×c 
+
+> s
+
+. The row entries x, y are values in Fs, interpreted exactly as reals. The implementation sets 
+
+eH+ := fl s( eH + s bGH ), eB+ := fl s( eB + s bGB )
+
+and updates 
+
+U+ 
+
+> H
+
+:= up 
+
+
+
+UH + ¯ us bGH + ¯ us eH+ 
+
+, (14) 
+
+U+ 
+
+> B
+
+:= up 
+
+
+
+UB + ¯ us bGB + ¯ us eB+ 
+
+. (15) Each update adds the local outer-product and storage-rounding errors to the existing statistics enclosure. The following theorem establishes that this enclosure remains valid after every committed update. 
+
+Theorem 2 (Statistics-error-bound soundness) . Suppose the current state satisfies eH − H ≤ U H
+
+and eB − B ≤ U B . For s ∈ {− 1, +1 }, let H+ = H + sxx ⊤ and B+ = B + sxy ⊤. Whenever the certified arithmetic-scope guards pass, the updates in Equations (14) and (15) satisfy 
+
+eH+ − H+ ≤ U + 
+
+> H
+
+, eB+ − B+ ≤ U + 
+
+> B
+
+.
+
+The initialization in Equation (13) also encloses the exact statistics represented by X0, Y 0 and the declared ridge encoding. A failed guard makes the transition noncommittable. 
+
+Proof of statistics-error-bound soundness 
+
+For H, inserting the exact outer product gives 
+
+eH+ − H+ ≤ eH − H + bGH − xx ⊤
+
++ eH+ − ( eH + s bGH ) .
+
+The standard componentwise models of Higham (2002, Ch. 3) bound the last two terms by ¯us bGH
+
+and ¯us eH+ , respectively. Combining them with the previous enclosure proves Equation (14); the same argument applies to B. The standard dot-product model gives the initialization radii, and induction establishes Equation (7) after every committed update. C.3 EXACT -D YADIC RETAIN -S ET -S TATISTICS REBUILD 
+
+A retained-data rebuild constructs statistics enclosures independently of accumulated update errors. For each statistic entry, integer accumulation computes the exact dyadic sum ξ. The procedure stores 
+
+eξ = RN 64 (ξ) and rounds eξ − ξ outward to obtain the enclosure radius. Any nonfinite conversion returns I NCONCLUSIVE . Binary floating-point products are dyadic, so integer accumulation is exact before the single final rounding. The resulting entrywise radii therefore satisfy the initialization hypotheses of Theorem 2; successful inverse-state initialization and recertification then permit release under Theorem 1. We distinguish three event types in the implementation records. An evidence rebuild replaces only inverse or factor proof state. A verifier-statistics reconstruction replaces the verifier’s retained statistics and their enclosures. Neither event changes the candidate, and the producer does not read 18 Preprint the rebuilt arrays. A producer remediation instead changes producer state or recomputes the output; it creates a new candidate with a new hash and may alter subsequent outputs, so it is recorded and certified separately. Same-output comparisons include only the first two event types. Reconstruction visits O(ntd2 + ntdc ) dot-product terms; subsequent proof-state initialization and certification have the costs in Section B.4. C.4 STORED -TO -R ETAIN -S ET TRANSFER 
+
+The retain-set statistics enclosure from Section C.2 and the propagated defect enclosure from Sec-tion C.6 provide the executable (δ, ρ ) required by Lemma 1. Let bR = fl( eB − eH eθ) and define 
+
+UR := up 
+
+
+
+γd eH eθ + ¯ u bR + UB + UH eθ
+
+
+
+. (16) The first two terms bound floating-point evaluation of the stored residual. The last two account for the difference between the stored statistics and the exact retain-set statistics. The envelope in Equation (16), the standard matrix-product and subtraction models, and Equations (7) and (9) give 
+
+B − H eθ − bR ≤ U R.
+
+With δstored = up( bE F
+
++ r), write ∥A∥2 for the quadratic-cost upper bound 
+
+up 
+
+q 
+
+up( ∥A∥1) up( ∥A∥∞)
+
+
+
+.
+
+We next combine this residual enclosure with the stored inverse-defect bound to obtain the two hypotheses required by Lemma 1: 
+
+δret = up 
+
+
+
+δstored + ∥P ∥2 ∥U H ∥2
+
+
+
+,ρret = up 
+
+
+
+fl( P bR) F
+
++ up( γd |P | bR ) F
+
++ ∥up( |P | U R)∥F ) .
+
+(17) 
+
+Proof of the executable joint bounds 
+
+The matrix-product model and the residual budget give 
+
+P (B − H eθ) F
+
+≤ P bR F
+
++ ∥| P | U R∥F
+
+≤ fl( P bR) F
+
++ up( γd |P | bR ) F
+
++ ∥up( |P | U R)∥F ≤ ρret ,
+
+which proves the residual hypothesis in Equation (4). For the defect, suppose r ∈ R≥0 satisfies E − bE F
+
+≤ r. Because Id − P H = ( Id − P eH) + 
+
+P ( eH − H),
+
+∥Id − P H ∥2 ≤ bE F
+
++ r + ∥P ∥2 eH − H 2
+
+≤ bE F
+
++ r + ∥P ∥2 ∥U H ∥2 ≤ δret .
+
+The second line follows from ∥A∥2 ≤ p∥A∥1 ∥A∥∞ and eH − H ≤ U H , which implies 
+
+eH − H 1
+
+≤ ∥U H ∥1 and likewise for the infinity norm. The final inequalities are the two bounds in Equation (17), which supply both hypotheses of Lemma 1. The row and column sums used by the two induced-norm bounds cost O(d2); the remaining residual products cost O(d2c). No dense matrix–matrix product is evaluated on this release path. Retaining componentwise arrays preserves the directional residual interaction |P | U R, while the defect transfer avoids forming the dense matrix product |P | U H .19 Preprint C.5 EXECUTABLE RELEASE CERTIFICATES 
+
+C.5.1 PARAMETER CERTIFICATE 
+
+Substituting the transferred bounds into Lemma 1 gives the absolute parameter certificate, provided the bounds are finite and δret < 1. For the relative contract, let p = dc , compute the scale-safe floating-point norm bs = fl( eθ F
+
+), and form the certified lower endpoint 
+
+s− := down 
+
+ bs
+
+1 + γ2p+2 
+
+
+
+, d− := down( s− − C).
+
+The verifier requires d− > 0, then computes τ +rel := up( C/d −) and certifies only when τ +rel ≤ τpar .Thus the norm lower bound, denominator subtraction, and final division are all directed outward. C.5.2 FIXED -R EADOUT ERROR CENTER 
+
+Let ∆ = θR − eθ. The corrected residual provides an approximate center for this parameter error. Applying the fixed readout to the center preserves information about the error direction before the remaining uncertainty is bounded. Define 
+
+b∆ = fl( P bR),
+
+Ufl  
+
+> c
+
+= up( γd |P | bR ),
+
+Utr  
+
+> c
+
+= up( |P | U R).
+
+Their sum encloses b∆ − P (B − H eθ), so the executable center-evaluation radius is 
+
+ηc = up   Ufl   
+
+> cF
+
++ Utr  
+
+> cF
+
+ ,R∆ = up( ηc + δret C).
+
+The inverse-defect bound gives ∆ − P (B − H eθ) F
+
+≤ δret C; therefore ∆ − b∆ F
+
+≤ R∆, as required by Proposition 1. For a fixed readout Z, compute by = fl( Z b∆) and 
+
+Uy = up( γd |Z| b∆ ).
+
+The two sound readout bounds used by the implementation are 
+
+Cball  
+
+> Z
+
+= up( ∥Z∥2 C),Cctr  
+
+> Z
+
+= up 
+
+
+
+∥by∥F + ∥U y ∥F + ∥Z∥2 R∆
+
+
+
+.
+
+The fixed readout is preprocessed once with the rigorous bound 
+
+∥Z∥2 = min {up( ∥Z∥F ), up( √u1u∞)} .
+
+Here u1 = up( ∥Z∥1) and u∞ = up( ∥Z∥∞). Both terms upper-bound ∥Z∥2, so their minimum remains rigorous. The verifier returns min {Cball  
+
+> Z
+
+, C ctr  
+
+> Z
+
+}/√mc for the normalized contract in Equa-tion (3). Every displayed operation is evaluated outward, and the range and finiteness guards from Section C.1 apply before the minimum is used. For m fixed readout rows, the added work is O(mdc );the center uses O(dc ) state, while storing Z requires O(md ) entries unless the service already retains the readout. C.6 SEQUENTIAL INVERSE PROOF STATE 
+
+C.6.1 STATE INVARIANT AND STRICT INITIALIZATION 
+
+The maintained inverse state consists of P , a computed defect tracker bE, and a certified radius r
+
+satisfying 
+
+Id − P eH − bE F
+
+≤ r. 
+
+20 Preprint Strict initialization evaluates the defect directly and encloses its arithmetic error. Throughout this subsection, eH denotes the exact-real embedding of the entries of the stored floating-point array, whether that array is held in binary32 or binary64. Write H for the exact retain-set matrix. Thus the tracked defect is E = Id − P eH, while the statistics-error bound later transfers this bound to 
+
+Id − P H .At strict initialization, let bE0 := fl( Id − P0 eH0) ∈ Fd×d 
+
+> 64
+
+, where P0, eH0 ∈ Fd×d 
+
+> 64
+
+. The standard product and subtraction models give 
+
+r0 := up 
+
+
+
+up( γd |P0| eH0 + ¯ u bE0 ) F
+
+
+
+∈ R≥0.
+
+It satisfies Id − P0 eH0 − bE0 F
+
+≤ r0, establishing the base case before any rank-one transition is attempted. Each accepted transition adds three local error budgets to the previous radius: 
+
+r+ = up( r + ηalg + ηstate + ηfl ) .
+
+Here ηalg encloses the use of computed low-rank intermediates, ηstate the storage error in the updated arrays, and ηfl the evaluation error in the defect tracker. C.6.2 LOCAL ARITHMETIC BOUNDS 
+
+Before an update, let P, eH ∈ Fd×d 
+
+> 64
+
+, x ∈ Fd
+
+> 64
+
+, s ∈ {− 1, +1 }, and E := Id − P eH, with stored values embedded exactly in the reals. Define 
+
+q = P x, z = P ⊤x, β = x⊤q = z⊤x, α = 1 + sβ, 
+
+bq = fl( P x ), bz = fl( P ⊤x), bβ = fl( x⊤ bq), bα = fl(1 + s bβ).
+
+For comparison with the computed intermediates, set 
+
+β◦ := x⊤ bq, α◦ := 1 + sβ ◦.
+
+The standard matrix–vector model gives 
+
+εq := up( γd |P | | x|), |q − bq| ≤ εq ,εz := up( γd P ⊤ |x|), |z − bz| ≤ εz .
+
+Certified denominator guard. The implementation forms 
+
+εα, fl := up 
+
+
+
+γd up( |x|⊤ |bq|) + TwoSum(1 , s bβ; bα)
+
+
+
+,εα := up 
+
+
+
+εα, fl + |x|⊤ εq
+
+
+
+,εqz := up 
+
+
+
+|x|⊤ (εq + εz )
+
+
+
+.
+
+The standard dot-product model and exact T WO SUM residual give |α − bα| ≤ εα. Hence bα > ε α
+
+certifies α > 0 before any division. An additional √u(1 + bβ ) policy floor sends numerically fragile positive denominators to the rebuild path; it is not used in the soundness argument. The guard ensures bα̸ = 0 . Define the exact-real matrices formed from the computed low-rank intermediates, 
+
+P +◦ := P − sbqbz⊤
+
+bα , H+◦ := eH + sxx ⊤, E+◦ := Id − P +◦H+◦.
+
+The implementation stores P + in binary64 and eH+ in Fs, promoting the latter exactly before tracker evaluation. With both arrays embedded in the reals, let E+store := Id − P + eH+ and define 
+
+T ◦ 
+
+> s
+
+(Z) := Z − bq s
+
+bα
+
+
+
+x⊤ − bz⊤ eH
+
+
+
+, Z ∈ Rd×d.
+
+21 Preprint For this map, Theorem 3 requires 
+
+E − bE F
+
+≤ r, 
+
+E+◦ − T ◦ 
+
+> s
+
+(E) F ≤ ηalg ,
+
+E+store − E+◦ 
+
+> F
+
+≤ ηstate ,
+
+T ◦ 
+
+> s
+
+( bE) − bE+
+
+> F
+
+≤ ηfl .
+
+The constructions below bound the final three terms. 
+
+Computed-intermediate mismatch bound 
+
+The exact vectors satisfy 
+
+x⊤z = x⊤P ⊤x = ( x⊤P x )⊤ = x⊤q, 
+
+because both sides are real scalars. Hence 
+
+x⊤(bz − bq) = x⊤(bz − z) + x⊤(q − bq)
+
+≤ | x|⊤ (εz + εq ) ≤ εqz .
+
+Expanding E+◦ := Id − P +◦H+◦ gives the exact identity 
+
+E+◦ − T ◦ 
+
+> s
+
+(E)= −s(q − bq)x⊤ + bq
+
+bα
+
+s(α◦ − bα) + x⊤(bz − bq) x⊤. (18) To verify the coefficient of bqx ⊤, observe that 
+
+−s + s + x⊤ bz
+
+bα = s(α◦ − bα) + x⊤(bz − bq)
+
+bα ,
+
+where α◦ = 1 + sx ⊤ bq. The componentwise budgets and ∥ab ⊤∥F = ∥a∥2∥b∥2 now imply 
+
+ηalg := up 
+
+
+
+∥εq ∥2 ∥x∥2
+
++ εα, fl + εqz 
+
+|bα| ∥bq∥2 ∥x∥2
+
+
+
+∈ R≥0.
+
+This quantity upper-bounds the Frobenius norm of Equation (18). 
+
+Stored-state update error. Let ∆P := −sbqbz⊤/bα, ∆H := sxx ⊤, d∆P := fl 64 (∆ P ), and, for binary64 statistics, d∆H := s fl 64 (xx ⊤). The standard models in Section C.1, including the exact componentwise T WO SUM residuals SP = ( P + d∆P ) − P + and SH = ( eH + d∆H) − eH+, give 
+
+U∆P := up 
+
+
+
+¯γ2 d∆P + |SP |
+
+
+
+, P + − (P + ∆ P ) ≤ U ∆P ,
+
+U∆H := up 
+
+
+
+¯u d∆H + |SH |
+
+
+
+, eH+ − ( eH + ∆ H) ≤ U ∆H ,
+
+where ¯γ2 := γ2/(1 − γ2). For binary32 statistics, the same quantity is obtained by promoting the post-update array exactly and enclosing its difference from the nominal update. A product-difference expansion then gives 
+
+ηstate := up   ∥U ∆P ∥F ( eH F + ∥∆H∥F )+ ( ∥P ∥F + ∥∆P ∥F ) ∥U ∆H ∥F
+
++ ∥U ∆P ∥F ∥U ∆H ∥F
+
+ ≥ E+store − E+◦ 
+
+> F
+
+.
+
+Tracker-evaluation error. The tracker evaluates 
+
+bw := fl( eH⊤ bz), bv := fl( x − bw),
+
+ba := fl(( s/ bα)bv), bC := fl( bqba⊤).
+
+22 Preprint The standard componentwise models give 
+
+Uw := up 
+
+
+
+γd eH ⊤
+
+|bz|
+
+
+
+, Uv := up( Uw + ¯ u |bv|) ,
+
+Ua := up( Uv / |bα| + ¯ γ2 |ba|) , UC := up 
+
+
+
+|bq| U ⊤ 
+
+> a
+
++ ¯ u bC
+
+
+
+.
+
+Finally, let SE := ( bE − bC) − bE+ be the exact T WO SUM residual for bE+ := fl( bE − bC), and set 
+
+US := |SE |. Therefore 
+
+ηfl := up( ∥U C + US ∥F ) ≥ T ◦ 
+
+> s
+
+( bE) − bE+
+
+> F
+
+.
+
+23 Preprint C.6.3 RADIUS PROPAGATION THEOREM 
+
+Theorem 3 (Sequential proof-state invariant) . Suppose E − bE F
+
+≤ r. Let ηalg , ηstate , and ηfl 
+
+satisfy 
+
+E+◦ − T ◦ 
+
+> s
+
+(E) F ≤ ηalg ,
+
+E+store − E+◦ 
+
+> F
+
+≤ ηstate ,
+
+T ◦ 
+
+> s
+
+( bE) − bE+
+
+> F
+
+≤ ηfl .
+
+Then 
+
+r+ = up( r + ηalg + ηstate + ηfl )
+
+satisfies 
+
+E+store − bE+
+
+> F
+
+≤ r+.
+
+All three local bounds can be evaluated in O(d2) work per rank-one update. 
+
+Proof of propagated-radius soundness 
+
+The map T ◦ 
+
+> s
+
+has identity linear part, so T ◦ 
+
+> s
+
+(E) − T ◦ 
+
+> s
+
+( bE) = E − bE. Inserting the nominal exact update and applying the triangle inequality gives 
+
+E+store − bE+
+
+> F
+
+≤ E+store − E+◦
+
+> F
+
++ E+◦ − T ◦ 
+
+> s
+
+(E) F
+
++ E − bE F
+
++ T ◦ 
+
+> s
+
+( bE) − bE+
+
+> F
+
+≤ r + ηstate + ηalg + ηfl ≤ r+.
+
+Strict initialization gives the base case; induction proves the invariant for every guarded tracker update. 
+
+# D PUBLISHED -M ETHOD APPLICATIONS 
+
+Candidates are fixed before post-hoc certification. Independent reference intervals supply offline conformance labels and are excluded from online timing. Service protocols and reference construction appear in Sections E and F. D.1 APPLICATION DETAILS 
+
+We use pinned official implementations and certify emitted candidates post hoc without changing their update rules. Exact source revisions, instrumentation patches, and reproduction commands are recorded in the artifact. 
+
+Newton-update removal. We use the official MNIST 3-vs-8 configuration of Guo et al. (2020), leaving its objective perturbation, update, cumulative budget, and threshold unchanged. Native closure encloses the source terms through the first retraining action, and direct recertification checks the same candidate at that stop. Strict closure can move retraining earlier, while the tighter direct certificate can expose a conservative source action. 
+
+CEU supported-fidelity characterization. Post-update RRV evaluates the emitted CEU head under an independently declared retraining-reference contract (Wu et al., 2023). We fixed τpar = 10 −3
+
+before inspecting the outputs. The reference is the unique minimizer of retained-node mean softmax cross-entropy plus λ ∥θ∥22 /2, giving the curvature floor μ− = λ in Proposition 3. Directed arithmetic encloses the retained-objective gradient; verified optimization is used only for offline tightness evaluation. The certificates cover their reference intervals and quantify the weaker fidelity supported by the snapshots alongside CEU’s native randomized guarantee. 24 Preprint 
+
+ScaleGUN gradient application. Native closure evaluates the same aggregate gradient quantity consumed by ScaleGUN’s propagation and optimization budget (Yi & Wei, 2025). The candidate is unchanged during certification. D.2 NEWTON DIRECT -P ERTURBATION CALIBRATION 
+
+We follow the Newton direct-perturbation mechanism of Zou et al. (2025) in its published synthetic logistic-ridge configuration, evaluating one- and two-step Newton centers over 100 leave-one-out states. Native closure bounds displacement from the exact-real Newton center, while On-demand RRV certifies the executed center against a verified retained-set reference. To separate source slack from direction-free composition, let p ∈ { 32 , 64 } denote the execution precision and define 
+
+A =
+
+¯θ − θR
+
+> 2
+
+rnom 
+
+, B(p) = θp − ¯θ 2
+
+rnom 
+
+,C(p) = θp − θR
+
+> 2
+
+rnom 
+
+.
+
+Directed enclosures produce A+, B +(p), C +(p) for every paired state (Table 3). We form each reported ratio within a state before aggregating. For FP64, C+(64) is near zero in some states, so we report the absolute composition–direct gap rather than an unstable ratio. Direction-free composition remains looser under both execution precisions on this population. Table 3: Detailed published-method application results. Newton-perturbation bounds are normal-ized by the nominal radius; ScaleGUN ratios report the source budget consumed. Newton ratios are formed per state before aggregation; FP64 uses an absolute gap because its direct bound can be near zero.                                                                      
+
+> (a) Newton removal
+> Seed Native ExecCert ∆Direct upper 0251 249 −2.00304 1232 232 0.00324 2277 273 −4.00421
+> (b) Newton direct perturbation
+> Bound Median P95 Max Source center, A+.087 .341 .945 FP32 B+.175 .181 .186 FP32 C+.111 .291 .874 FP32 comp./direct 2.28 ×2.49 ×2.56 ×
+> FP64 B+.067 .070 .074 FP64 C+.020 .271 .871 FP64 comp.–direct .134 .141 .148
+> (c) ScaleGUN
+> Dataset Cheap Heads Median Max Cora 12 84 .59% .83% ogbn-arxiv 3120 1.24% 1.28% All 15 204 .68% 1.28% 9 additional checkpoints use the source fallback.
+> (d) CEU
+> Fidelity Median Max Realized error 8.86% 9.47% RRV upper 14.06% 14.84% Declared tolerance: τpar = 0 .10% .
+
+# E SERVICE EVALUATION AND CONTROLS 
+
+E.1 EXPERIMENTAL SYSTEMS AND COMMON PROTOCOLS 
+
+3B safety service. The deployment service uses a frozen Llama-3.2-3B-Instruct backbone (Meta AI, 2024) with a d = 3073 binary ridge head on PKU-SafeRLHF-QA (Ji et al., 2025). We replay seven 1,000-request deletion streams under a 10 −3 release tolerance and evaluate fixed-readout contracts on 3,000 sealed representations. 
+
+Controlled diagnostics. The controlled experiments use DINOv2/CIFAR-10 and RoBERTa/AG-News multiclass ridge heads. The tolerance study fixes 14,000 outputs, and the stress study crosses three deletion streams, three conditioning levels, and two statistics storage precisions, giving 18 trajectories. Independent retained-row reconstruction supplies all offline reference labels. 25 Preprint 
+
+Verification constructions. The guarantee-matched comparison holds the candidate, fixed readout, release contract, and conformance labels constant while varying only how certificate evidence is constructed. Three held-out streams at seven declared checkpoints give 21 matched states. The six constructions are summarized below. Table 4: Verification constructions in the guarantee-matched comparison.                           
+
+> Construction Build at release Retained rows Reuse inverse Readout On-demand RRV: retained residual ✓✓✗Norm-ball On-demand RRV: corrected residual ✓✓✓aError-centered On-demand RRV: fresh verified factor ✓✗✗Error-centered Maintained verified factor ✗✗✗Error-centered Incremental RRV: norm-ball ✗✗✓Norm-ball Incremental RRV: directional ✗✗✓Error-centered
+> aPartial inverse reuse.
+
+E.2 REFERENCE -T RANSFER SOUNDNESS AND TIGHTNESS 
+
+Tolerance–coverage frontier. For each of the 14,000 fixed outputs, the independent retain-set audit computes the realized minimum tolerance τtrue , while RRV computes the certified threshold τcert .We sweep the deployment tolerance from 10 −5 to 10 −2; every output satisfies τcert ≥ τtrue .
+
+Stored-equation stress comparison. This experiment tests whether certifying the stored equation is equivalent to certifying the exact retain-set reference as statistics drift. The 18 trajectories defined above evaluate the stored equation and its certificate in binary64 while varying statistics storage precision. Independent retained-row reconstruction labels conformance at τpar = 10 −3. Coverage and false-release counts appear in Table 5. Table 5: Matched-output conformance on nine workload configurations per precision. Coverage is conditional on a conforming output. The incremental row reports the first check, before any proof-only rebuild. Four FP32 reference intervals remain unresolved and are not counted as conforming or nonconforming.               
+
+> Path Total Conforming Certified conforming False release FP32 stored equation 9,000 7,293 7,293 1,703 FP32 + Incremental RRV 9,000 7,293 4,838 0FP64 + Incremental RRV 9,000 9,000 9,000 0
+
+E.3 EVIDENCE REUSE AND LIFECYCLE COST 
+
+Guarantee-matched comparison. The On-demand RRV constructions form a retained-data resid-ual, a corrected residual, or a fresh verified factor when certification is requested. The maintained-factor baseline instead downdates a factor after every deletion and validates its residual at release. The two Incremental RRV constructions share the inverse-defect proof state and differ only in their readout certificate. The corrected-residual construction is the only nonstandard baseline: it computes 
+
+θcorr = eθ + P ( eB − eH eθ)
+
+and evaluates a retained-data residual at θcorr . If this residual gives θcorr − θR 
+
+> F
+
+≤ Ccorr , it still certifies the original candidate through 
+
+Z(eθ − θR) F
+
+≤ Z(eθ − θcorr ) F
+
++ ∥Z∥2 Ccorr .
+
+All terms are evaluated outward, so every construction certifies the executed snapshot rather than substituting θcorr for release. 26 Preprint Table 6: Complete guarantee-matched results on 21 fixed states. Latency summarizes 10 repetitions per state; stored state excludes retained rows.                                   
+
+> Verification method Retain scan Certified release states Med. (s) P95 (s) State (MiB) On-demand RRV (retained residual) Yes 0/21 5.163 5.410 72.1 On-demand RRV (corrected residual) Yes 21/21 5.341 5.696 286.5 On-demand RRV (fresh verified factor) No 21/21 2.611 3.593 286.5 Maintained verified factor No 21/21 2.453 3.678 358.6 Incremental RRV (norm-ball) No 0/21 0.801 0.859 360.3 Incremental RRV (directional) No 21/21 1.056 1.163 430.6
+
+Decision agreement. Across 56 checkpoints from seven streams, margin certificates cover 95 .0–
+
+95 .8% of declared decisions. The independent offline audit gives 99 .96% mean observed agreement rather than certificate coverage. 
+
+Release-frequency accounting. We measure output generation, certified-statistics maintenance, and proof-state maintenance across all 1,000 requests in each of three streams. Release-check cost is the per-stream median over the seven declared checkpoints, with 10 paired repetitions per checkpoint. We combine these measured components at 7, 25, 50, 100, 250, 500, and 1,000 checks per 1,000 requests. The three routes share candidate-generation work; fresh factor pays no per-request proof maintenance, while maintained factor and directional Incremental RRV do. No route produces a false release on the matched states, and maintained factor requires no rebuild during the stream replays. Linear component accounting places the directional/fresh crossover at 21.5 checks and the maintained/fresh crossover at 214.3 checks per 1,000 requests. E.4 PRECISION AND REPRESENTATION BOUNDARIES 
+
+Producer-precision stress. Within each producer configuration, Incremental RRV and verified-factor On-demand RRV inspect the same output; changing statistics precision defines a separate candidate population. Lifecycle totals include all online work of the selected path, while independent reference audits are excluded. The 4,162 lower-precision proof refreshes are triggered by a bound above tolerance, not by invalid inverse state. The median bound moves from 1.014 τ before a committed refresh to 0.830 τ afterward; every commit recovers certification. All attempts together consume 4.39% of the FP32 lifecycle and no commit changes a candidate. Table 5 reports the first check, whereas Table 7 reports the final decision on the same population. Unresolved reference intervals are excluded from the conforming denominator. Table 7: Producer precision and certificate construction. Rows change the emitted candidate; within each row, columns compare the same candidates. Coverage is conditional on conformance and uses the final post-rebuild decision; proof-only rebuilds do not change candidates.                    
+
+> On-demand RRV Incremental RRV Producer Certified (%) Life (s) State (MiB) Certified (%) Life (s) State (MiB) FP32 99.97 444.7 11.4 67.24 502.1 20.4 FP64 100.00 378.4 9.1 100.00 413.5 18.2
+
+Contract–format compatibility frontier. This protocol asks whether the final representation can express an artifact that satisfies the selected contract. We encode each format from the same master head, exhaustively evaluate the BF16 and FP16 codebooks under round-to-nearest-even, and rigorously enclose the minimum feasible tolerance τmin shown in Figure 3(b). 27 Preprint 
+
+# F INDEPENDENT REFERENCE CONSTRUCTION 
+
+F.1 OFFLINE VERIFIED REFERENCE AND EVALUATION LABELS 
+
+Offline labels are reconstructed from retained rows, independently of the service arrays and update path. A verified inverse-defect certificate encloses the retraining solution, and a high-precision dyadic reconstruction confirms all classifications. For its solution θ⋆t , directed evaluation of rt = Bt − Htθ⋆t
+
+gives 
+
+rref ,t = ∥rt∥F
+
+λ , θ⋆t − θR  
+
+> tF
+
+≤ rref ,t.
+
+Directed norm bounds and the triangle inequalities of Equation (2) then give a rigorous relative-error interval; precision is increased until each classification is resolved. F.2 NEWTON DIRECT -P ERTURBATION REFERENCE CONSTRUCTION 
+
+To close the Newton direct-perturbation mechanism against its exact-real rule, let sj = θ64  
+
+> j
+
+− θ64 
+
+> j−1
+
+denote the exact-real difference of two stored binary64 iterates. The verifier represents this dyadic difference as the unevaluated sum returned by T WO SUM ; it does not identify sj with an ordinary rounded subtraction. This definition also handles a solver step swallowed by the state addition: the realized step is then zero. Let g(θ) = ∇Lret (θ) and H(θ) = ∇2Lret (θ). On a convex region containing the exact-real and replay iterates, and hence the segments connecting them, assume 
+
+mI ⪯ H(θ) ⪯ M I and ∥H(θ) − H(θ′)∥2 ≤ L ∥θ − θ′∥2. We define the Newton-equation residual 
+
+rj = H(θ64 
+
+> j−1
+
+)sj + g(θ64 
+
+> j−1
+
+). Directed MPFR evaluation applies the Hessian to both components of the exact difference and bounds ∥rj ∥2. We propagate 
+
+ηj = ηj−1 + M η j−1 + Lη j−1 ∥sj ∥2 + ∥rj ∥2
+
+m ,η0 = 0 .
+
+Thus ηj bounds the replay center’s distance from the exact-real Newton iterate, and θ32  
+
+> j
+
+− θ64   
+
+> j2
+
++ηj
+
+closes the execution error used by the compositional Laplace interface. This route needs no retraining reference; the direct route instead encloses the candidate against a verified retained-set reference. 28

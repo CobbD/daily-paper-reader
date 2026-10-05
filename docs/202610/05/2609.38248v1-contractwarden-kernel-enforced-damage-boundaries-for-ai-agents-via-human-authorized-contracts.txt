@@ -1,0 +1,196 @@
+Title: ContractWarden: Kernel-Enforced Damage Boundaries for AI Agents via Human-Authorized Contracts
+
+URL Source: https://arxiv.org/pdf/2609.38248v1
+
+Published Time: Thu, 01 Oct 2026 00:04:17 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# ContractWarden: Kernel-Enforced Damage Boundaries for AI Agents via Human-Authorized Contracts 
+
+Dongxu Cui 1,2 , Zhichao Gu 2, Ping Zheng 2, Wenshuai Xi 2, Simeng Han 2, and Yong Liao 1,* 
+
+> 1
+
+School of Cyber Science and Technology, University of Science and Technology of China , Hefei, China cdx@mail.ustc.edu.cn, yliao@ustc.edu.cn 
+
+> 2
+
+China Greatwall Technology Group Co., Ltd. , Shenzhen, China 
+
+{guzhichao, zhengping, xiwenshuai, hansimeng }@greatwall.com.cn ORCID: 0009-0007-1008-5465 (D. Cui), 0000-0001-6403-0557 (Y. Liao) 
+
+> *
+
+Corresponding author: Yong Liao (yliao@ustc.edu.cn) 
+
+Abstract —Large language model agents can execute com-mands, create subprocesses, and directly access files and net-works, allowing prompt injection or planning errors to become operating-system side effects. We present ContractWarden, a Linux reference monitor that enforces a human-authorized dam-age boundary without trusting the agent or its policy suggestions. A model may propose a tri-state asset contract— allow , deny , or 
+
+no_egress —but a human makes the final choice. An execution gate binds the contract to a concrete task before untrusted code runs. An extended Berkeley Packet Filter (eBPF) Linux Security Modules (LSM) data plane then enforces file and network decisions and monotonically propagates no_egress through processes, regular files, pipes, FIFOs, and supported Unix-domain sockets. All 570 runs across 19 security tests satisfy predefined return-value and side-effect criteria. On three co-located file-I/O workloads, median overhead is 11.96–12.89% in a Linux 6.15 virtual machine and 35.79–61.54% on a Linux 6.15 physical platform, lower than the evaluated frozen ActPlane baseline. The results demonstrate deterministic kernel enforcement for declared assets, supported paths, and controlled object lifecycles. 
+
+Index Terms —AI agents, human authorization, damage bound-ary, eBPF LSM, information-flow control, runtime enforcement 
+
+I. I NTRODUCTION 
+
+Large language model (LLM) agents have evolved into sys-tems that plan tasks, invoke tools, execute scripts, and interact with local files and networks [1]. Indirect prompt injection, malicious tool output, or planning errors can therefore produce concrete system effects [2]–[5]. Application-layer validation is insufficient when one accepted tool call expands into a shell, interpreter, native binaries, subprocesses, temporary files, and direct system calls. Three gaps make continuous enforcement difficult. First, attaching policy after process creation leaves a race in which untrusted code can run before registration. Second, process-tree inheritance misses lateral transfer through files or inter-process communication (IPC). Third, checking only network connection establishment misses a connection created before its process reads sensitive data. A restricted agent can other-wise launder its security state through a carrier that appears unrestricted. We ask how an operating system can continuously enforce an asset damage boundary authorized before an untrusted task begins. ContractWarden separates policy proposal, semantic authorization, and privileged installation. A model only pro-poses a tri-state contract over a declared asset set; a human confirms every action; and a privileged control plane installs a complete, validated contract before releasing the task. Human confirmation is a trusted authorization root, not a claim that humans always classify assets correctly. ContractWarden binds policy to a concrete kernel task using an execution gate and process file descriptor (pidfd). Its eBPF LSM data plane attaches source and no_egress state to kernel task and inode objects, monotonically merges state across supported process, file, pipe, FIFO, and Unix-socket edges, and checks egress at socket creation, connection, and send time. We make three contributions:  
+
+> •
+
+a human-authorized, closed-set asset contract that reduces a task damage boundary to bounded kernel actions;  
+
+> •
+
+gate-before-exec binding and object-level monotonic propagation that resist state laundering; and  
+
+> •
+
+an evaluation of 19 security properties, a four-configuration cost decomposition, and a co-located com-parison with frozen ActPlane on virtual and physical platforms. Our claims are scoped to declared assets, implemented kernel paths, and the object-lifecycle constraints described below. II. B ACKGROUND AND RELATED WORK 
+
+Linux Security Modules mediate security-sensitive file, pro-cess, and socket operations; BPF LSM programs can deny an 
+
+This work has been submitted to the IEEE for possible publication. Copyright may be transferred without notice, after which this version may no longer be accessible. arXiv:2609.38248v1 [cs.CR] 29 Sep 2026 operation before it proceeds [6]. BPF maps retain enforcement state [7], [8], while task and inode local storage associate val-ues with kernel objects rather than recycled numeric identifiers [9]. The verifier constrains program safety [10]. System provenance models processes and kernel objects as graph nodes and interactions as directed edges [11], [12]. CamFlow and CamQuery study whole-system capture and online analysis, while ProTracer, eAudit, and TAPAS reduce or structure audit volume [13]–[17]. Dynamic information-flow systems instead propagate labels across computation and communication [18]. AgentSight applies eBPF events to agent observability [19], and Agent-Warden uses object-lifetime state for process–file provenance in LLM-agent ac-tivity [20]. These systems motivate object-level correlation, whereas ContractWarden targets authorization denial before a supported side effect. AgentSpec, AgentBound, Progent, Fides, and CaMeL en-force policies in agent runtimes, server sandboxes, or trusted planner paths [21]–[25]. They provide richer agent semantics and can complement a kernel monitor. Seccomp-BPF, AppAr-mor, and Landlock impose resource-oriented operating-system boundaries [26]–[28], but do not automatically express the task-conditioned rule “after reading this asset, propagate an egress restriction through an intermediate object.” ActPlane is the closest system: it compiles project and task rules into operating-system policy with cross-event state and information-flow control [29]. ActPlane targets programmable compliance policies; ContractWarden instead targets a small human-authorized asset boundary. We therefore compare overlapping properties without treating either system’s non-overlapping semantics as failures. III. S YSTEM MODEL AND DESIGN 
+
+A. Contracts and Threat Model 
+
+The system contains a human authorizer H, model proposer 
+
+M , task domain Aτ , privileged control plane C, and kernel enforcer K. The human maintains a declared asset set R. For task τ , the confirmed contract is the total function 
+
+Γτ : R → { allow , deny , no_egress }. (1) 
+
+allow adds no ContractWarden restriction; deny rejects supported file and namespace operations; and no_egress 
+
+permits local access but prevents a carrier that acquires the state from using managed network egress. Each active task receives a non-reused user-space UUID and a bounded kernel position task_id ∈ [0 , 63] , represented by source bit bτ . A process or supported object x has state 
+
+S(x) = ⟨L(x), E (x)⟩, where L is a source bitmap and E is the egress-denial bit. State joins monotonically: 
+
+⟨L1, E 1⟩ ⊔ ⟨ L2, E 2⟩ = ⟨L1 ∨ L2, E 1 ∨ E2⟩. (2) The proposer, task commands, agent inputs, and ordinary descendants are untrusted. They may fork, execute native code, rename files, pass descriptors, relay through supported IPC, connect before reading a restricted asset, and attempt identifier reuse. We trust the kernel, BPF/LSM path, privileged control plane, and human’s final input. The task lacks root and kernel-management capabilities. The design targets six security invariants. Closed authoriza-tion requires every enabled asset to appear exactly once and prevents a model suggestion from directly becoming policy. 
+
+Pre-execution binding prevents untrusted code from running before installation and registration complete. Object identity 
+
+attaches state to kernel objects rather than only reusable path strings or process identifiers. Monotonic propagation joins state on supported derivation, file, and IPC edges. Pre-side-effect denial returns EPERM before a prohibited asset or network effect. Finally, fail-closed setup keeps the child behind its gate if validation, installation, registration, or read-back fails. 
+
+B. Lifecycle and Non-Goals 
+
+When a root task exits, background descendants may re-main. The launcher therefore tracks the derived process tree in a cgroup and cleans task policy only after the cgroup becomes empty. This condition terminates controlled processes but does not prove that a persistent inode or an out-of-cgroup receiver discarded an older source bit. A bounded source position cannot be safely reused until the implementation provides generation tags, complete global liveness accounting, or conservative non-reuse. Object-local storage does, however, make ordinary task and inode release independent of recycled numeric PIDs and inode numbers. The monitor does not attempt to prove that an agent’s plan is correct or that the human selected an optimal action. It does not protect undeclared assets, infer implicit or byte-level flows, mediate every IPC and device type, survive a compro-mised kernel, or provide an ordinary in-task declassification operation. These exclusions delimit the conditional invariant: given a complete confirmed contract, the supported side effects and propagation paths must obey it. 
+
+C. Authorization and Pre-Execution Binding 
+
+The model receives asset identifiers and metadata but need not receive canonical local paths. The control plane rejoins confirmed actions with its local asset table and rejects missing, duplicate, unknown, or out-of-domain actions. The proposer cannot authorize and the human does not directly mutate BPF maps. The launcher creates a child blocked on a dedicated file descriptor, obtains a pidfd, and sends the pidfd, task iden-tifiers, and contract to the daemon over an authenticated Unix SOCK_SEQPACKET channel. The daemon validates peer credentials and pidfd/PID consistency, installs asset policy, attaches task state, and reads it back. Only then does the launcher open the execution gate. Failure leaves the workload blocked and triggers rollback. The pidfd identifies a concrete process object, while BPF task storage follows kernel-task lifetime. D. Compilation, Propagation, and Denial 
+
+The control plane resolves an existing asset to a
+
+(device, inode ) key. Its value contains deny and no_egress 
+
+source bitmaps; an update changes only one task’s bit. Existing directory descendants are enumerated, while a bounded kernel ancestor walk covers later creations. Paths beyond 32 ancestors are outside the current scope. Multiple tasks can safely share the long-lived data plane: installation for one task preserves every other active source bit on the same object. Directory compilation does not follow symbolic links into another tree and rejects a contract that expands past 4,096 policy keys. A local canonical path is therefore control-plane metadata; kernel decisions use object identity and a bounded ancestor relation. For processes P, Q and supported object O, the kernel performs 
+
+S(Q) ← S(Q) ⊔ S(P ) on process derivation ,S(O) ← S(O) ⊔ S(P ) on writable access ,S(P ) ← S(P ) ⊔ S(O) on readable access . (3) Regular files, FIFOs, and anonymous pipes use inode state. Because Unix-stream peers have different inodes, the sender joins state into a peer-state container and the receiver absorbs it. The permission-level approximation can over-propagate, but prevents ordinary code from clearing state by re-executing or relaying through an intermediate carrier. A supported file operation is denied when the task’s sources intersect the target inode’s deny bitmap. The implementation covers open, create, truncate, unlink, and both rename end-points. A no_egress match allows the file access while setting E(P ) = 1 in the same decision path. Egress checks at socket creation, connect, and send cover new sockets, con-nected TCP/UDP, established connections, and connectionless datagrams. Unix sockets are local propagation channels. An exec changes the program image without clearing task state. Removing an asset rule stops future matches but cannot revoke no_egress already held by a live task or object. This monotonicity prevents an ordinary task from declassifying itself, although it can create false positives. A trusted release mechanism is deliberately left outside the task’s authority. Table I summarizes the state and enforcement path. A cross-process lock serializes writers; the loader validates schema, as-set type, bit consistency, action disjointness, and map layouts, then snapshots and restores affected keys on update failure. Audit events use a ring buffer independent of the LSM return value, so audit pressure cannot turn deny into allow. IV. I MPLEMENTATION AND EVALUATION 
+
+A. Prototype and Method 
+
+The prototype comprises ordinary-user asset and contract tools, a C launcher and privileged daemon, a policy loader, and a CO-RE BPF data plane. It requires BPF LSM, BPF Type Format, bpffs, cgroup v2, pidfd, and task/inode local storage. The daemon maintains one BPF instance for multiple tasks. Task storage is attached to the thread-group leader so                           
+
+> TABLE I PROTOTYPE STATE , H OOKS ,AND BOUNDS
+> State/path Purpose Bound/hooks
+> Task storage Source and egress state 64 source positions Inode storage File and IPC propagation Object lifetime Asset policy Deny/egress bitmaps 4,096 keys; 32 ances-tors Unix-peer map Peer receive state 4,096 keys File LSM Access and propagation open, permission, cre-ate, truncate, unlink, rename Socket LSM Egress and Unix flow create, connect, send, receive Process trace Inherit and audit fork and exit Event ring Asynchronous evidence 256 KiB plus drop count
+
+threads share logical state. The loader uses bounded JSON parsing and verifies contract version, task bit, asset identity and type, action-set disjointness, and BPF map key/value layouts. Table II lists the enforcement path. We separately evaluate security behavior, mechanism cost, and a frozen ActPlane baseline. Model calls and human inter-action are outside timing; performance runs use deterministic proposals but traverse contract validation, persistence, policy loading, gating, and registration. ContractWarden security and cost decomposition run on Linux 7.0. The baseline property tests use a Linux 6.15 VMware guest because frozen ActPlane requires that kernel. Co-located performance runs under Linux 6.15 both in the eight-vCPU guest and directly on an AMD Ryzen AI MAX+ 395 platform with 32 logical processors. We compare absolute times only within a platform batch. Each performance configuration has five warmups and 30 measured repetitions in randomized within-repetition order. For system s and repetition r, paired overhead is 
+
+Os,r = Ts,r − TN,r 
+
+TN,r 
+
+× 100% , (4) where TN,r is Native time in the same repetition. Intervals use 10,000 bootstrap resamples of the 30 paired overheads. Figures 1 and 2 summarize the property outcomes and paired overheads that the following subsections analyze. 
+
+B. Security Correctness 
+
+Security tests use system-call return values and resource side effects as primary criteria, rather than audit events alone. Each repetition randomizes all 19 cases and cleans controlled processes and policy between cases. All 570 observations (19 cases × 30 repetitions) pass, and the aggregate ring-buffer drop count is zero. Table IV groups the tested properties. Cases 3 and 13 establish the need for send-stage enforce-ment. Case 11 verifies both return values and filesystem effects; case 14 covers pre-execution rejection and rollback. Thus, within the implemented paths, the monitor preserves source isolation, monotonic propagation, and pre-side-effect denial. The cases exercise four complementary boundaries. Iso-lation tests separate sources, siblings, and reused identities. Propagation tests cover process derivation and every currently TABLE II 
+
+EBPF A TTACHMENT POINTS AND RESPONSIBILITIES 
+
+Attachment Responsibility Attachment Responsibility 
+
+lsm/file_open Asset decision and regular-file propagation 
+
+lsm/file_permission Pipe/FIFO flow and socket-fd write check 
+
+lsm/inode_create Protected directory creation denial lsm/path_truncate Truncation denial 
+
+lsm/inode_unlink Unlink denial lsm/inode_rename Source and destination rename checks 
+
+lsm/socket_create New external-socket denial lsm/socket_connect Destination connection denial 
+
+lsm/socket_sendmsg Established-send denial and Unix send flow 
+
+lsm/socket_recvmsg Unix receiver absorption 
+
+sched_process_fork Child-state inheritance sched_process_exit Exit audit 
+
+security_inode_free Hash-key cleanup at inode release 
+
+TABLE III CO-L OCATED FILE -I/O P ERFORMANCE (M EDIAN OF 30 P AIRED TRIALS )
+
+Platform Workload Native ms ActPlane ms AP overhead [95% CI] ContractWarden ms CW overhead [95% CI] 
+
+VM Public read 14864.1 19807.8 33.39% [33.04,33.81] 16617.4 11.96% [11.64,12.14] Protected read 14948.1 24051.6 61.02% [60.70,61.11] 16862.4 12.89% [12.66,13.05] 14 assets 10875.7 16612.5 52.44% [52.13,53.16] 12210.9 12.32% [11.90,12.64] Physical Public read 810.1 1916.4 136.94% [135.89,138.24] 1281.7 58.32% [57.74,58.91] Protected read 830.4 2245.1 170.72% [169.78,172.18] 1338.0 61.54% [60.49,62.37] 14 assets 994.0 2775.0 179.03% [178.25,181.35] 1351.2 35.79% [35.48,36.38] 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 
+
+Security test case 
+
+ContractWarden ActPlane                                     
+
+> PPPPPPPPPPPPPPPPPPPPPUPPPPPa PPFPa UPa Pa PFFD
+
+P: Pass Pa: Partial U: Unsupported F: Fail D: Different 
+
+Fig. 1. Outcomes for the 19 target properties. ContractWarden results use 30 repetitions per property; frozen ActPlane uses one execution per property. Public-file read Protected-file read 14-asset macro 040 80 120 160 200     
+
+> Runtime overhead vs. Native (%)
+> 33.4% 61.0% 52.4% 12.0% 12.9% 12.3%
+> VMware (8 vCPUs)
+> Public-file read Protected-file read 14-asset macro
+> 136.9% 170.7% 179.0% 58.3% 61.5% 35.8%
+> Physical (Ryzen AI MAX+ 395)
+> ActPlane ContractWarden
+
+Fig. 2. Median paired runtime overhead relative to Native, with 95% bootstrap intervals. 
+
+supported persistent or transient carrier. Enforcement tests check both newly created and already established network channels, including all four send interfaces exercised by the harness. Lifecycle tests cover rule replacement, failed installa-tion, object release, PID reuse, and the documented directory-depth boundary. This partition matters because a pass on simple fork inheritance does not imply that file-mediated or peer-socket laundering is prevented. 
+
+C. Cost and Frozen-Baseline Comparison 
+
+The cost decomposition uses Baseline (not loaded), Loaded-idle (BPF loaded, measured task unregistered), Tracing (task registered with allow-all policy), and Full (asset pol-icy enabled). Two microbenchmarks execute one million 
+
+open/read/close transactions; a 14-asset macrobench-mark executes 700,000. All 420 trials are valid. Median Full overhead is 21.16–35.62%; most of the observed increase is between Loaded-idle and Tracing, while the Tracing–Full difference is smaller. We do not interpret this observation as zero policy-lookup cost. Frozen ActPlane first passes a preflight confirming real eBPF loading and EPERM denial on Linux 6.15. Against the same 19 target properties, one execution per property yields 9 Pass, 3 Fail, 4 Partial, 2 Unsupported, and 1 Dif-ferent. Non-pass outcomes primarily reflect a missing send-stage enforcement point, creation leaving an empty file before denial, absent Unix-peer propagation, and different update, TABLE IV SECURITY PROPERTIES AND RESULTS                                                                  
+
+> No. Property Primary behavioral criterion Pass/Run
+> 1Source-isolated deny Restricted task gets EPERM ; other source reads 30/30 2Public asset Network succeeds without restricted state 30/30 3Post-infection established send Send succeeds before and fails after infection 30/30 4Sibling isolation Infected branch denied; sibling remains usable 30/30 5Fork inheritance Child inherits no_egress 30/30 6Cross-task regular file A writes, B reads, then B cannot network 30/30 7No reverse flow on exit Restricted child exit does not infect parent 30/30 8Hot update and monotonicity New rule applies; removal retains acquired state 30/30 9FIFO propagation A–FIFO–B causes B egress denial 30/30 10 64-bit source isolation 32 targets denied; 32 controls allowed 30/30 11 File-operation coverage Write/create/truncate/rename/unlink leave no forbidden effect 30/30 12 Aliases and inode lifetime Links/rename do not bypass; reused inode is clean 30/30 13 Established-socket sends send ,sendto ,sendmsg , write denied 30/30 14 Invalid setup and rollback Six invalid/injected failures do not start target 30/30 15 PID reuse New process does not inherit old task state 30/30 16 Anonymous pipe Producer–pipe–consumer propagates restriction 30/30 17 Unix stream peer Receiver absorbs sender state 30/30 18 Socketpair peer Receiver absorbs sender state 30/30 19 Directory ancestor bound Depth 31 matches; depth 32 is outside scope 30/30
+
+TABLE V FILE -I/O C OST DECOMPOSITION                              
+
+> Workload Configuration Median ms Paired %
+> Public 10 6
+> Baseline 764.663 –Loaded-idle 871.964 14.077 Tracing 1019.968 33.592 Full 1019.965 33.230 Protected 10 6
+> Baseline 787.789 –Loaded-idle 889.757 13.220 Tracing 1058.295 34.788 Full 1069.548 35.622 14 assets Baseline 962.830 –Loaded-idle 1034.648 7.666 Tracing 1156.708 20.287 Full 1165.788 21.156
+
+identity, or directory semantics. These categories indicate partial comparability or different expression points, not ten generic failures; the properties also do not cover all ActPlane temporal-policy features. For co-located performance, Native, ActPlane, and Con-tractWarden use identical benchmark code, files, counts, and content hashes. Table III reports medians from 30 measured trials per cell. All 630 trials (including warmups) are valid; hashes match, and the maximum drop count across 210 ContractWarden daemon lifecycles is zero. ContractWarden overhead is 11.96–12.89% in the eight-vCPU VMware guest and 35.79–61.54% on the 32-thread AMD Ryzen AI MAX+ 395 platform, versus 33.39–61.02% and 136.94–179.03% for frozen ActPlane. Bootstrap intervals do not overlap within either platform. The higher percentages on the faster physical baseline show why platforms must be interpreted separately; the result is not an overall feature ranking. The virtual and physical batches agree on the ordering but not on percentage magnitude. The same fixed per-operation work occupies a larger fraction of a faster native runtime, and the guest additionally includes hypervisor scheduling. Accordingly, we draw only within-batch conclusions. Timing covers steady-state workload execution and excludes engine startup, model proposal, and human confirmation; the latter are deployment and usability costs rather than per-operation data-plane costs. V. D ISCUSSION AND LIMITATIONS 
+
+A. Authorization and Declassification 
+
+The guarantee is conditional on the human-confirmed con-tract: an omitted asset or permissive choice remains possible. Human confirmation determines who authorizes the boundary, not whether the judgment is objectively correct. User studies are needed for usability, decision time, alert fatigue, and contract-quality claims, but are distinct from testing whether a fixed contract becomes kernel denial. Permission-level propagation may approximate the ability to write as actual influence and therefore over-taint a task. The trade-off keeps state bounded while reducing missed propagation through intermediate carriers. Restoring egress should require a trusted declassification mechanism, such as an attested transformation or independently authorized release; ordinary task code must not remove a label merely by declar-ing data safe. 
+
+B. Lifecycle and Policy Publication 
+
+The 64-bit source representation makes joins fixed-width but bounds the active namespace. Cgroup drainage proves that the derived task tree exited; it does not prove every persistent inode or out-of-cgroup receiver discarded a source bit. Safe reuse requires generation tags, global liveness tracking, or conservative non-reuse. Multi-key updates are serialized and rolled back on failure but are not linearizable to concurrent kernel readers; double-buffered maps with a one-key genera-tion switch are a natural extension. 
+
+C. Scope and External Validity 
+
+The prototype does not cover undeclared assets, implicit or byte-level flows, every IPC/device class, a root-compromised host, general in-task declassification, or destination allowlists. A deployment can compose a container or Landlock for max-imum privilege, ContractWarden for task-conditioned assets, and an agent runtime for semantic feedback. One physical machine, one VM, and file-I/O microbenchmarks do not represent all agent workloads. Random order, warmups, con-tent hashes, and pairing reduce temporal noise but do not eliminate VM scheduling effects. Network, fork/IPC, update, concurrent-task, multi-kernel, and realistic agent workloads remain evaluation extensions. The 19 properties derive from our damage-boundary threat model and are therefore better aligned with ContractWarden than with the full ActPlane policy language. The frozen comparison uses only one execution per ActPlane property and supports a coverage observation, not a repeated pass-rate estimate. Security, decomposition, and co-located mea-surements also come from separate kernel batches; we never compare absolute time across those batches. The physical run removes hypervisor scheduling as a confounder but still repre-sents one machine. These design choices bound the evidence without changing the within-batch paired measurements or the repeated ContractWarden security criteria. VI. C ONCLUSION 
+
+Within this scope, ContractWarden turns a human-authorized asset contract into task-bound kernel state. Gate-before-exec registration prevents a startup race; object-level monotonic propagation prevents supported carrier laundering; and file plus multi-stage network hooks deny prohibited side effects. All 570 security observations pass, while co-located tests show lower overhead than the evaluated frozen ActPlane configuration. Future work will add generation-safe source reuse, atomic policy publication, trusted declassification, and realistic concurrent agent workloads. AI D ISCLOSURE 
+
+During preparation, the authors used Google Gemini, and OpenAI Codex for English editing, manuscript organization, and readability. The authors reviewed all AI-assisted content and take responsibility for the manuscript, citations, and re-sults. REFERENCES [1] L. Wang, C. Ma, X. Feng, Z. Zhang, H. Yang, J. Zhang, Z. Chen, J. Tang, X. Chen, Y. Lin, W. X. Zhao, Z. Wei, and J. Wen, “A survey on large language model based autonomous agents,” Frontiers of Computer Science , vol. 18, no. 6, p. 186345, 2024. [2] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection,” in Proc. ACM Workshop on Artificial Intelligence and Security , 2023, pp. 79–90. [3] H. Zhang, J. Huang, K. Mei, Y. Yao, Z. Wang, C. Zhan, H. Wang, and Y. Zhang, “Agent security bench: Formalizing and benchmarking attacks and defenses in LLM-based agents,” in Proc. International Conference on Learning Representations , 2025. [4] OWASP Foundation, “OWASP Top 10 for LLM Applications 2025,” OWASP Foundation, Tech. Rep., 2025. [5] M. Lupinacci, F. A. Pironti, F. Blefari, F. Romeo, L. Arena, and A. Furfaro, “The dark side of LLMs: Agent-based attack vectors for system-level compromise,” arXiv:2507.06850, 2025. [6] The Linux Kernel Documentation, “LSM BPF Programs,” [Online]. Available: https://docs.kernel.org/bpf/prog lsm.html, 2026, accessed: Aug. 30, 2026. [7] B. Gregg, BPF Performance Tools: Linux System and Application Observability . Addison-Wesley Professional, 2019. [8] The Linux Kernel Documentation, “BPF Maps,” [Online]. Available: https://www.kernel.org/doc/html/latest/bpf/maps.html, 2026, accessed: Aug. 30, 2026. [9] Linux man-pages Project, “bpf-helpers(7): eBPF helper functions,” [On-line]. Available: https://man7.org/linux/man-pages/man7/bpf-helpers.7. html, 2026, accessed: Aug. 30, 2026. [10] H. Sun and Z. Su, “Validating the eBPF verifier via state embedding,” in Proc. USENIX Symposium on Operating Systems Design and Imple-mentation , 2024, pp. 615–628. [11] S. T. King and P. M. Chen, “Backtracking intrusions,” in Proc. ACM Symposium on Operating Systems Principles , 2003, pp. 223–236. [12] Z. Li, Q. A. Chen, R. Yang, Y. Chen, and W. Ruan, “Threat detection and investigation with system-level provenance graphs: A survey,” 
+
+Computers & Security , vol. 106, p. 102282, 2021. [13] T. Pasquier, X. Han, M. Goldstein, T. Moyer, D. Eyers, M. Seltzer, and J. Bacon, “Practical whole-system provenance capture,” in Proc. ACM Symposium on Cloud Computing , 2017, pp. 405–418. [14] T. Pasquier, X. Han, T. Moyer, A. Bates, O. Hermant, D. Eyers, J. Bacon, and M. Seltzer, “Runtime analysis of whole-system provenance,” in 
+
+Proc. ACM Conference on Computer and Communications Security ,2018, pp. 1601–1616. [15] S. Ma, X. Zhang, and D. Xu, “Protracer: Towards practical provenance tracing by alternating between logging and tainting,” in Proc. Network and Distributed System Security Symposium , 2016. [16] R. Sekar, H. Kimm, and R. Aich, “eaudit: A fast, scalable and deployable audit data collection system,” in Proc. IEEE Symposium on Security and Privacy , 2024, pp. 3571–3589. [17] B. Zhang, Y. Gao, C. Yu, B. Kuang, Z. Zhang, H. Kim, and A. Fu, “Tapas: Efficient online APT detection with task-guided process prove-nance graph segmentation and analysis,” in Proc. USENIX Security Symposium , 2025, pp. 607–624. [18] W. Enck, P. Gilbert, B.-G. Chun, L. P. Cox, J. Jung, P. McDaniel, and A. N. Sheth, “TaintDroid: An information-flow tracking system for realtime privacy monitoring on smartphones,” in Proc. USENIX Symposium on Operating Systems Design and Implementation , 2010, pp. 393–407. [19] Y. Zheng, Y. Hu, T. Yu, and A. Quinn, “Agentsight: System-level observability for AI agents using eBPF,” in Proc. Workshop on Practical Adoption Challenges of ML for Systems , 2025, pp. 110–115. [20] D. Cui, Z. Gu, P. Zheng, S. Han, and Y. Liao, “Agent-warden: eBPF-based kernel-native process–file provenance tracking for LLM agents,” 2026, unpublished manuscript. [21] H. Wang, C. M. Poskitt, and J. Sun, “Agentspec: Customizable runtime enforcement for safe and reliable LLM agents,” in Proc. IEEE/ACM International Conference on Software Engineering , 2026. [22] C. B¨ uhler, M. Biagiola, L. Di Grazia, and G. Salvaneschi, “Agentbound: Securing execution boundaries of AI agents,” Proceedings of the ACM on Software Engineering , vol. 3, no. FSE, pp. 2141–2164, 2026. [23] T. Shi, J. He, Z. Wang, H. Li, L. Wu, W. Guo, and D. Song, “Progent: Securing AI agents with privilege control,” arXiv:2504.11703, 2025. [24] M. Costa, B. K¨ opf, A. Kolluri, A. Paverd, M. Russinovich, A. Salem, S. Tople, L. Wutschitz, and S. Zanella-B´ eguelin, “Securing AI agents with information-flow control,” arXiv:2505.23643, 2025. [25] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Carlini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tram` er, “Defeating prompt injections by design,” in Proc. IEEE Conference on Secure and Trustworthy Machine Learning , 2026. [26] The Linux Kernel Documentation, “Seccomp BPF: Secure computing with filters,” [Online]. Available: https://docs.kernel.org/userspace-api/ seccomp filter.html, 2026, accessed: Aug. 29, 2026. [27] AppArmor Project, “AppArmor Documentation,” [Online]. Available: https://apparmor.net/, 2026, accessed: Aug. 29, 2026. [28] The Linux Kernel Documentation, “Landlock: Unprivileged access control,” [Online]. Available: https://www.kernel.org/doc/html/latest/ userspace-api/landlock.html, 2026, accessed: Aug. 29, 2026. [29] Y. Zheng, T. Wu, Q. Fu, T. Yu, W. Mao, T. Ma, D. Williams, W. Wang, and A. Quinn, “Actplane: Programmable OS-level policy enforcement for agent harnesses,” arXiv:2606.25189, 2026.
